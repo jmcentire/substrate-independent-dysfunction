@@ -117,6 +117,9 @@ class TestFileCount:
 
 
 class TestSecrets:
+    # NOTE: Fake keys use string concatenation to avoid triggering GitHub push
+    # protection. At runtime the concatenated string still matches the guardian's
+    # regex pattern r"(?:sk|pk)[-_](?:live|test)[-_][a-zA-Z0-9]{20,}".
     def test_blocks_api_key(self):
         g = GuardianAgent()
         exe = _execute([FileAction(path="a.py", action="modify", original="x",
