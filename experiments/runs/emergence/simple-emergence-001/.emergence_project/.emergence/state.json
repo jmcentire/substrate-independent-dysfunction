@@ -1,0 +1,56 @@
+{
+  "id": "e3728c56",
+  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/emergence/simple-emergence-001/.emergence_project",
+  "status": "budget_exceeded",
+  "agents": [
+    {
+      "agent_id": "agent-00",
+      "status": "finished",
+      "tasks_completed": 2,
+      "tasks_created": 2,
+      "tokens_used": 61535,
+      "iterations": 11,
+      "error": null
+    },
+    {
+      "agent_id": "agent-01",
+      "status": "finished",
+      "tasks_completed": 4,
+      "tasks_created": 12,
+      "tokens_used": 80584,
+      "iterations": 16,
+      "error": null
+    },
+    {
+      "agent_id": "agent-02",
+      "status": "finished",
+      "tasks_completed": 1,
+      "tasks_created": 6,
+      "tokens_used": 45617,
+      "iterations": 11,
+      "error": null
+    },
+    {
+      "agent_id": "agent-03",
+      "status": "idle",
+      "tasks_completed": 1,
+      "tasks_created": 1,
+      "tokens_used": 95592,
+      "iterations": 19,
+      "error": null
+    },
+    {
+      "agent_id": "agent-04",
+      "status": "finished",
+      "tasks_completed": 1,
+      "tasks_created": 1,
+      "tokens_used": 50780,
+      "iterations": 12,
+      "error": null
+    }
+  ],
+  "total_tasks": 23,
+  "tasks_completed": 9,
+  "total_tokens": 334108,
+  "total_cost_usd": 12.072674999999998
+}

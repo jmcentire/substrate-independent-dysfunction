@@ -1,0 +1,78 @@
+{
+  "id": "bae8389f0153",
+  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/complex-orgswarm-001/.swarm_project",
+  "status": "paused",
+  "formation": "thorough",
+  "current_stage_index": 4,
+  "stages": [
+    {
+      "stage": "diagnose",
+      "passed": true,
+      "confidence": 0.78,
+      "detail": "Build HermesP2P: an ephemeral P2P messaging system with gossip propagation, onio",
+      "tokens_in": 2262,
+      "tokens_out": 933,
+      "cost_usd": 0.103905
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.82,
+      "detail": "Build HermesP2P as a single Python package with a small number of well-structure",
+      "tokens_in": 2393,
+      "tokens_out": 2532,
+      "cost_usd": 0.22579500000000002
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.774,
+      "detail": "approve",
+      "tokens_in": 16745,
+      "tokens_out": 3591,
+      "cost_usd": 0.5205
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.97,
+      "detail": "7 files",
+      "tokens_in": 3259,
+      "tokens_out": 639,
+      "cost_usd": 0.09681000000000001
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "candidate 0: 11 files",
+      "tokens_in": 1981,
+      "tokens_out": 13699,
+      "cost_usd": 1.05714
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "candidate 1: 11 files",
+      "tokens_in": 1981,
+      "tokens_out": 17347,
+      "cost_usd": 1.33074
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.62,
+      "detail": "3 test files",
+      "tokens_in": 2929,
+      "tokens_out": 9957,
+      "cost_usd": 0.79071
+    }
+  ],
+  "total_tokens": 80248,
+  "total_cost_usd": 4.1256,
+  "created_at": "2026-02-13T20:05:07.579666",
+  "completed_at": null,
+  "pause_reason": "Signal: Multiple consternation signals (architect, test) — systemic concern",
+  "signals": []
+}

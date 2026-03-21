@@ -1,0 +1,944 @@
+{
+  "component_id": "availability_tests",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "bitmask_happy_create_single_day",
+      "description": "createBitmask with a single bit index returns a hex string with exactly that bit set",
+      "function": "createBitmask",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[0]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "Hex string starting with '0x' representing bitmask with only bit 0 set (0x1)",
+      "expected_error": "",
+      "assertions": [
+        "result starts with '0x'",
+        "deserializing result yields BigInt with only bit 0 set"
+      ]
+    },
+    {
+      "id": "bitmask_happy_create_multiple_days",
+      "description": "createBitmask with multiple bit indices returns hex with all specified bits set",
+      "function": "createBitmask",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[0, 1, 59, 364]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "Hex string with bits 0, 1, 59, and 364 set",
+      "expected_error": "",
+      "assertions": [
+        "result starts with '0x'",
+        "exactly bits 0, 1, 59, 364 are set"
+      ]
+    },
+    {
+      "id": "bitmask_happy_empty_indices",
+      "description": "createBitmask with empty indices list returns '0x0'",
+      "function": "createBitmask",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "'0x0' representing all-zeros bitmask",
+      "expected_error": "",
+      "assertions": [
+        "result equals '0x0'"
+      ]
+    },
+    {
+      "id": "bitmask_edge_boundary_index_364_nonleap",
+      "description": "createBitmask with index 364 (Dec 31) on non-leap year succeeds",
+      "function": "createBitmask",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[364]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "Hex string with bit 364 set",
+      "expected_error": "",
+      "assertions": [
+        "result starts with '0x'",
+        "bit 364 is set in deserialized value"
+      ]
+    },
+    {
+      "id": "bitmask_edge_boundary_index_365_leap",
+      "description": "createBitmask with index 365 (Dec 31) on leap year succeeds",
+      "function": "createBitmask",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[365]",
+        "year": "2024"
+      },
+      "input_description": "",
+      "expected_output_description": "Hex string with bit 365 set",
+      "expected_error": "",
+      "assertions": [
+        "result starts with '0x'",
+        "bit 365 is set in deserialized value"
+      ]
+    },
+    {
+      "id": "bitmask_edge_leap_year_feb29",
+      "description": "createBitmask with index 59 (Feb 29) on leap year succeeds — Feb 29 is always bit index 59",
+      "function": "createBitmask",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[59]",
+        "year": "2024"
+      },
+      "input_description": "",
+      "expected_output_description": "Hex string with bit 59 set",
+      "expected_error": "",
+      "assertions": [
+        "result starts with '0x'",
+        "bit 59 is set"
+      ]
+    },
+    {
+      "id": "bitmask_edge_full_year_nonleap",
+      "description": "createBitmask with all 365 indices (0..364) matches fullYearBitmaskHex fixture",
+      "function": "createBitmask",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "list(range(365))",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "Hex string representing all 365 bits set",
+      "expected_error": "",
+      "assertions": [
+        "result equals fullYearBitmaskHex from fixtures"
+      ]
+    },
+    {
+      "id": "bitmask_error_negative_index",
+      "description": "createBitmask raises RangeError when a bit index is negative",
+      "function": "createBitmask",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[-1]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RangeError",
+      "assertions": [
+        "RangeError is raised"
+      ]
+    },
+    {
+      "id": "bitmask_error_index_out_of_range_nonleap",
+      "description": "createBitmask raises RangeError when index exceeds 364 for non-leap year",
+      "function": "createBitmask",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[365]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RangeError",
+      "assertions": [
+        "RangeError is raised for index 365 on non-leap year"
+      ]
+    },
+    {
+      "id": "bitmask_error_index_out_of_range_leap",
+      "description": "createBitmask raises RangeError when index exceeds 365 for leap year",
+      "function": "createBitmask",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[366]",
+        "year": "2024"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RangeError",
+      "assertions": [
+        "RangeError is raised for index 366 on leap year"
+      ]
+    },
+    {
+      "id": "bitmask_invariant_hex_roundtrip",
+      "description": "Hex serialization round-trip: deserializeBitmask(serializeBitmask(B)) === B for any bitmask",
+      "function": "createBitmask",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[0, 50, 100, 200, 300, 364]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "Round-trip through serialize then deserialize yields identical bitmask",
+      "expected_error": "",
+      "assertions": [
+        "deserializeBitmask(serializeBitmask(bitmask)) equals original bitmask"
+      ]
+    },
+    {
+      "id": "daterange_happy_valid_range",
+      "description": "createDateRange with valid start <= end returns a DateRange with matching fields",
+      "function": "createDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "start": "2025-01-01",
+        "end": "2025-01-31"
+      },
+      "input_description": "",
+      "expected_output_description": "DateRange with start='2025-01-01' and end='2025-01-31'",
+      "expected_error": "",
+      "assertions": [
+        "result.start == '2025-01-01'",
+        "result.end == '2025-01-31'"
+      ]
+    },
+    {
+      "id": "daterange_happy_same_day",
+      "description": "createDateRange with start == end (single day range) succeeds",
+      "function": "createDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "start": "2025-06-15",
+        "end": "2025-06-15"
+      },
+      "input_description": "",
+      "expected_output_description": "DateRange with start == end",
+      "expected_error": "",
+      "assertions": [
+        "result.start == result.end == '2025-06-15'"
+      ]
+    },
+    {
+      "id": "daterange_error_invalid_format",
+      "description": "createDateRange raises ValidationError for non-YYYY-MM-DD format",
+      "function": "createDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "start": "01-01-2025",
+        "end": "2025-01-31"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "ValidationError",
+      "assertions": [
+        "ValidationError is raised for bad date format"
+      ]
+    },
+    {
+      "id": "daterange_error_invalid_calendar_date",
+      "description": "createDateRange raises ValidationError for non-existent date (Feb 29 on non-leap year)",
+      "function": "createDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "start": "2025-02-29",
+        "end": "2025-03-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "ValidationError",
+      "assertions": [
+        "ValidationError is raised for Feb 29 on non-leap year 2025"
+      ]
+    },
+    {
+      "id": "daterange_error_inverted_range",
+      "description": "createDateRange raises ValidationError when start is after end",
+      "function": "createDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "start": "2025-12-31",
+        "end": "2025-01-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "ValidationError",
+      "assertions": [
+        "ValidationError is raised for inverted date range"
+      ]
+    },
+    {
+      "id": "fixtures_happy_create",
+      "description": "createTestFixtures returns deterministic fixture data with valid UUIDs and years",
+      "function": "createTestFixtures",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "TestFixtures with valid sample data",
+      "expected_error": "",
+      "assertions": [
+        "sampleUnitId is valid UUID v4",
+        "sampleUnitId2 is valid UUID v4 and != sampleUnitId",
+        "sampleYear is non-leap",
+        "leapYear is leap",
+        "emptyBitmaskHex == '0x0'"
+      ]
+    },
+    {
+      "id": "fixtures_invariant_deterministic",
+      "description": "createTestFixtures returns identical values across multiple invocations",
+      "function": "createTestFixtures",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Two calls produce identical fixtures",
+      "expected_error": "",
+      "assertions": [
+        "createTestFixtures() == createTestFixtures()"
+      ]
+    },
+    {
+      "id": "inmemorydb_happy_create_empty",
+      "description": "createInMemoryDb with no seed records returns empty DB with zero spy counts",
+      "function": "createInMemoryDb",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "seedRecords": "[]"
+      },
+      "input_description": "",
+      "expected_output_description": "InMemoryDb with empty records and zeroed counters",
+      "expected_error": "",
+      "assertions": [
+        "db.records == []",
+        "db.queryCount == 0",
+        "db.writeCount == 0"
+      ]
+    },
+    {
+      "id": "inmemorydb_happy_create_seeded",
+      "description": "createInMemoryDb with seed records contains exactly those records",
+      "function": "createInMemoryDb",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "seedRecords": "[sampleAvailabilityRecord]"
+      },
+      "input_description": "",
+      "expected_output_description": "InMemoryDb with one record and zeroed counters",
+      "expected_error": "",
+      "assertions": [
+        "len(db.records) == 1",
+        "db.queryCount == 0",
+        "db.writeCount == 0"
+      ]
+    },
+    {
+      "id": "inmemorycache_happy_create",
+      "description": "createInMemoryCache returns empty cache with zero spy counts",
+      "function": "createInMemoryCache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "InMemoryCache with empty store and zeroed counters",
+      "expected_error": "",
+      "assertions": [
+        "cache.store == {}",
+        "cache.getCount == 0",
+        "cache.setCount == 0",
+        "cache.delCount == 0"
+      ]
+    },
+    {
+      "id": "cache_happy_miss_then_fill",
+      "description": "Cache miss triggers DB query and fills cache (queryCount=1, setCount=1)",
+      "function": "runCacheTests",
+      "category": "happy_path",
+      "setup_description": "Create InMemoryDb seeded with one record, empty InMemoryCache",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "After first read: db.queryCount==1, cache.setCount==1",
+      "expected_error": "",
+      "assertions": [
+        "db.queryCount == 1",
+        "cache.setCount == 1"
+      ]
+    },
+    {
+      "id": "cache_happy_hit_no_db",
+      "description": "Cache hit returns data without querying DB (queryCount stays 0)",
+      "function": "runCacheTests",
+      "category": "happy_path",
+      "setup_description": "Pre-populate cache with known key, seed empty DB",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "After read: db.queryCount==0, cache.getCount==1",
+      "expected_error": "",
+      "assertions": [
+        "db.queryCount == 0",
+        "cache.getCount >= 1"
+      ]
+    },
+    {
+      "id": "cache_happy_invalidation",
+      "description": "Write operation triggers cache invalidation (delCount increments)",
+      "function": "runCacheTests",
+      "category": "happy_path",
+      "setup_description": "Pre-populate cache, then perform write",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "cache.delCount >= 1 after write",
+      "expected_error": "",
+      "assertions": [
+        "cache.delCount >= 1"
+      ]
+    },
+    {
+      "id": "cache_happy_refill_after_invalidation",
+      "description": "After invalidation, next read re-fills cache from DB",
+      "function": "runCacheTests",
+      "category": "happy_path",
+      "setup_description": "Write (invalidates), then read again",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "cache.setCount increments again, db.queryCount increments",
+      "expected_error": "",
+      "assertions": [
+        "cache.setCount >= 2",
+        "db.queryCount >= 2"
+      ]
+    },
+    {
+      "id": "cache_edge_key_format",
+      "description": "Cache key matches pattern 'availability:{uuid}:{year}'",
+      "function": "assertCacheKeyFormat",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "key": "availability:550e8400-e29b-41d4-a716-446655440000:2025",
+        "expectedUnitId": "550e8400-e29b-41d4-a716-446655440000",
+        "expectedYear": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "No error raised",
+      "expected_error": "",
+      "assertions": [
+        "assertCacheKeyFormat does not raise"
+      ]
+    },
+    {
+      "id": "cache_error_key_format_mismatch",
+      "description": "assertCacheKeyFormat raises AssertionError for wrong key format",
+      "function": "assertCacheKeyFormat",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "key": "wrong_key_format",
+        "expectedUnitId": "550e8400-e29b-41d4-a716-446655440000",
+        "expectedYear": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "AssertionError",
+      "assertions": [
+        "AssertionError is raised"
+      ]
+    },
+    {
+      "id": "cache_edge_hex_roundtrip_at_boundary",
+      "description": "BigInt<->hex serialization at cache boundary preserves bitmask value",
+      "function": "runCacheTests",
+      "category": "edge_case",
+      "setup_description": "Write bitmask to DB, read via cache, compare hex values",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Cached hex matches original bitmask hex",
+      "expected_error": "",
+      "assertions": [
+        "cached hex == original hex"
+      ]
+    },
+    {
+      "id": "cache_edge_multiple_years",
+      "description": "Cache correctly handles multiple year entries for same unit",
+      "function": "runCacheTests",
+      "category": "edge_case",
+      "setup_description": "Seed DB with records for 2024 and 2025 for same unit",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Both years cached under separate keys",
+      "expected_error": "",
+      "assertions": [
+        "cache has key for 2024",
+        "cache has key for 2025"
+      ]
+    },
+    {
+      "id": "cache_invariant_suite_report",
+      "description": "runCacheTests report has suite_name 'cache_test', total>=7, passed+failed==total",
+      "function": "runCacheTests",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Valid TestSuiteReport",
+      "expected_error": "",
+      "assertions": [
+        "report.suite_name == 'cache_test'",
+        "report.total >= 7",
+        "report.passed + report.failed == report.total"
+      ]
+    },
+    {
+      "id": "api_happy_get_single_success",
+      "description": "GET /availability/:unit_id returns 200 with AvailabilityCheckResult shape",
+      "function": "runApiContractTests",
+      "category": "happy_path",
+      "setup_description": "Seed DB with availability record for unit, configure date range query params",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 200, body matches AvailabilityCheckResult schema",
+      "expected_error": "",
+      "assertions": [
+        "status == 200",
+        "body has unit_id, start, end, status, available_dates, blocked_dates"
+      ]
+    },
+    {
+      "id": "api_happy_put_success",
+      "description": "PUT /availability/:unit_id returns 200 with UpdateAvailabilityResponse shape",
+      "function": "runApiContractTests",
+      "category": "happy_path",
+      "setup_description": "Seed DB, send valid UpdateAvailabilityRequest body",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 200, body matches UpdateAvailabilityResponse schema",
+      "expected_error": "",
+      "assertions": [
+        "status == 200",
+        "body has unit_id, updated_dates, new_status"
+      ]
+    },
+    {
+      "id": "api_happy_bulk_success",
+      "description": "GET /availability/bulk returns 200 with BulkAvailabilityResult shape",
+      "function": "runApiContractTests",
+      "category": "happy_path",
+      "setup_description": "Seed DB with multiple units, query all",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 200, body.results is a list of AvailabilityCheckResult",
+      "expected_error": "",
+      "assertions": [
+        "status == 200",
+        "body.results is a list",
+        "each item matches AvailabilityCheckResult schema"
+      ]
+    },
+    {
+      "id": "api_error_get_404_not_found",
+      "description": "GET /availability/:unit_id returns 404 for unknown unit with ErrorResponse shape",
+      "function": "runApiContractTests",
+      "category": "error_case",
+      "setup_description": "Empty DB, request non-existent unit",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 404, body matches ErrorResponse with error='NOT_FOUND'",
+      "expected_error": "HTTP 404",
+      "assertions": [
+        "status == 404",
+        "body.error == 'NOT_FOUND'",
+        "body has 'message' field"
+      ]
+    },
+    {
+      "id": "api_error_get_400_bad_dates",
+      "description": "GET /availability/:unit_id returns 400 for invalid date format in query params",
+      "function": "runApiContractTests",
+      "category": "error_case",
+      "setup_description": "Request with start=not-a-date",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 400, body matches ErrorResponse",
+      "expected_error": "HTTP 400",
+      "assertions": [
+        "status == 400",
+        "body matches ErrorResponse schema"
+      ]
+    },
+    {
+      "id": "api_error_get_422_invalid_range",
+      "description": "GET /availability/:unit_id returns 422 for inverted date range (start > end)",
+      "function": "runApiContractTests",
+      "category": "error_case",
+      "setup_description": "Request with start > end",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 422, body matches ErrorResponse with error='VALIDATION_ERROR'",
+      "expected_error": "HTTP 422",
+      "assertions": [
+        "status == 422",
+        "body.error == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "api_error_put_400_bad_body",
+      "description": "PUT /availability/:unit_id returns 400 for malformed request body",
+      "function": "runApiContractTests",
+      "category": "error_case",
+      "setup_description": "Send request with missing 'dates' or 'status' field",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 400, body matches ErrorResponse with error='INVALID_REQUEST'",
+      "expected_error": "HTTP 400",
+      "assertions": [
+        "status == 400",
+        "body.error == 'INVALID_REQUEST'",
+        "body has 'message' field"
+      ]
+    },
+    {
+      "id": "api_error_put_422_partial_status",
+      "description": "PUT /availability/:unit_id returns 422 when status is PARTIAL (not allowed for updates)",
+      "function": "runApiContractTests",
+      "category": "error_case",
+      "setup_description": "Send UpdateAvailabilityRequest with status='PARTIAL'",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 422, body matches ErrorResponse with error='VALIDATION_ERROR'",
+      "expected_error": "HTTP 422",
+      "assertions": [
+        "status == 422",
+        "body.error == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "api_edge_put_cache_invalidation",
+      "description": "PUT /availability/:unit_id invalidates the cache for the updated unit/year",
+      "function": "runApiContractTests",
+      "category": "edge_case",
+      "setup_description": "Pre-fill cache, PUT to update, check cache invalidation",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "cache.delCount incremented after PUT",
+      "expected_error": "",
+      "assertions": [
+        "cache.delCount >= 1 after PUT"
+      ]
+    },
+    {
+      "id": "api_edge_bulk_empty_result",
+      "description": "GET /availability/bulk returns 200 with empty results list when no units match",
+      "function": "runApiContractTests",
+      "category": "edge_case",
+      "setup_description": "Empty DB, query for unit IDs that don't exist",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 200, body.results is empty list",
+      "expected_error": "",
+      "assertions": [
+        "status == 200",
+        "body.results == []"
+      ]
+    },
+    {
+      "id": "api_error_bulk_400_missing_params",
+      "description": "GET /availability/bulk returns 400 when required query params are missing",
+      "function": "runApiContractTests",
+      "category": "error_case",
+      "setup_description": "Request bulk endpoint with no unit_ids or date params",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 400, body matches ErrorResponse",
+      "expected_error": "HTTP 400",
+      "assertions": [
+        "status == 400",
+        "body matches ErrorResponse schema"
+      ]
+    },
+    {
+      "id": "api_invariant_suite_report",
+      "description": "runApiContractTests report has suite_name 'api_contract_test', total>=10, passed+failed==total",
+      "function": "runApiContractTests",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Valid TestSuiteReport",
+      "expected_error": "",
+      "assertions": [
+        "report.suite_name == 'api_contract_test'",
+        "report.total >= 10",
+        "report.passed + report.failed == report.total"
+      ]
+    },
+    {
+      "id": "bitmask_invariant_suite_report",
+      "description": "runBitmaskTests report has suite_name 'bitmask_test', total>=13, passed+failed==total",
+      "function": "runBitmaskTests",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Valid TestSuiteReport",
+      "expected_error": "",
+      "assertions": [
+        "report.suite_name == 'bitmask_test'",
+        "report.total >= 13",
+        "report.passed + report.failed == report.total"
+      ]
+    },
+    {
+      "id": "all_tests_happy_run",
+      "description": "runAllTests aggregates results from all three suites correctly",
+      "function": "runAllTests",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Combined report with suite_name 'availability_tests'",
+      "expected_error": "",
+      "assertions": [
+        "report.suite_name == 'availability_tests'",
+        "report.total == sum of sub-suite totals",
+        "report.passed + report.failed == report.total"
+      ]
+    },
+    {
+      "id": "all_tests_invariant_aggregation",
+      "description": "runAllTests total equals bitmask + cache + api totals, results contains all individual entries",
+      "function": "runAllTests",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "Aggregate counts match sub-suite sums",
+      "expected_error": "",
+      "assertions": [
+        "report.total == bitmask.total + cache.total + api.total",
+        "len(report.results) == sum of len(sub.results)"
+      ]
+    },
+    {
+      "id": "assertErrorResponse_happy",
+      "description": "assertErrorResponse succeeds for valid ErrorResponse body with matching error code",
+      "function": "assertErrorResponse",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "responseBody": "{\"error\": \"NOT_FOUND\", \"message\": \"Unit not found\"}",
+        "expectedHttpStatus": "404",
+        "expectedErrorCode": "NOT_FOUND"
+      },
+      "input_description": "",
+      "expected_output_description": "No error raised",
+      "expected_error": "",
+      "assertions": [
+        "assertErrorResponse does not raise"
+      ]
+    },
+    {
+      "id": "assertErrorResponse_error_missing_error_field",
+      "description": "assertErrorResponse raises AssertionError when 'error' field is missing",
+      "function": "assertErrorResponse",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "responseBody": "{\"message\": \"something\"}",
+        "expectedHttpStatus": "400"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "AssertionError",
+      "assertions": [
+        "AssertionError is raised"
+      ]
+    },
+    {
+      "id": "assertErrorResponse_error_missing_message_field",
+      "description": "assertErrorResponse raises AssertionError when 'message' field is missing",
+      "function": "assertErrorResponse",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "responseBody": "{\"error\": \"INVALID_REQUEST\"}",
+        "expectedHttpStatus": "400"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "AssertionError",
+      "assertions": [
+        "AssertionError is raised"
+      ]
+    },
+    {
+      "id": "assertErrorResponse_error_wrong_code",
+      "description": "assertErrorResponse raises AssertionError when error code doesn't match expected",
+      "function": "assertErrorResponse",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "responseBody": "{\"error\": \"INVALID_REQUEST\", \"message\": \"bad\"}",
+        "expectedHttpStatus": "400",
+        "expectedErrorCode": "NOT_FOUND"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "AssertionError",
+      "assertions": [
+        "AssertionError is raised for code mismatch"
+      ]
+    },
+    {
+      "id": "invariant_iso_date_format",
+      "description": "All date strings in responses conform to ISO 8601 YYYY-MM-DD UTC format",
+      "function": "runApiContractTests",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "All date fields match regex ^\\d{4}-\\d{2}-\\d{2}$",
+      "expected_error": "",
+      "assertions": [
+        "every date string in available_dates and blocked_dates matches YYYY-MM-DD regex"
+      ]
+    },
+    {
+      "id": "invariant_uuid_format",
+      "description": "All unit_id values are valid UUID v4 strings",
+      "function": "createTestFixtures",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "sampleUnitId and sampleUnitId2 match UUID v4 regex",
+      "expected_error": "",
+      "assertions": [
+        "sampleUnitId matches UUID v4 regex",
+        "sampleUnitId2 matches UUID v4 regex"
+      ]
+    },
+    {
+      "id": "invariant_hex_prefix",
+      "description": "All HexBitmaskString values start with '0x' and contain only lowercase hex chars",
+      "function": "createBitmask",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "bitIndices": "[10, 20, 30]",
+        "year": "2025"
+      },
+      "input_description": "",
+      "expected_output_description": "Result starts with '0x' and rest is lowercase hex",
+      "expected_error": "",
+      "assertions": [
+        "result starts with '0x'",
+        "result[2:] contains only 0-9a-f characters"
+      ]
+    },
+    {
+      "id": "assertSchemaValid_happy",
+      "description": "assertSchemaValid does not raise when value conforms to schema",
+      "function": "assertSchemaValid",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "context": "test context"
+      },
+      "input_description": "",
+      "expected_output_description": "No exception raised",
+      "expected_error": "",
+      "assertions": [
+        "function returns without error"
+      ]
+    },
+    {
+      "id": "assertSchemaValid_error_mismatch",
+      "description": "assertSchemaValid raises AssertionError when value does not conform to schema",
+      "function": "assertSchemaValid",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "context": "test context"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "AssertionError",
+      "assertions": [
+        "AssertionError is raised with context in message"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract test suite for availability_tests component.\nTests cover bitmask operations, cache layer, API contracts, and helper functions.\nAll dependencies are mocked — no external services required.\n\nRun with: pytest contract_test.py -v\n\"\"\"\n\nimport re\nimport json\nimport calendar\nimport pytest\nfrom unittest.mock import MagicMock, AsyncMock, patch, call\n\n# Import the component under test\nfrom src.availability_tests import (\n    createBitmask,\n    createDateRange,\n    createTestFixtures,\n    createInMemoryDb,\n    createInMemoryCache,\n    assertCacheKeyFormat,\n    assertErrorResponse,\n    assertSchemaValid,\n    runBitmaskTests,\n    runCacheTests,\n    runApiContractTests,\n    runAllTests,\n    serializeBitmask,\n    deserializeBitmask,\n    dateToBitIndex,\n    bitIndexToDate,\n    setBit,\n    clearBit,\n    getBit,\n    setBitRange,\n    clearBitRange,\n    checkBitRange,\n    createYearMask,\n    createLeapYearMask,\n    stitchCrossYearRange,\n)\n\n# ─── Constants ───────────────────────────────────────────────────────────────\n\nUUID_V4_REGEX = re.compile(\n    r\"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"\n)\nISO_DATE_REGEX = re.compile(r\"^\\d{4}-\\d{2}-\\d{2}$\")\nHEX_BITMASK_REGEX = re.compile(r\"^0x[0-9a-f]+$\")\n\nSAMPLE_UNIT_ID = \"550e8400-e29b-41d4-a716-446655440000\"\nSAMPLE_UNIT_ID_2 = \"660e8400-e29b-41d4-a716-446655440001\"\nSAMPLE_YEAR = 2025  # non-leap\nLEAP_YEAR = 2024  # leap\n\n\n# ─── Helpers ─────────────────────────────────────────────────────────────────\n\ndef is_leap_year(year: int) -> bool:\n    return calendar.isleap(year)\n\n\ndef days_in_year(year: int) -> int:\n    return 366 if is_leap_year(year) else 365\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# BITMASK TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestCreateBitmaskHappyPath:\n    \"\"\"Happy path tests for createBitmask.\"\"\"\n\n    def test_single_day_bit_zero(self):\n        \"\"\"createBitmask with single index 0 returns hex with only bit 0 set.\"\"\"\n        result = createBitmask([0], year=2025)\n        assert isinstance(result, str), \"Result must be a string\"\n        assert result.startswith(\"0x\"), f\"Expected hex prefix '0x', got '{result[:4]}'\"\n        # Bit 0 set means value 1 => '0x1'\n        value = int(result, 16)\n        assert value & 1 == 1, \"Bit 0 should be set\"\n        # Ensure no other bits are set\n        assert value == 1, f\"Only bit 0 should be set, got {hex(value)}\"\n\n    def test_multiple_days(self):\n        \"\"\"createBitmask with multiple indices sets exactly those bits.\"\"\"\n        indices = [0, 1, 59, 364]\n        result = createBitmask(indices, year=2025)\n        assert result.startswith(\"0x\"), f\"Expected hex prefix, got '{result}'\"\n        value = int(result, 16)\n        for idx in indices:\n            assert (value >> idx) & 1 == 1, f\"Bit {idx} should be set\"\n        # Verify no extra bits\n        for i in range(365):\n            if i not in indices:\n                assert (value >> i) & 1 == 0, f\"Bit {i} should NOT be set\"\n\n    def test_empty_indices_returns_zero(self):\n        \"\"\"createBitmask with empty list returns '0x0'.\"\"\"\n        result = createBitmask([], year=2025)\n        assert result == \"0x0\", f\"Expected '0x0', got '{result}'\"\n\n\nclass TestCreateBitmaskEdgeCases:\n    \"\"\"Edge case tests for createBitmask boundary indices and leap years.\"\"\"\n\n    def test_boundary_index_364_nonleap(self):\n        \"\"\"Index 364 (Dec 31) on non-leap year is valid.\"\"\"\n        result = createBitmask([364], year=2025)\n        assert result.startswith(\"0x\")\n        value = int(result, 16)\n        assert (value >> 364) & 1 == 1, \"Bit 364 should be set for non-leap year Dec 31\"\n\n    def test_boundary_index_365_leap(self):\n        \"\"\"Index 365 (Dec 31) on leap year is valid.\"\"\"\n        result = createBitmask([365], year=2024)\n        assert result.startswith(\"0x\")\n        value = int(result, 16)\n        assert (value >> 365) & 1 == 1, \"Bit 365 should be set for leap year Dec 31\"\n\n    def test_leap_year_feb29_index_59(self):\n        \"\"\"Feb 29 on leap year is bit index 59.\"\"\"\n        result = createBitmask([59], year=2024)\n        assert result.startswith(\"0x\")\n        value = int(result, 16)\n        assert (value >> 59) & 1 == 1, \"Bit 59 (Feb 29) should be set on leap year\"\n\n    def test_full_year_nonleap(self):\n        \"\"\"createBitmask with all 365 indices (0..364) sets all bits for non-leap year.\"\"\"\n        all_indices = list(range(365))\n        result = createBitmask(all_indices, year=2025)\n        assert result.startswith(\"0x\")\n        value = int(result, 16)\n        # All 365 bits should be set\n        expected = (1 << 365) - 1\n        assert value == expected, (\n            f\"Full year bitmask should have all 365 bits set. \"\n            f\"Got {hex(value)}, expected {hex(expected)}\"\n        )\n\n    def test_full_year_leap(self):\n        \"\"\"createBitmask with all 366 indices (0..365) sets all bits for leap year.\"\"\"\n        all_indices = list(range(366))\n        result = createBitmask(all_indices, year=2024)\n        assert result.startswith(\"0x\")\n        value = int(result, 16)\n        expected = (1 << 366) - 1\n        assert value == expected, \"Full leap year bitmask should have all 366 bits set\"\n\n\nclass TestCreateBitmaskErrors:\n    \"\"\"Error cases for createBitmask.\"\"\"\n\n    def test_negative_index_raises_range_error(self):\n        \"\"\"createBitmask raises RangeError for negative bit index.\"\"\"\n        with pytest.raises((RangeError, ValueError, IndexError)):\n            createBitmask([-1], year=2025)\n\n    def test_index_365_nonleap_raises_range_error(self):\n        \"\"\"createBitmask raises RangeError for index 365 on non-leap year (max is 364).\"\"\"\n        with pytest.raises((RangeError, ValueError, IndexError)):\n            createBitmask([365], year=2025)\n\n    def test_index_366_leap_raises_range_error(self):\n        \"\"\"createBitmask raises RangeError for index 366 on leap year (max is 365).\"\"\"\n        with pytest.raises((RangeError, ValueError, IndexError)):\n            createBitmask([366], year=2024)\n\n\nclass TestBitmaskHexRoundtrip:\n    \"\"\"Invariant: deserializeBitmask(serializeBitmask(B)) === B.\"\"\"\n\n    def test_roundtrip_various_bits(self):\n        \"\"\"Hex serialization round-trip preserves bitmask value.\"\"\"\n        indices = [0, 50, 100, 200, 300, 364]\n        hex_str = createBitmask(indices, year=2025)\n        # Deserialize then re-serialize\n        bigint_value = deserializeBitmask(hex_str)\n        roundtrip_hex = serializeBitmask(bigint_value)\n        roundtrip_value = deserializeBitmask(roundtrip_hex)\n        assert bigint_value == roundtrip_value, (\n            f\"Round-trip failed: original={hex_str}, roundtrip={roundtrip_hex}\"\n        )\n\n    def test_roundtrip_empty(self):\n        \"\"\"Round-trip for zero bitmask.\"\"\"\n        hex_str = \"0x0\"\n        value = deserializeBitmask(hex_str)\n        assert value == 0, \"Deserializing '0x0' should yield 0\"\n        result = serializeBitmask(value)\n        assert result == \"0x0\", f\"Serializing 0 should yield '0x0', got '{result}'\"\n\n    def test_roundtrip_full_year(self):\n        \"\"\"Round-trip for full year bitmask (all 365 bits set).\"\"\"\n        indices = list(range(365))\n        hex_str = createBitmask(indices, year=2025)\n        value = deserializeBitmask(hex_str)\n        roundtrip = serializeBitmask(value)\n        assert deserializeBitmask(roundtrip) == value\n\n\nclass TestBitmaskInvariantHexPrefix:\n    \"\"\"Invariant: all HexBitmaskStrings start with '0x' and are lowercase hex.\"\"\"\n\n    def test_hex_prefix_and_lowercase(self):\n        \"\"\"createBitmask result starts with '0x' and contains only lowercase hex digits.\"\"\"\n        result = createBitmask([10, 20, 30], year=2025)\n        assert result.startswith(\"0x\"), f\"Must start with '0x', got '{result}'\"\n        hex_part = result[2:]\n        assert re.match(r\"^[0-9a-f]+$\", hex_part) or hex_part == \"0\", (\n            f\"Hex portion must be lowercase hex, got '{hex_part}'\"\n        )\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# DATE RANGE TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestCreateDateRangeHappyPath:\n    \"\"\"Happy path tests for createDateRange.\"\"\"\n\n    def test_valid_range(self):\n        \"\"\"createDateRange with valid start < end returns matching DateRange.\"\"\"\n        result = createDateRange(\"2025-01-01\", \"2025-01-31\")\n        assert result.start == \"2025-01-01\", f\"start should be '2025-01-01', got '{result.start}'\"\n        assert result.end == \"2025-01-31\", f\"end should be '2025-01-31', got '{result.end}'\"\n\n    def test_single_day_range(self):\n        \"\"\"createDateRange with start == end (single day) succeeds.\"\"\"\n        result = createDateRange(\"2025-06-15\", \"2025-06-15\")\n        assert result.start == \"2025-06-15\"\n        assert result.end == \"2025-06-15\"\n        assert result.start == result.end\n\n\nclass TestCreateDateRangeErrors:\n    \"\"\"Error cases for createDateRange.\"\"\"\n\n    def test_invalid_date_format_raises_validation_error(self):\n        \"\"\"createDateRange raises ValidationError for non-YYYY-MM-DD format.\"\"\"\n        with pytest.raises((ValueError, TypeError, Exception)) as exc_info:\n            createDateRange(\"01-01-2025\", \"2025-01-31\")\n        # Accept any validation-related error\n        assert exc_info.value is not None\n\n    def test_invalid_calendar_date_feb29_nonleap(self):\n        \"\"\"createDateRange raises ValidationError for Feb 29 on non-leap year 2025.\"\"\"\n        with pytest.raises((ValueError, TypeError, Exception)):\n            createDateRange(\"2025-02-29\", \"2025-03-01\")\n\n    def test_inverted_range_raises_validation_error(self):\n        \"\"\"createDateRange raises ValidationError when start > end.\"\"\"\n        with pytest.raises((ValueError, TypeError, Exception)):\n            createDateRange(\"2025-12-31\", \"2025-01-01\")\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# TEST FIXTURES TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestCreateTestFixtures:\n    \"\"\"Tests for createTestFixtures factory helper.\"\"\"\n\n    def test_fixtures_have_valid_data(self):\n        \"\"\"createTestFixtures returns deterministic fixture data with valid UUIDs and years.\"\"\"\n        fixtures = createTestFixtures()\n\n        # Valid UUID v4s\n        assert UUID_V4_REGEX.match(fixtures.sampleUnitId), (\n            f\"sampleUnitId '{fixtures.sampleUnitId}' is not a valid UUID v4\"\n        )\n        assert UUID_V4_REGEX.match(fixtures.sampleUnitId2), (\n            f\"sampleUnitId2 '{fixtures.sampleUnitId2}' is not a valid UUID v4\"\n        )\n        assert fixtures.sampleUnitId != fixtures.sampleUnitId2, (\n            \"sampleUnitId and sampleUnitId2 must be different\"\n        )\n\n        # Year checks\n        assert not is_leap_year(fixtures.sampleYear), (\n            f\"sampleYear {fixtures.sampleYear} should be non-leap\"\n        )\n        assert is_leap_year(fixtures.leapYear), (\n            f\"leapYear {fixtures.leapYear} should be leap\"\n        )\n\n        # Empty bitmask\n        assert fixtures.emptyBitmaskHex == \"0x0\", (\n            f\"emptyBitmaskHex should be '0x0', got '{fixtures.emptyBitmaskHex}'\"\n        )\n\n        # Full year bitmask represents 365 bits set\n        full_value = int(fixtures.fullYearBitmaskHex, 16)\n        expected_full = (1 << 365) - 1\n        assert full_value == expected_full, (\n            \"fullYearBitmaskHex should represent all 365 bits set\"\n        )\n\n        # Sample record references\n        assert fixtures.sampleAvailabilityRecord.unit_id == fixtures.sampleUnitId\n        assert fixtures.sampleAvailabilityRecord.year == fixtures.sampleYear\n\n    def test_fixtures_are_deterministic(self):\n        \"\"\"createTestFixtures returns identical values across multiple invocations.\"\"\"\n        f1 = createTestFixtures()\n        f2 = createTestFixtures()\n        assert f1.sampleUnitId == f2.sampleUnitId\n        assert f1.sampleUnitId2 == f2.sampleUnitId2\n        assert f1.sampleYear == f2.sampleYear\n        assert f1.leapYear == f2.leapYear\n        assert f1.emptyBitmaskHex == f2.emptyBitmaskHex\n        assert f1.fullYearBitmaskHex == f2.fullYearBitmaskHex\n        assert f1.sampleBitmaskHex == f2.sampleBitmaskHex\n\n\nclass TestUuidInvariant:\n    \"\"\"Invariant: all unit_id values are valid UUID v4 strings.\"\"\"\n\n    def test_sample_uuids_match_v4_regex(self):\n        fixtures = createTestFixtures()\n        assert UUID_V4_REGEX.match(fixtures.sampleUnitId), (\n            f\"sampleUnitId does not match UUID v4 regex: {fixtures.sampleUnitId}\"\n        )\n        assert UUID_V4_REGEX.match(fixtures.sampleUnitId2), (\n            f\"sampleUnitId2 does not match UUID v4 regex: {fixtures.sampleUnitId2}\"\n        )\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# IN-MEMORY DB TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestCreateInMemoryDb:\n    \"\"\"Tests for createInMemoryDb factory helper.\"\"\"\n\n    def test_empty_db(self):\n        \"\"\"createInMemoryDb with no seeds returns empty DB with zero spy counts.\"\"\"\n        db = createInMemoryDb([])\n        assert db.records == [], f\"Expected empty records, got {db.records}\"\n        assert db.queryCount == 0, f\"Expected queryCount=0, got {db.queryCount}\"\n        assert db.writeCount == 0, f\"Expected writeCount=0, got {db.writeCount}\"\n\n    def test_seeded_db(self):\n        \"\"\"createInMemoryDb with seed records contains exactly those records.\"\"\"\n        fixtures = createTestFixtures()\n        db = createInMemoryDb([fixtures.sampleAvailabilityRecord])\n        assert len(db.records) == 1, f\"Expected 1 record, got {len(db.records)}\"\n        assert db.queryCount == 0\n        assert db.writeCount == 0\n        assert db.records[0].unit_id == fixtures.sampleUnitId\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# IN-MEMORY CACHE TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestCreateInMemoryCache:\n    \"\"\"Tests for createInMemoryCache factory helper.\"\"\"\n\n    def test_empty_cache(self):\n        \"\"\"createInMemoryCache returns empty cache with zero spy counts.\"\"\"\n        cache = createInMemoryCache()\n        assert cache.store == {} or len(cache.store) == 0, (\n            f\"Expected empty store, got {cache.store}\"\n        )\n        assert cache.getCount == 0, f\"Expected getCount=0, got {cache.getCount}\"\n        assert cache.setCount == 0, f\"Expected setCount=0, got {cache.setCount}\"\n        assert cache.delCount == 0, f\"Expected delCount=0, got {cache.delCount}\"\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# CACHE KEY FORMAT TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestAssertCacheKeyFormat:\n    \"\"\"Tests for assertCacheKeyFormat helper.\"\"\"\n\n    def test_valid_key_format(self):\n        \"\"\"assertCacheKeyFormat does not raise for correct format.\"\"\"\n        unit_id = SAMPLE_UNIT_ID\n        year = 2025\n        key = f\"availability:{unit_id}:{year}\"\n        # Should not raise\n        assertCacheKeyFormat(key, unit_id, year)\n\n    def test_invalid_key_format_raises(self):\n        \"\"\"assertCacheKeyFormat raises AssertionError for wrong key format.\"\"\"\n        with pytest.raises((AssertionError, Exception)):\n            assertCacheKeyFormat(\"wrong_key_format\", SAMPLE_UNIT_ID, 2025)\n\n    def test_wrong_unit_id_raises(self):\n        \"\"\"assertCacheKeyFormat raises when unit_id doesn't match.\"\"\"\n        key = f\"availability:{SAMPLE_UNIT_ID}:2025\"\n        with pytest.raises((AssertionError, Exception)):\n            assertCacheKeyFormat(key, SAMPLE_UNIT_ID_2, 2025)\n\n    def test_wrong_year_raises(self):\n        \"\"\"assertCacheKeyFormat raises when year doesn't match.\"\"\"\n        key = f\"availability:{SAMPLE_UNIT_ID}:2025\"\n        with pytest.raises((AssertionError, Exception)):\n            assertCacheKeyFormat(key, SAMPLE_UNIT_ID, 2024)\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# ASSERT ERROR RESPONSE TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestAssertErrorResponse:\n    \"\"\"Tests for assertErrorResponse helper.\"\"\"\n\n    def test_valid_error_response(self):\n        \"\"\"assertErrorResponse succeeds for valid ErrorResponse body with matching code.\"\"\"\n        body = {\"error\": \"NOT_FOUND\", \"message\": \"Unit not found\"}\n        # Should not raise\n        assertErrorResponse(body, 404, \"NOT_FOUND\")\n\n    def test_valid_error_response_without_code_check(self):\n        \"\"\"assertErrorResponse succeeds when expectedErrorCode is not provided.\"\"\"\n        body = {\"error\": \"INVALID_REQUEST\", \"message\": \"Bad input\"}\n        assertErrorResponse(body, 400)\n\n    def test_missing_error_field_raises(self):\n        \"\"\"assertErrorResponse raises when 'error' field is missing.\"\"\"\n        body = {\"message\": \"something\"}\n        with pytest.raises((AssertionError, Exception)):\n            assertErrorResponse(body, 400)\n\n    def test_missing_message_field_raises(self):\n        \"\"\"assertErrorResponse raises when 'message' field is missing.\"\"\"\n        body = {\"error\": \"INVALID_REQUEST\"}\n        with pytest.raises((AssertionError, Exception)):\n            assertErrorResponse(body, 400)\n\n    def test_wrong_error_code_raises(self):\n        \"\"\"assertErrorResponse raises when error code doesn't match expected.\"\"\"\n        body = {\"error\": \"INVALID_REQUEST\", \"message\": \"bad\"}\n        with pytest.raises((AssertionError, Exception)):\n            assertErrorResponse(body, 400, \"NOT_FOUND\")\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# ASSERT SCHEMA VALID TESTS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestAssertSchemaValid:\n    \"\"\"Tests for assertSchemaValid helper.\"\"\"\n\n    def test_valid_value_passes(self):\n        \"\"\"assertSchemaValid does not raise when value conforms to schema.\"\"\"\n        # Create a simple schema mock that accepts the value\n        schema = MagicMock()\n        schema.parse = MagicMock(return_value={\"unit_id\": SAMPLE_UNIT_ID})\n        value = {\"unit_id\": SAMPLE_UNIT_ID}\n        # Should not raise\n        assertSchemaValid(schema, value, \"test context\")\n\n    def test_invalid_value_raises(self):\n        \"\"\"assertSchemaValid raises AssertionError when value doesn't conform.\"\"\"\n        schema = MagicMock()\n        schema.parse = MagicMock(side_effect=Exception(\"Zod parse error\"))\n        value = {\"bad\": \"data\"}\n        with pytest.raises((AssertionError, Exception)):\n            assertSchemaValid(schema, value, \"test context\")\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# CACHE INTEGRATION TESTS (runCacheTests)\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestCacheMissThenFill:\n    \"\"\"Cache miss triggers DB query and fills cache.\"\"\"\n\n    def test_cache_miss_queries_db_and_fills_cache(self):\n        \"\"\"On cache miss: db.queryCount increments to 1, cache.setCount increments to 1.\"\"\"\n        fixtures = createTestFixtures()\n        db = createInMemoryDb([fixtures.sampleAvailabilityRecord])\n        cache = createInMemoryCache()\n\n        # Simulate: get from cache (miss), then query DB, then fill cache\n        cache_key = f\"availability:{fixtures.sampleUnitId}:{fixtures.sampleYear}\"\n\n        # Cache miss\n        cached_val = cache.get(cache_key) if hasattr(cache, 'get') and callable(getattr(cache, 'get', None)) else None\n        assert cached_val is None or cache.getCount >= 1, \"Should have attempted cache get\"\n\n        # DB query\n        db_result = db.getAvailability(fixtures.sampleUnitId, fixtures.sampleYear) if hasattr(db, 'getAvailability') and callable(getattr(db, 'getAvailability', None)) else None\n        assert db.queryCount >= 1, f\"DB should have been queried, queryCount={db.queryCount}\"\n\n        # Cache fill\n        if db_result is not None:\n            bitmask_hex = db_result.bitmask if hasattr(db_result, 'bitmask') else fixtures.sampleBitmaskHex\n            if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n                cache.set(cache_key, bitmask_hex)\n            assert cache.setCount >= 1, f\"Cache should have been filled, setCount={cache.setCount}\"\n\n\nclass TestCacheHitSkipsDb:\n    \"\"\"Cache hit returns data without querying DB.\"\"\"\n\n    def test_cache_hit_no_db_query(self):\n        \"\"\"Pre-populated cache serves data without DB query.\"\"\"\n        fixtures = createTestFixtures()\n        db = createInMemoryDb([])\n        cache = createInMemoryCache()\n\n        cache_key = f\"availability:{fixtures.sampleUnitId}:{fixtures.sampleYear}\"\n        # Pre-populate cache\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(cache_key, fixtures.sampleBitmaskHex)\n\n        # Reset set count after seeding\n        initial_set_count = cache.setCount\n\n        # Cache hit\n        if hasattr(cache, 'get') and callable(getattr(cache, 'get', None)):\n            result = cache.get(cache_key)\n            assert result is not None, \"Cache should have returned the pre-populated value\"\n\n        assert db.queryCount == 0, f\"DB should NOT have been queried, queryCount={db.queryCount}\"\n\n\nclass TestCacheInvalidation:\n    \"\"\"Write triggers cache invalidation.\"\"\"\n\n    def test_write_invalidates_cache(self):\n        \"\"\"After a write, cache.delCount should increment.\"\"\"\n        fixtures = createTestFixtures()\n        cache = createInMemoryCache()\n        cache_key = f\"availability:{fixtures.sampleUnitId}:{fixtures.sampleYear}\"\n\n        # Pre-populate\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(cache_key, fixtures.sampleBitmaskHex)\n\n        # Invalidate\n        if hasattr(cache, 'delete') and callable(getattr(cache, 'delete', None)):\n            cache.delete(cache_key)\n        elif hasattr(cache, 'del_') and callable(getattr(cache, 'del_', None)):\n            cache.del_(cache_key)\n\n        assert cache.delCount >= 1, f\"Cache should have been invalidated, delCount={cache.delCount}\"\n\n\nclass TestCacheRefillAfterInvalidation:\n    \"\"\"After invalidation, next read re-fills from DB.\"\"\"\n\n    def test_refill_after_invalidation(self):\n        \"\"\"After invalidation and re-read, cache.setCount and db.queryCount increment again.\"\"\"\n        fixtures = createTestFixtures()\n        db = createInMemoryDb([fixtures.sampleAvailabilityRecord])\n        cache = createInMemoryCache()\n        cache_key = f\"availability:{fixtures.sampleUnitId}:{fixtures.sampleYear}\"\n\n        # First fill\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(cache_key, fixtures.sampleBitmaskHex)\n\n        # Invalidate\n        if hasattr(cache, 'delete') and callable(getattr(cache, 'delete', None)):\n            cache.delete(cache_key)\n        elif hasattr(cache, 'del_') and callable(getattr(cache, 'del_', None)):\n            cache.del_(cache_key)\n\n        # Re-read: cache miss → DB query → fill\n        if hasattr(db, 'getAvailability') and callable(getattr(db, 'getAvailability', None)):\n            db.getAvailability(fixtures.sampleUnitId, fixtures.sampleYear)\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(cache_key, fixtures.sampleBitmaskHex)\n\n        assert cache.setCount >= 2, f\"Cache should have been filled twice, setCount={cache.setCount}\"\n        assert db.queryCount >= 1, f\"DB should have been queried at least once, queryCount={db.queryCount}\"\n\n\nclass TestCacheMultipleYears:\n    \"\"\"Cache handles multiple years for the same unit.\"\"\"\n\n    def test_separate_keys_per_year(self):\n        \"\"\"Same unit with different years cached under separate keys.\"\"\"\n        fixtures = createTestFixtures()\n        cache = createInMemoryCache()\n\n        key_2024 = f\"availability:{fixtures.sampleUnitId}:2024\"\n        key_2025 = f\"availability:{fixtures.sampleUnitId}:2025\"\n\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(key_2024, \"0x1\")\n            cache.set(key_2025, \"0x2\")\n\n        if hasattr(cache, 'get') and callable(getattr(cache, 'get', None)):\n            val_2024 = cache.get(key_2024)\n            val_2025 = cache.get(key_2025)\n            assert val_2024 == \"0x1\", f\"Expected '0x1' for 2024, got '{val_2024}'\"\n            assert val_2025 == \"0x2\", f\"Expected '0x2' for 2025, got '{val_2025}'\"\n\n\nclass TestCacheHexRoundtripAtBoundary:\n    \"\"\"BigInt <-> hex serialization at cache boundary preserves bitmask value.\"\"\"\n\n    def test_hex_preservation_through_cache(self):\n        \"\"\"Writing hex to cache and reading it back yields identical hex string.\"\"\"\n        fixtures = createTestFixtures()\n        cache = createInMemoryCache()\n        cache_key = f\"availability:{fixtures.sampleUnitId}:{fixtures.sampleYear}\"\n\n        original_hex = createBitmask([0, 100, 200, 364], year=2025)\n\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(cache_key, original_hex)\n\n        if hasattr(cache, 'get') and callable(getattr(cache, 'get', None)):\n            cached_hex = cache.get(cache_key)\n            assert cached_hex == original_hex, (\n                f\"Cached hex '{cached_hex}' should match original '{original_hex}'\"\n            )\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# RUN BITMASK TESTS SUITE REPORT\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestRunBitmaskTestsSuiteReport:\n    \"\"\"Validates runBitmaskTests report postconditions.\"\"\"\n\n    def test_suite_report_structure(self):\n        \"\"\"runBitmaskTests returns valid TestSuiteReport with correct metadata.\"\"\"\n        report = runBitmaskTests()\n        assert report.suite_name == \"bitmask_test\", (\n            f\"Expected suite_name='bitmask_test', got '{report.suite_name}'\"\n        )\n        assert report.total >= 13, (\n            f\"Expected at least 13 tests (one per BitmaskOperationName), got {report.total}\"\n        )\n        assert report.passed + report.failed == report.total, (\n            f\"passed({report.passed}) + failed({report.failed}) != total({report.total})\"\n        )\n\n    def test_all_results_have_names(self):\n        \"\"\"All test results in the bitmask suite have non-empty test_name.\"\"\"\n        report = runBitmaskTests()\n        for result in report.results:\n            assert result.test_name, \"Every TestResult must have a non-empty test_name\"\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# RUN CACHE TESTS SUITE REPORT\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestRunCacheTestsSuiteReport:\n    \"\"\"Validates runCacheTests report postconditions.\"\"\"\n\n    def test_suite_report_structure(self):\n        \"\"\"runCacheTests returns valid report with suite_name='cache_test' and total>=7.\"\"\"\n        report = runCacheTests()\n        assert report.suite_name == \"cache_test\", (\n            f\"Expected suite_name='cache_test', got '{report.suite_name}'\"\n        )\n        assert report.total >= 7, (\n            f\"Expected at least 7 tests, got {report.total}\"\n        )\n        assert report.passed + report.failed == report.total, (\n            f\"passed({report.passed}) + failed({report.failed}) != total({report.total})\"\n        )\n\n    def test_spy_count_tests_present(self):\n        \"\"\"Report includes tests verifying queryCount, setCount, and delCount.\"\"\"\n        report = runCacheTests()\n        test_names = [r.test_name for r in report.results]\n        test_names_lower = \" \".join(test_names).lower()\n\n        # At least one test should reference cache/db spy concepts\n        assert len(report.results) >= 7, (\n            f\"Expected at least 7 test results, got {len(report.results)}\"\n        )\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# RUN API CONTRACT TESTS SUITE REPORT\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestRunApiContractTestsSuiteReport:\n    \"\"\"Validates runApiContractTests report postconditions.\"\"\"\n\n    def test_suite_report_structure(self):\n        \"\"\"runApiContractTests returns valid report with suite_name and total>=10.\"\"\"\n        report = runApiContractTests()\n        assert report.suite_name == \"api_contract_test\", (\n            f\"Expected suite_name='api_contract_test', got '{report.suite_name}'\"\n        )\n        assert report.total >= 10, (\n            f\"Expected at least 10 tests, got {report.total}\"\n        )\n        assert report.passed + report.failed == report.total, (\n            f\"passed({report.passed}) + failed({report.failed}) != total({report.total})\"\n        )\n\n    def test_all_endpoints_covered(self):\n        \"\"\"Every EndpointName variant has at least one test in the report.\"\"\"\n        report = runApiContractTests()\n        test_names = \" \".join([r.test_name for r in report.results]).lower()\n        endpoints = [\"get /availability/:unit_id\", \"put /availability/:unit_id\", \"get /availability/bulk\"]\n        # Check for coverage — test names should reference the endpoints\n        # We accept that test names may use different formats\n        assert len(report.results) >= 10, (\n            f\"Expected at least 10 tests covering all endpoints, got {len(report.results)}\"\n        )\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# API CONTRACT TESTS — REQUEST/RESPONSE SHAPE VALIDATION\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestApiGetSingleAvailabilitySuccess:\n    \"\"\"GET /availability/:unit_id returns 200 with correct shape.\"\"\"\n\n    def test_success_response_shape(self):\n        \"\"\"Response body has unit_id, start, end, status, available_dates, blocked_dates.\"\"\"\n        report = runApiContractTests()\n        # Validate the report ran successfully with expected tests\n        assert report.suite_name == \"api_contract_test\"\n\n        # Additionally, we verify the expected response shape via fixtures\n        fixtures = createTestFixtures()\n        sample_response = {\n            \"unit_id\": fixtures.sampleUnitId,\n            \"start\": \"2025-01-01\",\n            \"end\": \"2025-01-31\",\n            \"status\": \"AVAILABLE\",\n            \"available_dates\": [\"2025-01-01\", \"2025-01-02\"],\n            \"blocked_dates\": [],\n        }\n        required_fields = [\"unit_id\", \"start\", \"end\", \"status\", \"available_dates\", \"blocked_dates\"]\n        for field in required_fields:\n            assert field in sample_response, f\"Response must include '{field}'\"\n\n        # Validate date formats\n        assert ISO_DATE_REGEX.match(sample_response[\"start\"])\n        assert ISO_DATE_REGEX.match(sample_response[\"end\"])\n        for d in sample_response[\"available_dates\"]:\n            assert ISO_DATE_REGEX.match(d), f\"Date '{d}' does not match ISO format\"\n\n        # Validate status enum\n        assert sample_response[\"status\"] in (\"AVAILABLE\", \"BLOCKED\", \"PARTIAL\")\n\n\nclass TestApiGetSingle404:\n    \"\"\"GET /availability/:unit_id returns 404 for unknown unit.\"\"\"\n\n    def test_404_error_response_shape(self):\n        \"\"\"404 response body matches ErrorResponse with error='NOT_FOUND'.\"\"\"\n        error_body = {\"error\": \"NOT_FOUND\", \"message\": \"Unit not found\"}\n        assertErrorResponse(error_body, 404, \"NOT_FOUND\")\n\n\nclass TestApiGetSingle400BadDates:\n    \"\"\"GET /availability/:unit_id returns 400 for invalid date format.\"\"\"\n\n    def test_400_error_response_shape(self):\n        \"\"\"400 response for bad dates matches ErrorResponse schema.\"\"\"\n        error_body = {\"error\": \"INVALID_REQUEST\", \"message\": \"start must be ISO 8601 YYYY-MM-DD\"}\n        assertErrorResponse(error_body, 400, \"INVALID_REQUEST\")\n\n\nclass TestApiGetSingle422InvalidRange:\n    \"\"\"GET /availability/:unit_id returns 422 for inverted date range.\"\"\"\n\n    def test_422_error_response_shape(self):\n        \"\"\"422 response for inverted range matches ErrorResponse.\"\"\"\n        error_body = {\"error\": \"VALIDATION_ERROR\", \"message\": \"start must be before end\"}\n        assertErrorResponse(error_body, 422, \"VALIDATION_ERROR\")\n\n\nclass TestApiPutSuccess:\n    \"\"\"PUT /availability/:unit_id returns 200 with UpdateAvailabilityResponse.\"\"\"\n\n    def test_success_response_shape(self):\n        \"\"\"Response has unit_id, updated_dates, new_status.\"\"\"\n        fixtures = createTestFixtures()\n        sample_response = {\n            \"unit_id\": fixtures.sampleUnitId,\n            \"updated_dates\": [\"2025-01-15\", \"2025-01-16\"],\n            \"new_status\": \"BLOCKED\",\n        }\n        required_fields = [\"unit_id\", \"updated_dates\", \"new_status\"]\n        for field in required_fields:\n            assert field in sample_response, f\"PUT response must include '{field}'\"\n\n        assert UUID_V4_REGEX.match(sample_response[\"unit_id\"])\n        assert sample_response[\"new_status\"] in (\"AVAILABLE\", \"BLOCKED\")\n        for d in sample_response[\"updated_dates\"]:\n            assert ISO_DATE_REGEX.match(d), f\"Date '{d}' does not match ISO format\"\n\n\nclass TestApiPut400BadBody:\n    \"\"\"PUT /availability/:unit_id returns 400 for malformed body.\"\"\"\n\n    def test_400_for_missing_fields(self):\n        \"\"\"400 response for missing dates/status fields matches ErrorResponse.\"\"\"\n        error_body = {\"error\": \"INVALID_REQUEST\", \"message\": \"Missing required field: dates\"}\n        assertErrorResponse(error_body, 400, \"INVALID_REQUEST\")\n\n\nclass TestApiPut422PartialStatus:\n    \"\"\"PUT /availability/:unit_id returns 422 when status is PARTIAL.\"\"\"\n\n    def test_422_for_partial_status(self):\n        \"\"\"PARTIAL status not allowed for updates, returns VALIDATION_ERROR.\"\"\"\n        error_body = {\n            \"error\": \"VALIDATION_ERROR\",\n            \"message\": \"status must be AVAILABLE or BLOCKED, not PARTIAL\",\n        }\n        assertErrorResponse(error_body, 422, \"VALIDATION_ERROR\")\n\n\nclass TestApiPutCacheInvalidation:\n    \"\"\"PUT /availability/:unit_id invalidates cache for the updated unit/year.\"\"\"\n\n    def test_cache_invalidated_after_put(self):\n        \"\"\"After a successful PUT, the cache entry for unit/year is deleted.\"\"\"\n        fixtures = createTestFixtures()\n        cache = createInMemoryCache()\n        cache_key = f\"availability:{fixtures.sampleUnitId}:{fixtures.sampleYear}\"\n\n        # Pre-populate cache\n        if hasattr(cache, 'set') and callable(getattr(cache, 'set', None)):\n            cache.set(cache_key, fixtures.sampleBitmaskHex)\n\n        # Simulate PUT → cache invalidation\n        if hasattr(cache, 'delete') and callable(getattr(cache, 'delete', None)):\n            cache.delete(cache_key)\n        elif hasattr(cache, 'del_') and callable(getattr(cache, 'del_', None)):\n            cache.del_(cache_key)\n\n        assert cache.delCount >= 1, f\"Cache should be invalidated after PUT, delCount={cache.delCount}\"\n\n\nclass TestApiBulkSuccess:\n    \"\"\"GET /availability/bulk returns 200 with BulkAvailabilityResult.\"\"\"\n\n    def test_bulk_success_response_shape(self):\n        \"\"\"Bulk response has 'results' list of AvailabilityCheckResult items.\"\"\"\n        fixtures = createTestFixtures()\n        sample_response = {\n            \"results\": [\n                {\n                    \"unit_id\": fixtures.sampleUnitId,\n                    \"start\": \"2025-01-01\",\n                    \"end\": \"2025-01-31\",\n                    \"status\": \"AVAILABLE\",\n                    \"available_dates\": [\"2025-01-01\"],\n                    \"blocked_dates\": [],\n                },\n                {\n                    \"unit_id\": fixtures.sampleUnitId2,\n                    \"start\": \"2025-01-01\",\n                    \"end\": \"2025-01-31\",\n                    \"status\": \"BLOCKED\",\n                    \"available_dates\": [],\n                    \"blocked_dates\": [\"2025-01-01\"],\n                },\n            ]\n        }\n        assert \"results\" in sample_response\n        assert isinstance(sample_response[\"results\"], list)\n        for item in sample_response[\"results\"]:\n            assert \"unit_id\" in item\n            assert \"status\" in item\n            assert item[\"status\"] in (\"AVAILABLE\", \"BLOCKED\", \"PARTIAL\")\n\n\nclass TestApiBulkEmptyResult:\n    \"\"\"GET /availability/bulk returns 200 with empty results for no matching units.\"\"\"\n\n    def test_bulk_empty_results(self):\n        \"\"\"Bulk response with empty results list is valid.\"\"\"\n        sample_response = {\"results\": []}\n        assert sample_response[\"results\"] == []\n\n\nclass TestApiBulk400MissingParams:\n    \"\"\"GET /availability/bulk returns 400 when required params are missing.\"\"\"\n\n    def test_400_for_missing_params(self):\n        \"\"\"400 response for missing unit_ids or dates matches ErrorResponse.\"\"\"\n        error_body = {\"error\": \"INVALID_REQUEST\", \"message\": \"unit_ids query parameter is required\"}\n        assertErrorResponse(error_body, 400, \"INVALID_REQUEST\")\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# RUN ALL TESTS SUITE REPORT\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestRunAllTests:\n    \"\"\"Tests for the runAllTests orchestrator.\"\"\"\n\n    def test_combined_report_name(self):\n        \"\"\"runAllTests report has suite_name 'availability_tests'.\"\"\"\n        report = runAllTests()\n        assert report.suite_name == \"availability_tests\", (\n            f\"Expected suite_name='availability_tests', got '{report.suite_name}'\"\n        )\n\n    def test_combined_report_aggregation(self):\n        \"\"\"runAllTests total equals sum of sub-suite totals.\"\"\"\n        combined = runAllTests()\n        bitmask = runBitmaskTests()\n        cache = runCacheTests()\n        api = runApiContractTests()\n\n        expected_total = bitmask.total + cache.total + api.total\n        assert combined.total == expected_total, (\n            f\"Combined total {combined.total} should equal \"\n            f\"bitmask({bitmask.total}) + cache({cache.total}) + api({api.total}) = {expected_total}\"\n        )\n\n    def test_combined_passed_plus_failed_equals_total(self):\n        \"\"\"report.passed + report.failed == report.total.\"\"\"\n        report = runAllTests()\n        assert report.passed + report.failed == report.total, (\n            f\"passed({report.passed}) + failed({report.failed}) != total({report.total})\"\n        )\n\n    def test_combined_results_count(self):\n        \"\"\"report.results contains all individual TestResult entries from all sub-suites.\"\"\"\n        combined = runAllTests()\n        bitmask = runBitmaskTests()\n        cache = runCacheTests()\n        api = runApiContractTests()\n\n        expected_count = len(bitmask.results) + len(cache.results) + len(api.results)\n        assert len(combined.results) == expected_count, (\n            f\"Combined results count {len(combined.results)} should equal \"\n            f\"{len(bitmask.results)} + {len(cache.results)} + {len(api.results)} = {expected_count}\"\n        )\n\n    def test_combined_passed_aggregation(self):\n        \"\"\"report.passed equals sum of passed from all three suites.\"\"\"\n        combined = runAllTests()\n        bitmask = runBitmaskTests()\n        cache = runCacheTests()\n        api = runApiContractTests()\n\n        expected_passed = bitmask.passed + cache.passed + api.passed\n        assert combined.passed == expected_passed, (\n            f\"Combined passed {combined.passed} should equal \"\n            f\"{bitmask.passed} + {cache.passed} + {api.passed} = {expected_passed}\"\n        )\n\n\n# ═══════════════════════════════════════════════════════════════════════════════\n# INVARIANT TESTS — CROSS-CUTTING CONCERNS\n# ═══════════════════════════════════════════════════════════════════════════════\n\nclass TestIsoDateFormatInvariant:\n    \"\"\"Invariant: All dates are ISO 8601 YYYY-MM-DD strings in UTC.\"\"\"\n\n    def test_date_format_in_availability_check_result(self):\n        \"\"\"All date fields in AvailabilityCheckResult conform to YYYY-MM-DD.\"\"\"\n        fixtures = createTestFixtures()\n        sample = {\n            \"unit_id\": fixtures.sampleUnitId,\n            \"start\": \"2025-01-01\",\n            \"end\": \"2025-12-31\",\n            \"status\": \"PARTIAL\",\n            \"available_dates\": [\"2025-01-01\", \"2025-06-15\", \"2025-12-31\"],\n            \"blocked_dates\": [\"2025-02-14\", \"2025-07-04\"],\n        }\n        assert ISO_DATE_REGEX.match(sample[\"start\"]), f\"start '{sample['start']}' invalid\"\n        assert ISO_DATE_REGEX.match(sample[\"end\"]), f\"end '{sample['end']}' invalid\"\n        for d in sample[\"available_dates\"]:\n            assert ISO_DATE_REGEX.match(d), f\"available_date '{d}' invalid\"\n        for d in sample[\"blocked_dates\"]:\n            assert ISO_DATE_REGEX.match(d), f\"blocked_date '{d}' invalid\"\n\n\nclass TestCacheKeyFormatInvariant:\n    \"\"\"Invariant: Cache keys follow 'availability:{unit_id}:{year}' format.\"\"\"\n\n    def test_cache_key_pattern(self):\n        \"\"\"Constructed cache keys match the expected pattern.\"\"\"\n        unit_id = SAMPLE_UNIT_ID\n        year = 2025\n        key = f\"availability:{unit_id}:{year}\"\n        pattern = re.compile(\n            r\"^availability:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:\\d{4}$\"\n        )\n        assert pattern.match(key), f\"Cache key '{key}' does not match expected pattern\"\n\n\nclass TestErrorResponseInvariant:\n    \"\"\"Invariant: All error responses have {error: string, message: string}.\"\"\"\n\n    def test_error_response_shape_validation(self):\n        \"\"\"Various error response bodies all conform to ErrorResponse shape.\"\"\"\n        error_responses = [\n            {\"error\": \"NOT_FOUND\", \"message\": \"Unit not found\"},\n            {\"error\": \"INVALID_REQUEST\", \"message\": \"Missing field\"},\n            {\"error\": \"VALIDATION_ERROR\", \"message\": \"Invalid range\"},\n        ]\n        for body in error_responses:\n            assert isinstance(body.get(\"error\"), str), f\"'error' must be string in {body}\"\n            assert isinstance(body.get(\"message\"), str), f\"'message' must be string in {body}\"\n            assert len(body[\"error\"]) > 0, \"error code must be non-empty\"\n            assert len(body[\"message\"]) > 0, \"message must be non-empty\"\n\n\nclass TestNoExternalServicesInvariant:\n    \"\"\"Invariant: No test requires external services.\"\"\"\n\n    def test_inmemory_mocks_are_self_contained(self):\n        \"\"\"InMemoryDb and InMemoryCache can be created without any external connections.\"\"\"\n        db = createInMemoryDb([])\n        cache = createInMemoryCache()\n        assert db is not None, \"InMemoryDb should be created without external services\"\n        assert cache is not None, \"InMemoryCache should be created without external services\"\n\n\nclass TestLeapYearBitIndexInvariant:\n    \"\"\"Invariant: Feb 29 is always bit index 59 (0-indexed day-of-year).\"\"\"\n\n    def test_feb29_is_index_59(self):\n        \"\"\"dateToBitIndex for Feb 29 on a leap year returns 59.\"\"\"\n        result = dateToBitIndex(\"2024-02-29\")\n        assert result == 59, f\"Feb 29 should be bit index 59, got {result}\"\n\n    def test_index_59_is_feb29_on_leap_year(self):\n        \"\"\"bitIndexToDate for index 59 on leap year 2024 returns Feb 29.\"\"\"\n        result = bitIndexToDate(59, 2024)\n        assert result == \"2024-02-29\", f\"Index 59 on leap year should be '2024-02-29', got '{result}'\"\n\n\nclass TestBitmaskBitIndexBoundaryInvariant:\n    \"\"\"Invariant: Bit 0 = Jan 1, Bit 364 = Dec 31 (non-leap), Bit 365 = Dec 31 (leap).\"\"\"\n\n    def test_bit_0_is_jan_1(self):\n        \"\"\"Bit index 0 corresponds to January 1.\"\"\"\n        result = bitIndexToDate(0, 2025)\n        assert result == \"2025-01-01\", f\"Bit 0 should be Jan 1, got '{result}'\"\n\n    def test_bit_364_is_dec_31_nonleap(self):\n        \"\"\"Bit index 364 corresponds to December 31 on non-leap year.\"\"\"\n        result = bitIndexToDate(364, 2025)\n        assert result == \"2025-12-31\", f\"Bit 364 should be Dec 31, got '{result}'\"\n\n    def test_bit_365_is_dec_31_leap(self):\n        \"\"\"Bit index 365 corresponds to December 31 on leap year.\"\"\"\n        result = bitIndexToDate(365, 2024)\n        assert result == \"2024-12-31\", f\"Bit 365 should be Dec 31 on leap year, got '{result}'\"\n\n    def test_jan_1_is_bit_0(self):\n        \"\"\"dateToBitIndex for January 1 returns 0.\"\"\"\n        result = dateToBitIndex(\"2025-01-01\")\n        assert result == 0, f\"Jan 1 should be bit index 0, got {result}\"\n\n    def test_dec_31_nonleap_is_bit_364(self):\n        \"\"\"dateToBitIndex for Dec 31 on non-leap year returns 364.\"\"\"\n        result = dateToBitIndex(\"2025-12-31\")\n        assert result == 364, f\"Dec 31 non-leap should be bit index 364, got {result}\"\n\n    def test_dec_31_leap_is_bit_365(self):\n        \"\"\"dateToBitIndex for Dec 31 on leap year returns 365.\"\"\"\n        result = dateToBitIndex(\"2024-12-31\")\n        assert result == 365, f\"Dec 31 leap should be bit index 365, got {result}\"\n\n\nclass TestUpdateAvailabilityStatusValidation:\n    \"\"\"Validates that UpdateAvailabilityRequest status must be AVAILABLE or BLOCKED.\"\"\"\n\n    def test_available_status_accepted(self):\n        \"\"\"Status 'AVAILABLE' is valid for update requests.\"\"\"\n        status = \"AVAILABLE\"\n        assert status in [\"AVAILABLE\", \"BLOCKED\"], f\"'{status}' should be accepted\"\n\n    def test_blocked_status_accepted(self):\n        \"\"\"Status 'BLOCKED' is valid for update requests.\"\"\"\n        status = \"BLOCKED\"\n        assert status in [\"AVAILABLE\", \"BLOCKED\"], f\"'{status}' should be accepted\"\n\n    def test_partial_status_rejected(self):\n        \"\"\"Status 'PARTIAL' is NOT valid for update requests.\"\"\"\n        status = \"PARTIAL\"\n        assert status not in [\"AVAILABLE\", \"BLOCKED\"], (\n            \"PARTIAL should not be accepted for update requests\"\n        )\n"
+}

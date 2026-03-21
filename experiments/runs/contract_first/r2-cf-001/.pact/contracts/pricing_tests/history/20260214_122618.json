@@ -1,0 +1,2142 @@
+{
+  "component_id": "pricing_tests",
+  "name": "Pricing Service Tests",
+  "description": "Test suite for the rate cache pricing service. Covers unit tests for rate calculation logic (seasonal overlaps, LOS discounts, fee/tax stacking), cache shard distribution tests, API contract tests, cache miss/hit path tests, serialization round-trip tests, and edge cases (zero-night stays, currency rounding, overlapping rate overrides). All monetary values use integer minor-unit (cents) arithmetic. The computation pipeline order is codified as: base rates → seasonal/override resolution → LOS discount → flat fees → percentage fees → taxes. Each pipeline step is a pure function, independently testable. Tests use Deno BDD style with injected mock RedisClient and RateRepository interfaces.",
+  "version": 1,
+  "types": [
+    {
+      "name": "CurrencyCode",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 4217 three-letter uppercase currency code. Branded string type."
+    },
+    {
+      "name": "ISODateString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 8601 UTC date-time string (YYYY-MM-DDTHH:mm:ssZ). Branded string type."
+    },
+    {
+      "name": "UnitId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a rental unit."
+    },
+    {
+      "name": "RateConfigId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a rate configuration record."
+    },
+    {
+      "name": "RateOverrideId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a rate override record."
+    },
+    {
+      "name": "Money",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "amount_minor",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Amount in minor currency units (e.g. cents). Must be >= 0 for prices.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "amount_minor must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "ISO 4217 currency code.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "currency must be a 3-letter uppercase ISO 4217 code"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Monetary value represented as integer minor units (cents) with a currency code. No floating-point arithmetic."
+    },
+    {
+      "name": "PricingErrorKind",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "RATE_NOT_FOUND",
+        "INVALID_DATE_RANGE",
+        "ZERO_NIGHT_STAY",
+        "CURRENCY_MISMATCH",
+        "OVERLAPPING_OVERRIDES_CONFLICT",
+        "SHARD_UNAVAILABLE",
+        "CACHE_DESERIALIZATION_ERROR",
+        "INVALID_UNIT_ID",
+        "INVALID_DISCOUNT_CONFIGURATION",
+        "TAX_RATE_OUT_OF_RANGE",
+        "REPOSITORY_ERROR",
+        "SCHEMA_VALIDATION_ERROR"
+      ],
+      "inner_types": [],
+      "description": "Discriminator for the PricingError union type."
+    },
+    {
+      "name": "PricingError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "kind",
+          "type_ref": "PricingErrorKind",
+          "required": true,
+          "default": "",
+          "description": "Error discriminator.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        },
+        {
+          "name": "context",
+          "type_ref": "dict",
+          "required": false,
+          "default": "{}",
+          "description": "Arbitrary key-value context data for debugging (e.g. unit_id, date range).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Discriminated error type for all pricing operations. The 'kind' field acts as the discriminator."
+    },
+    {
+      "name": "ResultOk",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "Always true for success.",
+          "validators": []
+        },
+        {
+          "name": "value",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The successful result value (generic T).",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "None",
+          "required": true,
+          "default": "None",
+          "description": "Always None for success branch.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success branch of Result<T, PricingError>. Holds the value."
+    },
+    {
+      "name": "ResultErr",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "false",
+          "description": "Always false for error.",
+          "validators": []
+        },
+        {
+          "name": "value",
+          "type_ref": "None",
+          "required": true,
+          "default": "None",
+          "description": "Always None for error branch.",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "PricingError",
+          "required": true,
+          "default": "",
+          "description": "The pricing error.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Error branch of Result<T, PricingError>. Holds the error."
+    },
+    {
+      "name": "PricingResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "ResultOk",
+        "ResultErr"
+      ],
+      "description": "Result<T, PricingError> — either a success with value or a failure with PricingError. Exactly one branch is populated."
+    },
+    {
+      "name": "DateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "check_in",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Check-in date (inclusive).",
+          "validators": []
+        },
+        {
+          "name": "check_out",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Check-out date (exclusive). Must be after check_in.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Inclusive check-in to exclusive check-out date range."
+    },
+    {
+      "name": "NightlyRate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "The night this rate applies to.",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Nightly rate amount in minor units.",
+          "validators": []
+        },
+        {
+          "name": "source",
+          "type_ref": "RateSource",
+          "required": true,
+          "default": "",
+          "description": "Where this rate came from (base, seasonal, override).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A rate applicable to a specific date or date range for a unit."
+    },
+    {
+      "name": "RateSource",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "BASE",
+        "SEASONAL",
+        "DATE_OVERRIDE",
+        "MANUAL_OVERRIDE"
+      ],
+      "inner_types": [],
+      "description": "Origin tier for a resolved nightly rate, in priority order (highest wins)."
+    },
+    {
+      "name": "RateConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "RateConfigId",
+          "required": true,
+          "default": "",
+          "description": "Unique rate config identifier.",
+          "validators": []
+        },
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit this config belongs to.",
+          "validators": []
+        },
+        {
+          "name": "base_rate",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Default nightly rate when no overrides apply.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Currency for all rates in this config.",
+          "validators": []
+        },
+        {
+          "name": "seasonal_rates",
+          "type_ref": "SeasonalRateList",
+          "required": true,
+          "default": "[]",
+          "description": "Seasonal rate adjustments.",
+          "validators": []
+        },
+        {
+          "name": "date_overrides",
+          "type_ref": "DateOverrideList",
+          "required": true,
+          "default": "[]",
+          "description": "Date-specific rate overrides.",
+          "validators": []
+        },
+        {
+          "name": "los_discounts",
+          "type_ref": "LOSDiscountList",
+          "required": true,
+          "default": "[]",
+          "description": "Length-of-stay discount tiers.",
+          "validators": []
+        },
+        {
+          "name": "fees",
+          "type_ref": "FeeList",
+          "required": true,
+          "default": "[]",
+          "description": "Applicable fees (flat and percentage).",
+          "validators": []
+        },
+        {
+          "name": "taxes",
+          "type_ref": "TaxList",
+          "required": true,
+          "default": "[]",
+          "description": "Applicable taxes.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Authoritative rate configuration for a unit, stored in PostgreSQL."
+    },
+    {
+      "name": "SeasonalRate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Descriptive name (e.g. 'Summer Peak').",
+          "validators": []
+        },
+        {
+          "name": "start_date",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Season start (inclusive).",
+          "validators": []
+        },
+        {
+          "name": "end_date",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Season end (inclusive).",
+          "validators": []
+        },
+        {
+          "name": "nightly_amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Nightly rate during this season.",
+          "validators": []
+        },
+        {
+          "name": "priority",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Higher priority wins when seasons overlap. Must be >= 0.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "priority must be non-negative"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A seasonal rate adjustment applicable over a date range."
+    },
+    {
+      "name": "SeasonalRateList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "SeasonalRate",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of seasonal rate entries."
+    },
+    {
+      "name": "DateOverride",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "RateOverrideId",
+          "required": true,
+          "default": "",
+          "description": "Override identifier.",
+          "validators": []
+        },
+        {
+          "name": "date",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "The specific date.",
+          "validators": []
+        },
+        {
+          "name": "nightly_amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Override nightly rate.",
+          "validators": []
+        },
+        {
+          "name": "reason",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Reason for override.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A date-specific rate override (highest non-manual priority)."
+    },
+    {
+      "name": "DateOverrideList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "DateOverride",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of date-specific overrides."
+    },
+    {
+      "name": "LOSDiscount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "min_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Minimum nights (inclusive) to qualify.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": "min_nights must be at least 1"
+            }
+          ]
+        },
+        {
+          "name": "discount_percent",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Discount percentage as integer (e.g. 20 means 20%). Range 0-100.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0 <= value <= 100",
+              "error_message": "discount_percent must be between 0 and 100"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A length-of-stay discount tier. Applied after rate resolution."
+    },
+    {
+      "name": "LOSDiscountList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "LOSDiscount",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of LOS discount tiers sorted by min_nights ascending."
+    },
+    {
+      "name": "FeeType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "FLAT",
+        "PERCENTAGE"
+      ],
+      "inner_types": [],
+      "description": "Discriminator for fee calculation method."
+    },
+    {
+      "name": "Fee",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Fee name (e.g. 'Cleaning Fee', 'Service Fee').",
+          "validators": []
+        },
+        {
+          "name": "fee_type",
+          "type_ref": "FeeType",
+          "required": true,
+          "default": "",
+          "description": "FLAT or PERCENTAGE.",
+          "validators": []
+        },
+        {
+          "name": "amount_minor",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "For FLAT: amount in minor units. For PERCENTAGE: basis points (e.g. 500 = 5.00%).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "fee amount must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "taxable",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "Whether this fee is included in the tax base.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A fee applied to a stay. Flat fees are in minor units; percentage fees are basis points on the subtotal after LOS discount."
+    },
+    {
+      "name": "FeeList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "Fee",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of fees. Flat fees are applied before percentage fees per pipeline spec."
+    },
+    {
+      "name": "Tax",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Tax name (e.g. 'State Sales Tax', 'Tourism Levy').",
+          "validators": []
+        },
+        {
+          "name": "rate_basis_points",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Tax rate in basis points (e.g. 1000 = 10.00%).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0 <= value <= 10000",
+              "error_message": "tax rate must be between 0 and 10000 basis points (0-100%)"
+            }
+          ]
+        },
+        {
+          "name": "applies_to_fees",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "Whether this tax applies to taxable fees in addition to accommodation.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A tax applied to the taxable subtotal (accommodation + taxable fees)."
+    },
+    {
+      "name": "TaxList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "Tax",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of applicable taxes."
+    },
+    {
+      "name": "LineItemType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "NIGHTLY_RATE",
+        "LOS_DISCOUNT",
+        "FLAT_FEE",
+        "PERCENTAGE_FEE",
+        "TAX"
+      ],
+      "inner_types": [],
+      "description": "Type discriminator for price breakdown line items."
+    },
+    {
+      "name": "LineItem",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "type",
+          "type_ref": "LineItemType",
+          "required": true,
+          "default": "",
+          "description": "Line item category.",
+          "validators": []
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable label.",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Line item amount. Discounts are negative.",
+          "validators": []
+        },
+        {
+          "name": "metadata",
+          "type_ref": "dict",
+          "required": false,
+          "default": "{}",
+          "description": "Extra context (e.g. date, source tier, rate percent).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single line item in the price breakdown."
+    },
+    {
+      "name": "LineItemList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "LineItem",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of price breakdown line items."
+    },
+    {
+      "name": "NightlyRateList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "NightlyRate",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of resolved nightly rates."
+    },
+    {
+      "name": "PriceBreakdown",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit.",
+          "validators": []
+        },
+        {
+          "name": "date_range",
+          "type_ref": "DateRange",
+          "required": true,
+          "default": "",
+          "description": "Stay date range.",
+          "validators": []
+        },
+        {
+          "name": "num_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of nights in the stay.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": "num_nights must be at least 1"
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Currency for all monetary amounts.",
+          "validators": []
+        },
+        {
+          "name": "nightly_rates",
+          "type_ref": "NightlyRateList",
+          "required": true,
+          "default": "",
+          "description": "Resolved rate per night with source attribution.",
+          "validators": []
+        },
+        {
+          "name": "accommodation_subtotal",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of nightly rates before discounts.",
+          "validators": []
+        },
+        {
+          "name": "los_discount_applied",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether an LOS discount was applied.",
+          "validators": []
+        },
+        {
+          "name": "los_discount_percent",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "LOS discount percentage applied (0 if none).",
+          "validators": []
+        },
+        {
+          "name": "accommodation_after_discount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Accommodation subtotal after LOS discount.",
+          "validators": []
+        },
+        {
+          "name": "fees_subtotal",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of all fees.",
+          "validators": []
+        },
+        {
+          "name": "tax_subtotal",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of all taxes.",
+          "validators": []
+        },
+        {
+          "name": "total",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Final total: accommodation_after_discount + fees_subtotal + tax_subtotal.",
+          "validators": []
+        },
+        {
+          "name": "line_items",
+          "type_ref": "LineItemList",
+          "required": true,
+          "default": "",
+          "description": "Ordered, itemized breakdown. Sum of amounts equals total.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Itemized price breakdown for a stay. The sum of all line_items amounts equals total exactly (no rounding drift)."
+    },
+    {
+      "name": "StayRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "Rental unit to price.",
+          "validators": []
+        },
+        {
+          "name": "check_in",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Check-in date.",
+          "validators": []
+        },
+        {
+          "name": "check_out",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Check-out date.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Requested currency. Must match unit's configured currency.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "API request to compute pricing for a stay. Validated by Zod schema."
+    },
+    {
+      "name": "PriceResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "breakdown",
+          "type_ref": "PriceBreakdown",
+          "required": true,
+          "default": "",
+          "description": "The full itemized price breakdown.",
+          "validators": []
+        },
+        {
+          "name": "cached",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the result was served from cache.",
+          "validators": []
+        },
+        {
+          "name": "computed_at",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Timestamp when the price was computed.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "API response containing the full price breakdown. Validated by Zod schema."
+    },
+    {
+      "name": "ShardAssignment",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit being sharded.",
+          "validators": []
+        },
+        {
+          "name": "shard_index",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Zero-based shard index.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "shard_index must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "shard_key",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The Redis key prefix for this shard (e.g. 'rate_shard:7').",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of mapping a unit_id to a Redis shard."
+    },
+    {
+      "name": "ShardDistributionReport",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total number of shards.",
+          "validators": []
+        },
+        {
+          "name": "unit_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total units distributed.",
+          "validators": []
+        },
+        {
+          "name": "counts_per_shard",
+          "type_ref": "list",
+          "required": true,
+          "default": "",
+          "description": "List of int counts, one per shard.",
+          "validators": []
+        },
+        {
+          "name": "max_deviation_percent",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Maximum deviation from perfectly uniform distribution, as a percentage.",
+          "validators": []
+        },
+        {
+          "name": "is_uniform",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if max_deviation_percent is within acceptable threshold.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Report of shard distribution uniformity across a set of unit IDs."
+    },
+    {
+      "name": "CachePathResult",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "HIT",
+        "MISS_THEN_WRITEBACK",
+        "MISS_REPO_ERROR",
+        "DESERIALIZATION_ERROR",
+        "SHARD_UNAVAILABLE"
+      ],
+      "inner_types": [],
+      "description": "Outcome of a cache lookup operation."
+    },
+    {
+      "name": "CacheLookupReport",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "path",
+          "type_ref": "CachePathResult",
+          "required": true,
+          "default": "",
+          "description": "Which code path was exercised.",
+          "validators": []
+        },
+        {
+          "name": "redis_get_calls",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of Redis GET calls made.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "call count must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "redis_set_calls",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of Redis SET calls made (writebacks).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "call count must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "repo_calls",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of RateRepository calls made.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "call count must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "ttl_seconds",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "TTL set on writeback, or -1 if no writeback.",
+          "validators": []
+        },
+        {
+          "name": "result",
+          "type_ref": "PricingResult",
+          "required": true,
+          "default": "",
+          "description": "The pricing result from the lookup.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Diagnostic report from a cache lookup, used in cache path tests."
+    },
+    {
+      "name": "MockRedisClient",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "get_responses",
+          "type_ref": "dict",
+          "required": true,
+          "default": "{}",
+          "description": "Map of key -> pre-configured response (str value or None for miss).",
+          "validators": []
+        },
+        {
+          "name": "get_call_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Number of GET calls made.",
+          "validators": []
+        },
+        {
+          "name": "set_call_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Number of SET calls made.",
+          "validators": []
+        },
+        {
+          "name": "last_set_ttl",
+          "type_ref": "int",
+          "required": true,
+          "default": "-1",
+          "description": "TTL of last SET call, or -1 if none.",
+          "validators": []
+        },
+        {
+          "name": "should_fail",
+          "type_ref": "bool",
+          "required": true,
+          "default": "false",
+          "description": "If true, all operations throw a shard unavailable error.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Mock Redis client injected in tests. Tracks call counts and allows pre-configured responses."
+    },
+    {
+      "name": "MockRateRepository",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "configs",
+          "type_ref": "dict",
+          "required": true,
+          "default": "{}",
+          "description": "Map of unit_id -> RateConfig for lookup.",
+          "validators": []
+        },
+        {
+          "name": "call_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Number of lookup calls made.",
+          "validators": []
+        },
+        {
+          "name": "should_fail",
+          "type_ref": "bool",
+          "required": true,
+          "default": "false",
+          "description": "If true, all operations return REPOSITORY_ERROR.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Mock PostgreSQL rate repository injected in tests. Tracks call counts and returns pre-configured rate configs."
+    },
+    {
+      "name": "TestFixtureOverrides",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": false,
+          "default": "",
+          "description": "Override unit ID.",
+          "validators": []
+        },
+        {
+          "name": "base_rate_minor",
+          "type_ref": "int",
+          "required": false,
+          "default": "",
+          "description": "Override base rate in minor units.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": false,
+          "default": "",
+          "description": "Override currency.",
+          "validators": []
+        },
+        {
+          "name": "check_in",
+          "type_ref": "ISODateString",
+          "required": false,
+          "default": "",
+          "description": "Override check-in date.",
+          "validators": []
+        },
+        {
+          "name": "check_out",
+          "type_ref": "ISODateString",
+          "required": false,
+          "default": "",
+          "description": "Override check-out date.",
+          "validators": []
+        },
+        {
+          "name": "seasonal_rates",
+          "type_ref": "SeasonalRateList",
+          "required": false,
+          "default": "",
+          "description": "Override seasonal rates.",
+          "validators": []
+        },
+        {
+          "name": "date_overrides",
+          "type_ref": "DateOverrideList",
+          "required": false,
+          "default": "",
+          "description": "Override date-specific rates.",
+          "validators": []
+        },
+        {
+          "name": "los_discounts",
+          "type_ref": "LOSDiscountList",
+          "required": false,
+          "default": "",
+          "description": "Override LOS discounts.",
+          "validators": []
+        },
+        {
+          "name": "fees",
+          "type_ref": "FeeList",
+          "required": false,
+          "default": "",
+          "description": "Override fees.",
+          "validators": []
+        },
+        {
+          "name": "taxes",
+          "type_ref": "TaxList",
+          "required": false,
+          "default": "",
+          "description": "Override taxes.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Optional overrides passed to fixture factory functions (buildRate, buildStay, etc.)."
+    },
+    {
+      "name": "SerializationRoundTripResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "original_json",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "JSON string of the original object.",
+          "validators": []
+        },
+        {
+          "name": "deserialized_json",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "JSON string after deserialize-then-reserialize.",
+          "validators": []
+        },
+        {
+          "name": "is_identical",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the two JSON strings are semantically identical.",
+          "validators": []
+        },
+        {
+          "name": "type_name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Name of the type being round-tripped.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of a JSON serialization round-trip test."
+    },
+    {
+      "name": "SchemaValidationResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "valid",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the payload passed schema validation.",
+          "validators": []
+        },
+        {
+          "name": "errors",
+          "type_ref": "list",
+          "required": true,
+          "default": "[]",
+          "description": "List of validation error strings (empty if valid).",
+          "validators": []
+        },
+        {
+          "name": "schema_name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Name of the Zod schema used.",
+          "validators": []
+        },
+        {
+          "name": "payload_summary",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Brief summary of the payload tested.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of validating a payload against its Zod schema."
+    },
+    {
+      "name": "TestSuiteReport",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "file_path",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Relative path of the test file (e.g. 'services/pricing/tests/rate_calculation_test.ts').",
+          "validators": []
+        },
+        {
+          "name": "total_tests",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total number of test cases.",
+          "validators": []
+        },
+        {
+          "name": "passed",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of passed tests.",
+          "validators": []
+        },
+        {
+          "name": "failed",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of failed tests.",
+          "validators": []
+        },
+        {
+          "name": "skipped",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of skipped tests.",
+          "validators": []
+        },
+        {
+          "name": "duration_ms",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Total execution time in milliseconds.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Aggregate report for an entire test file execution."
+    }
+  ],
+  "functions": [
+    {
+      "name": "resolve_nightly_rates",
+      "description": "Pure function (pipeline step 1-2): resolves nightly rates for each night in the date range using the 4-tier override system (BASE < SEASONAL < DATE_OVERRIDE < MANUAL_OVERRIDE). Higher-tier rates win. For overlapping seasonal rates, the one with higher priority wins. Tested in rate_calculation_test.ts.",
+      "inputs": [
+        {
+          "name": "rate_config",
+          "type_ref": "RateConfig",
+          "required": true,
+          "default": "",
+          "description": "The unit's authoritative rate configuration.",
+          "validators": []
+        },
+        {
+          "name": "date_range",
+          "type_ref": "DateRange",
+          "required": true,
+          "default": "",
+          "description": "The stay date range.",
+          "validators": []
+        }
+      ],
+      "output_type": "PricingResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range",
+          "condition": "check_out <= check_in",
+          "error_type": "INVALID_DATE_RANGE",
+          "error_data": {}
+        },
+        {
+          "name": "zero_night_stay",
+          "condition": "check_out == check_in (0 nights)",
+          "error_type": "ZERO_NIGHT_STAY",
+          "error_data": {}
+        },
+        {
+          "name": "overlapping_overrides_conflict",
+          "condition": "Multiple date overrides exist for the same date with different amounts",
+          "error_type": "OVERLAPPING_OVERRIDES_CONFLICT",
+          "error_data": {}
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "A seasonal rate or override has a different currency than the config",
+          "error_type": "CURRENCY_MISMATCH",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "date_range.check_out > date_range.check_in",
+        "rate_config.base_rate.currency matches rate_config.currency",
+        "All seasonal_rates and date_overrides amounts share the same currency as rate_config.currency"
+      ],
+      "postconditions": [
+        "On success, result contains a NightlyRateList with exactly (check_out - check_in) entries in calendar order",
+        "Each NightlyRate has a source reflecting the highest-priority tier that matched",
+        "All returned Money amounts share the same currency as rate_config.currency"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "apply_los_discount",
+      "description": "Pure function (pipeline step 3): applies the best matching length-of-stay discount to the accommodation subtotal. Selects the discount tier with the highest min_nights that the stay qualifies for. Tested in los_discount_test.ts.",
+      "inputs": [
+        {
+          "name": "accommodation_subtotal",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of resolved nightly rates.",
+          "validators": []
+        },
+        {
+          "name": "num_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of nights in the stay.",
+          "validators": []
+        },
+        {
+          "name": "los_discounts",
+          "type_ref": "LOSDiscountList",
+          "required": true,
+          "default": "",
+          "description": "Available LOS discount tiers.",
+          "validators": []
+        }
+      ],
+      "output_type": "PricingResult",
+      "error_cases": [
+        {
+          "name": "invalid_discount_config",
+          "condition": "LOS discount tiers have duplicate min_nights values",
+          "error_type": "INVALID_DISCOUNT_CONFIGURATION",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "num_nights >= 1",
+        "accommodation_subtotal.amount_minor >= 0",
+        "los_discounts is sorted by min_nights ascending",
+        "All discount_percent values are 0-100"
+      ],
+      "postconditions": [
+        "On success, result contains a Money value <= accommodation_subtotal",
+        "If no discount tier matches, returned amount equals accommodation_subtotal",
+        "Discount is calculated as floor(subtotal * discount_percent / 100) to avoid rounding up",
+        "Currency of result matches accommodation_subtotal.currency"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "apply_flat_fees",
+      "description": "Pure function (pipeline step 4): computes and appends all flat fees. Flat fees are absolute amounts independent of accommodation total. Tested in fee_tax_test.ts.",
+      "inputs": [
+        {
+          "name": "fees",
+          "type_ref": "FeeList",
+          "required": true,
+          "default": "",
+          "description": "All configured fees (function filters to FLAT only).",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Expected currency for validation.",
+          "validators": []
+        }
+      ],
+      "output_type": "PricingResult",
+      "error_cases": [
+        {
+          "name": "currency_mismatch",
+          "condition": "A flat fee is configured in a different currency",
+          "error_type": "CURRENCY_MISMATCH",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "All FLAT fees have amounts in the specified currency"
+      ],
+      "postconditions": [
+        "On success, result contains a LineItemList of FLAT_FEE line items",
+        "Each line item amount matches the fee's amount_minor exactly",
+        "All returned amounts use the specified currency"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "apply_percentage_fees",
+      "description": "Pure function (pipeline step 5): computes percentage-based fees on the post-discount accommodation subtotal. Percentage is in basis points. Result is floor-rounded. Tested in fee_tax_test.ts.",
+      "inputs": [
+        {
+          "name": "fees",
+          "type_ref": "FeeList",
+          "required": true,
+          "default": "",
+          "description": "All configured fees (function filters to PERCENTAGE only).",
+          "validators": []
+        },
+        {
+          "name": "base_amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "The accommodation subtotal after LOS discount, used as the fee base.",
+          "validators": []
+        }
+      ],
+      "output_type": "PricingResult",
+      "error_cases": [],
+      "preconditions": [
+        "base_amount.amount_minor >= 0",
+        "All PERCENTAGE fee amounts represent basis points (0-10000)"
+      ],
+      "postconditions": [
+        "On success, result contains a LineItemList of PERCENTAGE_FEE line items",
+        "Each fee amount = floor(base_amount.amount_minor * fee.amount_minor / 10000)",
+        "All returned amounts use base_amount.currency"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "apply_taxes",
+      "description": "Pure function (pipeline step 6): computes taxes on the taxable subtotal (accommodation after discount + taxable fees). Tax rate is in basis points. Result is floor-rounded. Tested in fee_tax_test.ts.",
+      "inputs": [
+        {
+          "name": "taxes",
+          "type_ref": "TaxList",
+          "required": true,
+          "default": "",
+          "description": "Applicable tax configurations.",
+          "validators": []
+        },
+        {
+          "name": "accommodation_after_discount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Accommodation subtotal after LOS discount.",
+          "validators": []
+        },
+        {
+          "name": "taxable_fees_total",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of fees marked as taxable.",
+          "validators": []
+        }
+      ],
+      "output_type": "PricingResult",
+      "error_cases": [
+        {
+          "name": "tax_rate_out_of_range",
+          "condition": "A tax rate_basis_points exceeds 10000",
+          "error_type": "TAX_RATE_OUT_OF_RANGE",
+          "error_data": {}
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "accommodation_after_discount and taxable_fees_total currencies differ",
+          "error_type": "CURRENCY_MISMATCH",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "accommodation_after_discount and taxable_fees_total use the same currency",
+        "All tax rate_basis_points are 0-10000"
+      ],
+      "postconditions": [
+        "On success, result contains a LineItemList of TAX line items",
+        "Each tax amount = floor(taxable_base * rate_basis_points / 10000)",
+        "Taxes that apply_to_fees use (accommodation_after_discount + taxable_fees_total) as base",
+        "Taxes that do not apply_to_fees use accommodation_after_discount only as base",
+        "All returned amounts use accommodation_after_discount.currency"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "calculate_total",
+      "description": "Pipeline composition function: executes the full pricing pipeline (resolve_nightly_rates → apply_los_discount → apply_flat_fees → apply_percentage_fees → apply_taxes) and assembles an itemized PriceBreakdown. Tested across rate_calculation_test.ts, los_discount_test.ts, fee_tax_test.ts, and edge_cases_test.ts.",
+      "inputs": [
+        {
+          "name": "rate_config",
+          "type_ref": "RateConfig",
+          "required": true,
+          "default": "",
+          "description": "The unit's rate configuration.",
+          "validators": []
+        },
+        {
+          "name": "stay_request",
+          "type_ref": "StayRequest",
+          "required": true,
+          "default": "",
+          "description": "The pricing request with unit, dates, and currency.",
+          "validators": []
+        }
+      ],
+      "output_type": "PricingResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range",
+          "condition": "check_out <= check_in",
+          "error_type": "INVALID_DATE_RANGE",
+          "error_data": {}
+        },
+        {
+          "name": "zero_night_stay",
+          "condition": "check_out == check_in",
+          "error_type": "ZERO_NIGHT_STAY",
+          "error_data": {}
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "stay_request.currency != rate_config.currency",
+          "error_type": "CURRENCY_MISMATCH",
+          "error_data": {}
+        },
+        {
+          "name": "invalid_unit_id",
+          "condition": "stay_request.unit_id != rate_config.unit_id",
+          "error_type": "INVALID_UNIT_ID",
+          "error_data": {}
+        },
+        {
+          "name": "overlapping_overrides_conflict",
+          "condition": "Conflicting date overrides detected during rate resolution",
+          "error_type": "OVERLAPPING_OVERRIDES_CONFLICT",
+          "error_data": {}
+        },
+        {
+          "name": "invalid_discount_config",
+          "condition": "LOS discount tiers are malformed",
+          "error_type": "INVALID_DISCOUNT_CONFIGURATION",
+          "error_data": {}
+        },
+        {
+          "name": "tax_rate_out_of_range",
+          "condition": "A tax rate exceeds 100%",
+          "error_type": "TAX_RATE_OUT_OF_RANGE",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "stay_request.check_out > stay_request.check_in",
+        "stay_request.currency matches rate_config.currency",
+        "stay_request.unit_id matches rate_config.unit_id"
+      ],
+      "postconditions": [
+        "On success, result.value is a PriceBreakdown",
+        "PriceBreakdown.total = accommodation_after_discount + fees_subtotal + tax_subtotal",
+        "Sum of all line_items amounts equals total exactly (no rounding drift)",
+        "PriceBreakdown.nightly_rates has exactly num_nights entries",
+        "Pipeline steps are applied in codified order: base → seasonal/override → LOS → flat fees → % fees → taxes"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "compute_shard_index",
+      "description": "Deterministic shard assignment: maps a UnitId to a shard index via consistent hashing. Tested in cache_shard_test.ts.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit ID to shard.",
+          "validators": []
+        },
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total number of Redis shards.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": "shard_count must be at least 1"
+            }
+          ]
+        }
+      ],
+      "output_type": "ShardAssignment",
+      "error_cases": [
+        {
+          "name": "invalid_unit_id",
+          "condition": "unit_id is not a valid UUID v4",
+          "error_type": "INVALID_UNIT_ID",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "shard_count >= 1",
+        "unit_id is a valid UUID v4 string"
+      ],
+      "postconditions": [
+        "shard_index is in range [0, shard_count)",
+        "Same unit_id + shard_count always produces the same shard_index (deterministic)",
+        "shard_key follows the pattern 'rate_shard:{shard_index}'"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "check_shard_distribution",
+      "description": "Test utility: distributes a set of unit IDs across shards and reports uniformity. Used in cache_shard_test.ts to verify even distribution.",
+      "inputs": [
+        {
+          "name": "unit_ids",
+          "type_ref": "list",
+          "required": true,
+          "default": "",
+          "description": "List of UnitId strings to distribute.",
+          "validators": []
+        },
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total number of shards.",
+          "validators": []
+        },
+        {
+          "name": "max_acceptable_deviation_percent",
+          "type_ref": "float",
+          "required": true,
+          "default": "15.0",
+          "description": "Maximum acceptable deviation from uniform distribution (e.g. 15.0 for 15%).",
+          "validators": []
+        }
+      ],
+      "output_type": "ShardDistributionReport",
+      "error_cases": [],
+      "preconditions": [
+        "shard_count >= 1",
+        "unit_ids is non-empty",
+        "max_acceptable_deviation_percent > 0"
+      ],
+      "postconditions": [
+        "counts_per_shard has exactly shard_count entries",
+        "Sum of counts_per_shard equals len(unit_ids)",
+        "is_uniform is true iff max_deviation_percent <= max_acceptable_deviation_percent"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "lookup_price_with_cache",
+      "description": "Executes the cache-aware pricing lookup: checks Redis first (hit path), falls back to PostgreSQL via RateRepository on miss, writes back to cache on miss, then returns the computed PriceBreakdown. Uses injected RedisClient and RateRepository for testability. Tested in cache_path_test.ts.",
+      "inputs": [
+        {
+          "name": "stay_request",
+          "type_ref": "StayRequest",
+          "required": true,
+          "default": "",
+          "description": "The pricing request.",
+          "validators": []
+        },
+        {
+          "name": "redis_client",
+          "type_ref": "MockRedisClient",
+          "required": true,
+          "default": "",
+          "description": "Injected Redis client (mock in tests).",
+          "validators": []
+        },
+        {
+          "name": "rate_repository",
+          "type_ref": "MockRateRepository",
+          "required": true,
+          "default": "",
+          "description": "Injected rate repository (mock in tests).",
+          "validators": []
+        },
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total Redis shard count.",
+          "validators": []
+        },
+        {
+          "name": "cache_ttl_seconds",
+          "type_ref": "int",
+          "required": true,
+          "default": "3600",
+          "description": "TTL for cache writebacks in seconds.",
+          "validators": []
+        }
+      ],
+      "output_type": "CacheLookupReport",
+      "error_cases": [
+        {
+          "name": "shard_unavailable",
+          "condition": "Redis client is unavailable or fails",
+          "error_type": "SHARD_UNAVAILABLE",
+          "error_data": {}
+        },
+        {
+          "name": "repository_error",
+          "condition": "RateRepository fails on cache miss fallback",
+          "error_type": "REPOSITORY_ERROR",
+          "error_data": {}
+        },
+        {
+          "name": "cache_deserialization_error",
+          "condition": "Cached data fails to deserialize into valid rate structure",
+          "error_type": "CACHE_DESERIALIZATION_ERROR",
+          "error_data": {}
+        },
+        {
+          "name": "rate_not_found",
+          "condition": "RateRepository returns no config for the unit_id",
+          "error_type": "RATE_NOT_FOUND",
+          "error_data": {}
+        },
+        {
+          "name": "invalid_unit_id",
+          "condition": "unit_id is not a valid UUID",
+          "error_type": "INVALID_UNIT_ID",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "stay_request is a valid StayRequest",
+        "shard_count >= 1",
+        "cache_ttl_seconds > 0"
+      ],
+      "postconditions": [
+        "On HIT: redis_get_calls == 1, redis_set_calls == 0, repo_calls == 0",
+        "On MISS_THEN_WRITEBACK: redis_get_calls == 1, redis_set_calls == 1, repo_calls == 1, ttl_seconds == cache_ttl_seconds",
+        "On MISS_REPO_ERROR: redis_get_calls == 1, redis_set_calls == 0, repo_calls == 1, result is ResultErr",
+        "On DESERIALIZATION_ERROR: redis_get_calls == 1, result is ResultErr with CACHE_DESERIALIZATION_ERROR",
+        "On SHARD_UNAVAILABLE: result is ResultErr with SHARD_UNAVAILABLE"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Increments redis_client.get_call_count",
+        "May increment redis_client.set_call_count on cache writeback",
+        "Increments rate_repository.call_count on cache miss",
+        "Sets redis_client.last_set_ttl on cache writeback"
+      ]
+    },
+    {
+      "name": "validate_stay_request_schema",
+      "description": "Validates a raw payload against the StayRequest Zod schema. Tested in api_contract_test.ts.",
+      "inputs": [
+        {
+          "name": "payload",
+          "type_ref": "dict",
+          "required": true,
+          "default": "",
+          "description": "Raw JSON-deserialized payload to validate.",
+          "validators": []
+        }
+      ],
+      "output_type": "SchemaValidationResult",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "If valid is true, errors is empty",
+        "If valid is false, errors contains at least one error description",
+        "schema_name is 'StayRequestSchema'"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "validate_price_response_schema",
+      "description": "Validates a raw payload against the PriceResponse Zod schema. Tested in api_contract_test.ts.",
+      "inputs": [
+        {
+          "name": "payload",
+          "type_ref": "dict",
+          "required": true,
+          "default": "",
+          "description": "Raw JSON-deserialized payload to validate.",
+          "validators": []
+        }
+      ],
+      "output_type": "SchemaValidationResult",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "If valid is true, errors is empty",
+        "If valid is false, errors contains at least one error description",
+        "schema_name is 'PriceResponseSchema'"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "round_trip_serialize",
+      "description": "Tests JSON serialization round-trip fidelity: serializes a typed object to JSON, deserializes it back, re-serializes, and compares. Tested in serialization_test.ts.",
+      "inputs": [
+        {
+          "name": "value",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The typed value to round-trip.",
+          "validators": []
+        },
+        {
+          "name": "type_name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Name of the type (e.g. 'RateConfig', 'PriceBreakdown') for reporting.",
+          "validators": []
+        }
+      ],
+      "output_type": "SerializationRoundTripResult",
+      "error_cases": [],
+      "preconditions": [
+        "value is a valid instance of the named type"
+      ],
+      "postconditions": [
+        "is_identical is true iff original_json and deserialized_json are semantically equivalent",
+        "type_name in result matches the input type_name"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "build_rate_config",
+      "description": "Test fixture factory: creates a valid RateConfig with sensible defaults. All fields can be overridden. Used across all test files.",
+      "inputs": [
+        {
+          "name": "overrides",
+          "type_ref": "TestFixtureOverrides",
+          "required": false,
+          "default": "{}",
+          "description": "Optional field overrides.",
+          "validators": []
+        }
+      ],
+      "output_type": "RateConfig",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "Returned RateConfig has all required fields populated",
+        "Default base_rate is 10000 minor units (e.g. $100.00) in USD",
+        "Default unit_id is a deterministic test UUID",
+        "All override values replace corresponding defaults",
+        "Returned object passes RateConfig schema validation"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "build_stay_request",
+      "description": "Test fixture factory: creates a valid StayRequest with sensible defaults (3-night stay, USD). All fields can be overridden.",
+      "inputs": [
+        {
+          "name": "overrides",
+          "type_ref": "TestFixtureOverrides",
+          "required": false,
+          "default": "{}",
+          "description": "Optional field overrides.",
+          "validators": []
+        }
+      ],
+      "output_type": "StayRequest",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "Returned StayRequest has all required fields populated",
+        "Default stay is 3 nights starting from a fixed test date",
+        "Default currency is USD",
+        "Default unit_id matches build_rate_config default",
+        "Returned object passes StayRequest schema validation"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "run_test_suite",
+      "description": "Executes a named test file and returns aggregate results. Used for test orchestration and CI reporting.",
+      "inputs": [
+        {
+          "name": "file_path",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Relative path to the test file (e.g. 'services/pricing/tests/rate_calculation_test.ts').",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^services/pricing/tests/[a-z_]+_test\\.ts$",
+              "error_message": "file_path must match pattern services/pricing/tests/<name>_test.ts"
+            }
+          ]
+        }
+      ],
+      "output_type": "TestSuiteReport",
+      "error_cases": [
+        {
+          "name": "file_not_found",
+          "condition": "The specified test file does not exist",
+          "error_type": "REPOSITORY_ERROR",
+          "error_data": {
+            "detail": "Test file not found at specified path"
+          }
+        }
+      ],
+      "preconditions": [
+        "file_path points to an existing test file"
+      ],
+      "postconditions": [
+        "total_tests == passed + failed + skipped",
+        "duration_ms >= 0",
+        "file_path in result matches input file_path"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    }
+  ],
+  "dependencies": [],
+  "dependency_contracts": {},
+  "invariants": [
+    "All monetary amounts are represented as non-negative integers in minor currency units (cents). No floating-point money arithmetic is ever used.",
+    "CurrencyCode is always an uppercase ISO 4217 three-letter string (e.g. 'USD', 'EUR').",
+    "All entity IDs (UnitId, RateConfigId, RateOverrideId) are UUID v4 strings matching the pattern [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}.",
+    "All date values (ISODateString) conform to ISO 8601 UTC format YYYY-MM-DDTHH:mm:ssZ.",
+    "The calculation pipeline is always applied in strict order: base rates → seasonal/override resolution → LOS discount → flat fees → percentage fees → taxes.",
+    "Shard assignment is deterministic: the same UnitId always maps to the same shard index for a given shard count.",
+    "Result types always contain exactly one of 'ok' value or 'error' value, never both and never neither.",
+    "Test fixture factories always produce valid domain objects with all required fields populated by sensible defaults.",
+    "Mock call counters are monotonically non-decreasing integers starting at zero.",
+    "PriceBreakdown line items sum exactly to the total field — no rounding drift is permitted."
+  ],
+  "requires": []
+}

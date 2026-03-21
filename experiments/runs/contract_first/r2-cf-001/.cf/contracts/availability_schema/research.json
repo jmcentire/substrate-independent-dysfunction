@@ -1,0 +1,118 @@
+{
+  "task_summary": "Define the interface contract for 'Availability Database Schema & Repository' (availability_schema) — a PostgreSQL schema for availability_blocks table and a TypeScript repository layer with typed functions for CRUD operations on availability blocks. Must include migration SQL, seed data, and align with the parent bitmask-based availability service running on Deno 2.x with Oak.",
+  "findings": [
+    {
+      "topic": "PostgreSQL Schema Design for Date-Range Availability",
+      "finding": "Use DATE type (not TIMESTAMP) for start_date/end_date since availability is day-granular. Add a CHECK constraint ensuring end_date >= start_date. Add a composite index on (unit_id, start_date, end_date) to support range-overlap queries efficiently. Use an EXCLUDE constraint with daterange and gist index to prevent overlapping blocks for the same unit_id, which enforces data integrity at the DB level rather than application level.",
+      "source": "PostgreSQL documentation on range types, exclusion constraints, and GiST indexes",
+      "relevance": "Core schema design — prevents invalid states and ensures efficient queries for the bitmask cache warming",
+      "confidence": 0.95
+    },
+    {
+      "topic": "PostgreSQL ENUM vs CHECK Constraint for block_type",
+      "finding": "PostgreSQL native ENUMs (CREATE TYPE) are efficient but notoriously painful to modify — adding values requires ALTER TYPE and removing values is impossible without recreating. A VARCHAR column with a CHECK constraint (block_type IN ('reserved','maintenance','owner_hold')) is more migration-friendly. Alternatively, use the ENUM but plan for forward-compatibility by keeping a migration that adds new values via ALTER TYPE ... ADD VALUE.",
+      "source": "PostgreSQL docs on enumerated types; widespread community guidance from pganalyze and Citus blogs",
+      "relevance": "block_type will likely grow (e.g., 'seasonal_close', 'regulatory_hold'). Migration strategy matters for zero-downtime deployments.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "TypeScript Repository Pattern for Deno + PostgreSQL",
+      "finding": "Use deno-postgres (https://deno.land/x/postgres) or the newer npm:pg compatible driver. The repository should be a plain object or class exposing typed async functions — not an ORM. Parameterized queries ($1, $2) prevent SQL injection. Return typed domain objects, not raw Row results. The repository interface should be defined as a TypeScript interface/type so it can be mocked in tests without importing the real implementation.",
+      "source": "Deno postgres driver docs; Clean Architecture repository pattern (Martin Fowler)",
+      "relevance": "Directly implements the required repository layer. Interface-first design enables contract testing and mocking per project standards.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "UUID Primary Key Generation Strategy",
+      "finding": "Use UUIDv7 (time-ordered) instead of UUIDv4 for primary keys. UUIDv7 preserves insertion order in B-tree indexes, dramatically reducing index fragmentation and improving range scan performance. PostgreSQL 17 does not yet have native gen_uuid_v7(), so generate in the application layer using a library or use gen_random_uuid() (v4) with the understanding of the tradeoff. For Deno, crypto.randomUUID() generates v4.",
+      "source": "RFC 9562 (UUIDv7); PostgreSQL wiki on UUID performance; Deno runtime API docs",
+      "relevance": "The table will be queried by unit_id (not PK order) primarily, so UUIDv4 is acceptable, but UUIDv7 is a low-cost improvement for any future PK-ordered scans or debugging.",
+      "confidence": 0.8
+    },
+    {
+      "topic": "Date Range Query Patterns and daterange Type",
+      "finding": "PostgreSQL's built-in daterange type and the && (overlap) operator enable efficient range queries: WHERE daterange(start_date, end_date, '[]') && daterange($1, $2, '[]'). This is cleaner and more correct than manual comparisons (start_date <= $2 AND end_date >= $1). Combined with a GiST index on the range expression, this yields excellent query performance. The repository's getBlocksForUnit should use this pattern.",
+      "source": "PostgreSQL documentation on range types and range operators",
+      "relevance": "Directly impacts query correctness and performance for getBlocksForUnit and getBlocksForUnits, which feed the bitmask cache.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Batch/Bulk Query Pattern for getBlocksForUnits",
+      "finding": "For getBlocksForUnits(unitIds, dateRange), use WHERE unit_id = ANY($1::uuid[]) with a single parameterized array rather than IN with dynamically concatenated values. PostgreSQL handles array parameters efficiently and this avoids SQL injection risks from string interpolation. The deno-postgres driver supports array parameters natively.",
+      "source": "PostgreSQL docs on ANY/array comparisons; deno-postgres driver documentation",
+      "relevance": "Directly implements the bulk query function. Critical for the GET /availability/bulk endpoint performance.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Migration File Conventions",
+      "finding": "Use numbered, sequential migration files (e.g., 001_create_availability_blocks.sql, 002_add_index.sql) with both UP and DOWN sections or separate up/down files. Each migration should be idempotent where possible (IF NOT EXISTS). For Deno, there's no dominant migration framework — use raw SQL files executed in order, or use dbmate/golang-migrate as external tools. Keep migration SQL in a dedicated migrations/ directory.",
+      "source": "dbmate, golang-migrate, and Flyway conventions; Deno ecosystem survey",
+      "relevance": "Project requires migration SQL files. Establishing a convention now prevents conflicts when multiple components add migrations.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "TypeScript Type Design: Domain Types vs DB Row Types",
+      "finding": "Define separate types for the domain model (AvailabilityBlock), the database row (AvailabilityBlockRow), and the API response (AvailabilityBlockDTO). The repository maps Row → Domain. This separation allows the DB schema to evolve independently from the API contract. Use branded types (e.g., type UnitId = string & { __brand: 'UnitId' }) or opaque type aliases for UUID fields to prevent accidental mixing of different ID types.",
+      "source": "TypeScript handbook on type branding; Domain-Driven Design patterns",
+      "relevance": "Directly addresses the role-specific focus on type system design patterns and serialization formats.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Error Handling in Repository Layer",
+      "finding": "Repository functions should throw typed/custom error classes (e.g., BlockNotFoundError, BlockOverlapError, DatabaseConnectionError) rather than letting raw pg errors propagate. Use a Result<T, E> pattern or discriminated unions as an alternative to exceptions for expected failure cases. Unique/exclusion constraint violations from PostgreSQL (error code 23505/23P01) should be caught and translated to domain-specific errors.",
+      "source": "PostgreSQL error codes documentation; TypeScript error handling best practices",
+      "relevance": "Directly addresses error handling conventions requirement. The overlap exclusion constraint will produce 23P01 errors that must be handled gracefully.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Seed Data and Test Fixtures",
+      "finding": "Seed data should use deterministic UUIDs (e.g., UUID v5 with a namespace, or fixed well-known UUIDs) so that test assertions can reference specific records. Seed data should match the reference/test_examples/ directory structure. Use COPY or multi-row INSERT for performance. Include edge cases in seed: adjacent blocks, single-day blocks, blocks spanning month/year boundaries.",
+      "source": "Testing best practices; PostgreSQL COPY documentation",
+      "relevance": "Requirement explicitly states seed data must match reference/test_examples/. Deterministic IDs enable stable contract tests.",
+      "confidence": 0.85
+    },
+    {
+      "topic": "Inclusive vs Exclusive Date Range Boundaries",
+      "finding": "A critical and frequently-missed design decision: are start_date and end_date inclusive or exclusive? The most common convention for date ranges is inclusive-start, exclusive-end ([start, end)) which aligns with PostgreSQL's default daterange behavior and prevents off-by-one errors with adjacent blocks. However, for user-facing availability (hotel/vacation rental), inclusive-inclusive [start, end] (the stay includes both the check-in and check-out date) is more intuitive. This MUST be documented explicitly in the contract and consistently applied.",
+      "source": "Date range modeling literature; Temporal database design patterns; PostgreSQL daterange defaults",
+      "relevance": "This is the #1 source of bugs in availability systems. Every function signature and query must agree on the convention.",
+      "confidence": 0.97
+    },
+    {
+      "topic": "TIMESTAMPTZ for created_at and Clock Considerations",
+      "finding": "TIMESTAMPTZ is correct for created_at. Always insert using NOW() or CURRENT_TIMESTAMP at the database level (via DEFAULT), not application-generated timestamps, to avoid clock skew between application servers. Add DEFAULT CURRENT_TIMESTAMP to the column definition.",
+      "source": "PostgreSQL documentation on TIMESTAMPTZ; distributed systems clock skew literature",
+      "relevance": "Ensures consistent audit timestamps. Relevant for debugging and ordering of block creation events.",
+      "confidence": 0.95
+    }
+  ],
+  "recommended_approach": "**Schema Design:**\n1. Create the `availability_blocks` table with `id UUID PK DEFAULT gen_random_uuid()`, `unit_id UUID NOT NULL`, `start_date DATE NOT NULL`, `end_date DATE NOT NULL`, `block_type VARCHAR NOT NULL` with CHECK constraint (more migration-friendly than native ENUM), and `created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`.\n2. Add a CHECK constraint: `end_date >= start_date`.\n3. Add an EXCLUDE constraint using GiST on `(unit_id WITH =, daterange(start_date, end_date, '[]') WITH &&)` to prevent overlapping blocks per unit at the database level.\n4. Add a composite B-tree index on `(unit_id, start_date, end_date)` for range queries.\n5. Explicitly document that date ranges are **inclusive-inclusive** `[start_date, end_date]` across all interfaces.\n\n**TypeScript Types (3-layer):**\n- `AvailabilityBlockRow` — maps 1:1 to DB columns (snake_case).\n- `AvailabilityBlock` — domain model (camelCase), dates as ISO 8601 strings or `Date` objects.\n- `BlockType` as a string union type: `'reserved' | 'maintenance' | 'owner_hold'`.\n- `DateRange` type: `{ start: string; end: string }` (ISO 8601 date strings, both inclusive).\n- Branded UUID types for `BlockId` and `UnitId` to prevent accidental mixing.\n\n**Repository Interface:**\n- Define as a TypeScript `interface AvailabilityRepository` for mockability.\n- `getBlocksForUnit(unitId: UnitId, range: DateRange): Promise<AvailabilityBlock[]>`\n- `createBlock(block: CreateBlockInput): Promise<AvailabilityBlock>` — input type omits `id` and `created_at`.\n- `deleteBlock(blockId: BlockId): Promise<boolean>` — returns false if not found (or throw `BlockNotFoundError`).\n- `getBlocksForUnits(unitIds: UnitId[], range: DateRange): Promise<Map<string, AvailabilityBlock[]>>` — grouped by unit.\n- Use parameterized queries with `daterange()` overlap operator and `ANY($1::uuid[])` for bulk.\n\n**Error Handling:**\n- Custom error classes: `BlockNotFoundError`, `BlockOverlapError`, `DatabaseError`.\n- Catch PostgreSQL constraint violation codes (23P01 for exclusion, 23505 for unique) and map to domain errors.\n\n**Migrations:**\n- Sequential numbered SQL files in `services/availability/migrations/`.\n- `001_create_availability_blocks.sql` with UP/DOWN sections.\n- Idempotent where possible (IF NOT EXISTS).\n\n**Seed Data:**\n- Deterministic UUIDs for test fixtures, stored in `services/availability/seed/` and matching `reference/test_examples/`.\n- Include edge cases: single-day blocks, adjacent blocks, multi-month spans, all three block types.",
+  "alternatives_considered": [
+    "Native PostgreSQL ENUM for block_type: More type-safe at DB level but painful to modify. Rejected in favor of VARCHAR + CHECK for migration flexibility.",
+    "UUIDv7 for primary keys: Better index locality but requires application-side generation and no stdlib support in Deno yet. Acceptable to use UUIDv4 via gen_random_uuid() since primary lookups are by unit_id not PK.",
+    "Result<T, E> return types instead of thrown errors: More functional, avoids try/catch chains. Considered but would diverge from typical Deno/TypeScript conventions and Oak error handling middleware patterns. Could be adopted if team prefers.",
+    "Using PostgreSQL daterange column type directly instead of two DATE columns: Cleaner for queries but less portable, harder to seed/inspect, and most ORMs/drivers don't have first-class daterange support. Keeping two DATE columns with range expressions in queries is the pragmatic middle ground.",
+    "Soft delete (deleted_at column) instead of hard DELETE: Provides audit trail but adds query complexity. Not included in spec. Could add later if audit requirements emerge — the bitmask cache wouldn't distinguish.",
+    "Using an ORM (e.g., Prisma, Drizzle) vs raw SQL repository: Raw SQL with parameterized queries preferred per project standards (prefer stdlib, keep dependencies minimal). ORMs add complexity for relatively simple queries."
+  ],
+  "risks": [
+    "Off-by-one errors in date range boundaries: If inclusive/exclusive semantics are not consistently applied across schema, repository queries, bitmask cache, and REST API, availability checks will be wrong. MUST document and test boundary behavior explicitly.",
+    "Overlapping block detection race condition: Even with the EXCLUDE constraint, concurrent transactions could see inconsistent state before commit. The DB constraint is the last line of defense but callers should handle the resulting error gracefully.",
+    "Bulk query performance degradation: getBlocksForUnits with large unitIds arrays (100+ units from search results) could produce slow queries. May need to batch into chunks of 50-100 or use a CTE. Should be monitored.",
+    "Migration ordering conflicts: If multiple components add migrations concurrently, numbering may collide. Consider timestamp-based naming (e.g., 20240101120000_create_table.sql) instead of sequential integers.",
+    "Seed data drift from test expectations: If seed data in seed/ and assertions in reference/test_examples/ are maintained separately, they can drift. Seed data should be generated from or validated against the reference examples.",
+    "Connection pool exhaustion: Repository functions that don't properly release connections back to the pool (especially on error paths) can starve the service. Ensure all query paths use try/finally or connection wrappers.",
+    "GiST index overhead: The exclusion constraint with GiST index adds write overhead. For high-write scenarios, monitor insert latency. Acceptable for this use case since reads vastly outnumber writes.",
+    "Timezone handling: start_date and end_date are DATE (no timezone), but the system operates in UTC. If properties span timezones, the 'day boundary' for availability may differ from the guest's perspective. This is a business logic concern but the schema should document that all dates are UTC."
+  ],
+  "compliance_notes": [
+    "All dates must be ISO 8601 format in UTC per project standards. DATE columns are timezone-naive but represent UTC calendar dates.",
+    "All entity identifiers must be UUIDs per project standards.",
+    "Type annotations required on all public repository functions.",
+    "All repository functions must have at least one test, runnable without external services (mock DB).",
+    "Integration boundary (repository interface) must have contract tests validating input/output shapes.",
+    "Files must stay under 300 lines — schema, repository interface, repository implementation, and tests should be separate files.",
+    "Shared types (AvailabilityBlock, BlockType, DateRange) must be exportable for cross-service consistency.",
+    "Service must be independently deployable under services/availability/."
+  ]
+}

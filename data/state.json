@@ -1,0 +1,816 @@
+{
+  "id": "74afcdb4e379",
+  "project_dir": "/Users/jmcentire/WanderRepos/swarm/arch",
+  "status": "budget_exceeded",
+  "formation": "epic",
+  "current_stage_index": 1,
+  "stages": [
+    {
+      "stage": "diagnose",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "Build complete backend microservices architecture for Wander's booking and prope",
+      "tokens_in": 67456,
+      "tokens_out": 994,
+      "cost_usd": 0.217278
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "16 decisions, 3 questions",
+      "tokens_in": 68059,
+      "tokens_out": 6262,
+      "cost_usd": 0.298107
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "8 components",
+      "tokens_in": 70181,
+      "tokens_out": 3324,
+      "cost_usd": 0.260403
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "8 contracts",
+      "tokens_in": 69056,
+      "tokens_out": 13034,
+      "cost_usd": 0.402678
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "8 steps",
+      "tokens_in": 7730,
+      "tokens_out": 1257,
+      "cost_usd": 0.042045
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "This is a massive greenfield infrastructure build-out to support a distributed b",
+      "tokens_in": 70570,
+      "tokens_out": 2547,
+      "cost_usd": 0.249915
+    },
+    {
+      "stage": "architect_review",
+      "passed": false,
+      "confidence": 0.93,
+      "detail": "reject",
+      "tokens_in": 214488,
+      "tokens_out": 2441,
+      "cost_usd": 0.680079
+    },
+    {
+      "stage": "architect_review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=0, subjective=15",
+      "tokens_in": 3076,
+      "tokens_out": 1575,
+      "cost_usd": 0.032853
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "This is a large-scale infrastructure modernization for a property management pla",
+      "tokens_in": 70570,
+      "tokens_out": 4754,
+      "cost_usd": 0.28302
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.7133333333333334,
+      "detail": "approve",
+      "tokens_in": 221115,
+      "tokens_out": 7927,
+      "cost_usd": 0.78225
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "52 files",
+      "tokens_in": 72719,
+      "tokens_out": 3531,
+      "cost_usd": 0.271122
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "Implement Event Service as the central observability and audit backbone. This is",
+      "tokens_in": 70660,
+      "tokens_out": 3184,
+      "cost_usd": 0.25973999999999997
+    },
+    {
+      "stage": "architect_review",
+      "passed": false,
+      "confidence": 0.84,
+      "detail": "reject",
+      "tokens_in": 288369,
+      "tokens_out": 4584,
+      "cost_usd": 0.933867
+    },
+    {
+      "stage": "architect_review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=0, subjective=15",
+      "tokens_in": 3672,
+      "tokens_out": 1358,
+      "cost_usd": 0.031386
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "Build Event Service as a standalone microservice with Kafka backbone, content-ad",
+      "tokens_in": 70660,
+      "tokens_out": 5597,
+      "cost_usd": 0.295935
+    },
+    {
+      "stage": "architect_review",
+      "passed": false,
+      "confidence": 0.7399999999999999,
+      "detail": "reject",
+      "tokens_in": 300497,
+      "tokens_out": 8715,
+      "cost_usd": 1.032216
+    },
+    {
+      "stage": "architect_review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=0, subjective=16",
+      "tokens_in": 6594,
+      "tokens_out": 1419,
+      "cost_usd": 0.041067
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "Event Service is a central event bus for system-wide observability, audit, alert",
+      "tokens_in": 70660,
+      "tokens_out": 5173,
+      "cost_usd": 0.289575
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "Create the Availability Service as a fast, non-authoritative cache using bitmask",
+      "tokens_in": 69741,
+      "tokens_out": 3430,
+      "cost_usd": 0.260673
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.9066666666666667,
+      "detail": "approve",
+      "tokens_in": 214578,
+      "tokens_out": 2381,
+      "cost_usd": 0.679449
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "27 files",
+      "tokens_in": 71306,
+      "tokens_out": 2166,
+      "cost_usd": 0.246408
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.9,
+      "detail": "Implement the Pricing Service as a thin, hash-sharded caching layer for pre-comp",
+      "tokens_in": 69692,
+      "tokens_out": 1987,
+      "cost_usd": 0.238881
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.8966666666666666,
+      "detail": "approve",
+      "tokens_in": 211080,
+      "tokens_out": 2059,
+      "cost_usd": 0.6641250000000001
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "7 files",
+      "tokens_in": 69950,
+      "tokens_out": 1020,
+      "cost_usd": 0.22515000000000002
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "6 files changed",
+      "tokens_in": 69237,
+      "tokens_out": 10073,
+      "cost_usd": 0.358806
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.82,
+      "detail": "6 test files",
+      "tokens_in": 69797,
+      "tokens_out": 17039,
+      "cost_usd": 0.464976
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.92,
+      "detail": "reject",
+      "tokens_in": 91242,
+      "tokens_out": 3822,
+      "cost_usd": 0.331056
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=7, subjective=13",
+      "tokens_in": 5312,
+      "tokens_out": 3055,
+      "cost_usd": 0.061760999999999996
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "Create the shared infrastructure configuration layer as declarative YAML/INI/JSO",
+      "tokens_in": 70571,
+      "tokens_out": 1779,
+      "cost_usd": 1.1919899999999999
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.89,
+      "detail": "approve",
+      "tokens_in": 213603,
+      "tokens_out": 1948,
+      "cost_usd": 0.670029
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "9 files",
+      "tokens_in": 59057,
+      "tokens_out": 1436,
+      "cost_usd": 0.198711
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "9 files changed",
+      "tokens_in": 58121,
+      "tokens_out": 17848,
+      "cost_usd": 2.2104150000000002
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "9 test files",
+      "tokens_in": 58860,
+      "tokens_out": 13187,
+      "cost_usd": 0.37438499999999997
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.88,
+      "detail": "reject",
+      "tokens_in": 83807,
+      "tokens_out": 4557,
+      "cost_usd": 1.5988799999999999
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=9, subjective=1",
+      "tokens_in": 6388,
+      "tokens_out": 3589,
+      "cost_usd": 0.364995
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.89,
+      "detail": "16 files changed",
+      "tokens_in": 58964,
+      "tokens_out": 13206,
+      "cost_usd": 1.87491
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.78,
+      "detail": "9 test files",
+      "tokens_in": 60487,
+      "tokens_out": 16929,
+      "cost_usd": 2.1769800000000004
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": true,
+      "confidence": 0.78,
+      "detail": "approve",
+      "tokens_in": 82269,
+      "tokens_out": 2951,
+      "cost_usd": 1.45536
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "Build the Event Service following the same FastAPI + asyncpg + Redis patterns es",
+      "tokens_in": 59821,
+      "tokens_out": 2322,
+      "cost_usd": 1.071465
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "approve",
+      "tokens_in": 181729,
+      "tokens_out": 3236,
+      "cost_usd": 0.593727
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "25 files",
+      "tokens_in": 60789,
+      "tokens_out": 2446,
+      "cost_usd": 0.219057
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "12 files changed",
+      "tokens_in": 69221,
+      "tokens_out": 22542,
+      "cost_usd": 2.728965
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "6 test files",
+      "tokens_in": 60347,
+      "tokens_out": 13695,
+      "cost_usd": 0.386466
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.92,
+      "detail": "reject",
+      "tokens_in": 88747,
+      "tokens_out": 4681,
+      "cost_usd": 1.68228
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=15, subjective=2",
+      "tokens_in": 7879,
+      "tokens_out": 3308,
+      "cost_usd": 0.36628499999999997
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "Create the Availability Service following the exact same patterns as the existin",
+      "tokens_in": 59026,
+      "tokens_out": 2183,
+      "cost_usd": 1.049115
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.9066666666666666,
+      "detail": "approve",
+      "tokens_in": 178986,
+      "tokens_out": 1638,
+      "cost_usd": 0.561528
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "18 files",
+      "tokens_in": 60049,
+      "tokens_out": 2554,
+      "cost_usd": 0.218457
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "5 files changed",
+      "tokens_in": 67756,
+      "tokens_out": 11668,
+      "cost_usd": 1.89144
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "4 test files",
+      "tokens_in": 58923,
+      "tokens_out": 17017,
+      "cost_usd": 0.432024
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.92,
+      "detail": "reject",
+      "tokens_in": 82260,
+      "tokens_out": 3944,
+      "cost_usd": 1.5297
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.93,
+      "detail": "Build the Event Service as a Kafka-backed event bus with content-addressable IDs",
+      "tokens_in": 72081,
+      "tokens_out": 2698,
+      "cost_usd": 1.283565
+    },
+    {
+      "stage": "architect_review",
+      "passed": false,
+      "confidence": 0.8833333333333333,
+      "detail": "reject",
+      "tokens_in": 219990,
+      "tokens_out": 3673,
+      "cost_usd": 0.715065
+    },
+    {
+      "stage": "architect_review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=0, subjective=23",
+      "tokens_in": 3645,
+      "tokens_out": 2357,
+      "cost_usd": 0.04629
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "This is a large-scale service decomposition from a monolithic architecture to ev",
+      "tokens_in": 72080,
+      "tokens_out": 6451,
+      "cost_usd": 0.313005
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.7233333333333333,
+      "detail": "approve",
+      "tokens_in": 230385,
+      "tokens_out": 7875,
+      "cost_usd": 0.80928
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "22 files",
+      "tokens_in": 63142,
+      "tokens_out": 1863,
+      "cost_usd": 0.217371
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "Fix the Availability Service implementation to align with the test contracts. Th",
+      "tokens_in": 59026,
+      "tokens_out": 2211,
+      "cost_usd": 1.051215
+    },
+    {
+      "stage": "architect_review",
+      "passed": false,
+      "confidence": 0.9166666666666666,
+      "detail": "reject",
+      "tokens_in": 178929,
+      "tokens_out": 2465,
+      "cost_usd": 0.573762
+    },
+    {
+      "stage": "architect_review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=13, subjective=4",
+      "tokens_in": 2564,
+      "tokens_out": 2553,
+      "cost_usd": 0.045987
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "Build the Availability Service as a standalone Deno-based microservice with bitm",
+      "tokens_in": 59410,
+      "tokens_out": 2360,
+      "cost_usd": 0.21363
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.8166666666666668,
+      "detail": "approve",
+      "tokens_in": 179017,
+      "tokens_out": 5075,
+      "cost_usd": 0.6131759999999999
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "28 files",
+      "tokens_in": 59781,
+      "tokens_out": 1942,
+      "cost_usd": 0.208473
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "5 files changed",
+      "tokens_in": 73047,
+      "tokens_out": 1826,
+      "cost_usd": 1.2326549999999998
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "3 test files",
+      "tokens_in": 73065,
+      "tokens_out": 8374,
+      "cost_usd": 0.34480500000000003
+    },
+    {
+      "stage": "verify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.88,
+      "detail": "reject",
+      "tokens_in": 66347,
+      "tokens_out": 3245,
+      "cost_usd": 1.23858
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=8, subjective=0",
+      "tokens_in": 2102,
+      "tokens_out": 2530,
+      "cost_usd": 0.22128
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "9 files changed",
+      "tokens_in": 74110,
+      "tokens_out": 8621,
+      "cost_usd": 1.758225
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.82,
+      "detail": "5 test files",
+      "tokens_in": 74052,
+      "tokens_out": 10191,
+      "cost_usd": 1.875105
+    },
+    {
+      "stage": "verify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.82,
+      "detail": "reject",
+      "tokens_in": 72913,
+      "tokens_out": 3625,
+      "cost_usd": 1.36557
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=4, subjective=2",
+      "tokens_in": 4335,
+      "tokens_out": 2601,
+      "cost_usd": 0.2601
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "The Pricing Service is already substantially implemented. The existing codebase ",
+      "tokens_in": 58998,
+      "tokens_out": 1767,
+      "cost_usd": 1.017495
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.9066666666666666,
+      "detail": "approve",
+      "tokens_in": 177738,
+      "tokens_out": 1865,
+      "cost_usd": 0.5611889999999999
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "12 files",
+      "tokens_in": 59809,
+      "tokens_out": 1414,
+      "cost_usd": 0.200637
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "10 files changed",
+      "tokens_in": 73267,
+      "tokens_out": 5158,
+      "cost_usd": 1.485855
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.85,
+      "detail": "6 test files",
+      "tokens_in": 59922,
+      "tokens_out": 8369,
+      "cost_usd": 0.30530100000000004
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.78,
+      "detail": "reject",
+      "tokens_in": 68517,
+      "tokens_out": 3512,
+      "cost_usd": 1.291155
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=5, subjective=3",
+      "tokens_in": 3421,
+      "tokens_out": 2854,
+      "cost_usd": 0.26536499999999996
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.93,
+      "detail": "6 files changed",
+      "tokens_in": 73925,
+      "tokens_out": 4275,
+      "cost_usd": 1.4295
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.82,
+      "detail": "1 test files",
+      "tokens_in": 59272,
+      "tokens_out": 10925,
+      "cost_usd": 1.7084549999999998
+    },
+    {
+      "stage": "verify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    }
+  ],
+  "total_tokens": 7166664,
+  "total_cost_usd": 57.434076000000005,
+  "created_at": "2026-02-11T20:59:49.047881",
+  "completed_at": "2026-02-12T15:05:45.516014",
+  "pause_reason": "Budget cap reached",
+  "signals": []
+}

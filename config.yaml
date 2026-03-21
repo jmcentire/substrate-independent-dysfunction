@@ -1,0 +1,36 @@
+# Global swarm defaults
+model: claude-opus-4-6
+default_formation: auto
+default_io_mode: interactive
+default_budget: 5.00
+
+# Per-stage model routing — Opus where reasoning matters, Sonnet/Haiku for mechanical work
+stage_models:
+  diagnose: claude-opus-4-6
+  architect: claude-opus-4-6
+  decompose: claude-opus-4-6
+  architect_review: claude-sonnet-4-5-20250929
+  locate: claude-sonnet-4-5-20250929
+  execute: claude-opus-4-6
+  test: claude-sonnet-4-5-20250929
+  review: claude-opus-4-6
+  integrate: claude-sonnet-4-5-20250929
+  submit: claude-haiku-4-5-20251001
+
+# Per-stage backend routing — claude_code for stages that benefit from codebase access
+stage_backends:
+  locate: claude_code
+  execute: claude_code
+  test: claude_code
+
+# Thresholds
+diagnose_min_confidence: 0.6
+locate_min_confidence: 0.6
+locate_max_files: 50
+review_min_confidence: 0.7
+integrate_min_confidence: 0.7
+
+# Guardian
+max_diff_lines: 500
+max_files_changed: 20
+max_deletions: 200

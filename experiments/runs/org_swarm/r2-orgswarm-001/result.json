@@ -1,0 +1,38 @@
+{
+  "architecture": "org_swarm",
+  "run_id": "r2-orgswarm-001",
+  "task_prompt": "Build the Wander Backend Services platform \u2014 a microservices backend for a\nvacation rental booking and property management system.\n\nCORE CONSTRAINT: \"User standing at checkout with credit card. 3 seconds.\"\nEverything flows from this.\n\nThe full architecture specification is at reference/architecture.md.\nA pre-decomposed component plan with detailed API contracts (inputs, outputs,\ninvariants, error modes) is at reference/decomposition.json.\nArchitectural decisions are at reference/decisions.md.\nDatabase schemas and test examples are in reference/schemas/ and\nreference/test_examples/.\nTechnology context is at reference/tech_context.md.\n\nREQUIREMENTS:\n1. Implement as many of the 7 services as you can within budget\n2. Each service must implement the API endpoints from the architecture spec\n3. Use appropriate data models (PostgreSQL schemas at minimum)\n4. Include tests for each component\n5. Services must integrate via the defined API contracts\n6. Prioritize WORKING, INTEGRATED components over comprehensive coverage\n\nSERVICES (in dependency order):\n1. Availability Service \u2014 bitmask cache, O(1) availability checks\n2. Pricing Service \u2014 rate cache, hash-sharded by unit_id\n3. Property Service \u2014 4-tier override hierarchy\n4. Event Service \u2014 Kafka event bus, content-addressable event IDs\n5. Sync Service \u2014 bidirectional PMS synchronization (8 adapters)\n6. Payments Service \u2014 Stripe mirror, hash-chained payout snapshots\n7. Booking Service \u2014 synchronous orchestrator (<3s flow)\n\nAny language is acceptable. TypeScript (Deno) preferred to match existing\ncodebase, but Python is fine. PostgreSQL for persistence, Redis for caching.\n\nIf you have questions about requirements, architecture, or existing code,\nuse the ask_question tool to consult the oracle.\n",
+  "model": "claude-opus-4-6",
+  "started_at": "2026-02-14T04:51:25.869424+00:00",
+  "completed_at": "2026-02-14T04:58:16.445395+00:00",
+  "wall_seconds": 410.6,
+  "budget": {
+    "cap_usd": 50.0,
+    "spent_usd": 1.8993,
+    "total_input_tokens": 18820,
+    "total_output_tokens": 21560,
+    "total_tokens": 40380
+  },
+  "swarm_state": {
+    "status": "paused",
+    "formation": "epic",
+    "stages_total": 5,
+    "stages_passed": 5,
+    "stages_rejected": 0
+  },
+  "files_produced": [
+    "oracle/answers.jsonl",
+    "reference/architecture.md",
+    "reference/decisions.md",
+    "reference/decomposition.json",
+    "reference/oracle_answers.jsonl",
+    "reference/project_state.md",
+    "reference/schemas/booking.sql",
+    "reference/schemas/event_schemas.ts",
+    "reference/tech_context.md",
+    "reference/test_examples/availability_test.ts",
+    "reference/test_examples/pricing_smoke.test.ts",
+    "reference/test_examples/sync_spec.ts"
+  ],
+  "error": null
+}

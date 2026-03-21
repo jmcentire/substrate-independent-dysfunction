@@ -1,0 +1,64 @@
+{
+  "id": "0b6e30be45de",
+  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/contract_first/r2-cf-001",
+  "status": "failed",
+  "phase": "decompose",
+  "component_tasks": [],
+  "interview_result": {
+    "risks": [
+      "**Reference documents are unverifiable**: The spec references architecture.md, decomposition.json, decisions.md, schemas/, test_examples/, and tech_context.md — but none of their contents are provided here. If those files are incomplete, contradictory, or missing, the entire implementation is built on sand. Engineers will make incompatible assumptions to fill gaps.",
+      "**Bitmask availability design has unexplored edge cases**: Bitmask-based O(1) availability checks sound elegant but are brittle in practice — how are partial-day bookings handled? What's the bit resolution (day-level? hour-level)? What happens when a bitmask exceeds the storage window (rolling window vs. fixed calendar year)? Two engineers will make different choices here without explicit specification.",
+      "**'As many of the 7 services as you can within budget' is a scope bomb**: No budget is defined (time, money, effort). Combined with 'prioritize WORKING, INTEGRATED components,' engineers have no clear stopping point. Someone could deliver 3 polished services or 7 half-working ones and both would claim compliance.",
+      "**Kafka dependency contradicts 'tests must run without external services'**: The Event Service requires Kafka with content-addressable event IDs. Mocking Kafka behavior (consumer groups, ordering guarantees, exactly-once semantics) is notoriously unreliable. The mock may pass but real integration will fail.",
+      "**Sync Service with 8 PMS adapters is massively underspecified**: Which 8 PMS systems? What are their APIs? Are they REST, SOAP, proprietary? 'Bidirectional synchronization' is an extraordinarily complex problem (conflict resolution, eventual consistency, idempotency). This single service could consume the entire budget.",
+      "**The <3s booking flow is an end-to-end SLA spanning multiple services with no latency budget breakdown**: The Booking Service orchestrates calls to Availability, Pricing, Payments (Stripe external call), and possibly Property. Without per-service latency budgets, there's no way to know if the target is achievable. Stripe API alone can take 1-2 seconds.",
+      "**Hash-chained payout snapshots have no recovery/corruption strategy**: If a single snapshot is corrupted or lost, the entire chain is broken. No specification for chain verification, repair, or what happens when integrity checks fail.",
+      "**No service discovery or API gateway defined**: 7 microservices communicating via HTTP REST but no mention of how services find each other — hardcoded URLs? Environment variables? Service registry? Docker Compose networking? This is a critical integration gap.",
+      "**No deployment, containerization, or orchestration specification**: Services must be 'independently deployable' but there's no Docker, docker-compose, or k8s spec. Engineers will produce services that work in isolation but can't be stood up together.",
+      "**No database migration strategy**: PostgreSQL schemas are referenced but there's no mention of migration tooling (Flyway, Alembic, raw SQL files). Multiple services presumably need their own databases — shared DB or database-per-service is unspecified.",
+      "**Stripe mirror pattern is undefined**: 'Stripe mirror' for the Payments Service could mean many things — webhook-driven state sync? Polling? What Stripe objects are mirrored? What happens when local state diverges from Stripe? Race conditions between webhook delivery and API responses are a known pain point.",
+      "**Language choice ambiguity will cause integration friction**: 'Any language acceptable, TypeScript preferred, Python fine' means one engineer might write services 1-3 in Deno/TypeScript and another writes 4-7 in Python. Shared types/schemas 'must be consistent' but there's no shared schema enforcement mechanism (no protobuf, no JSON Schema, no OpenAPI spec mentioned)."
+    ],
+    "ambiguities": [
+      "**Dependency order vs. priority order**: Services are listed 'in dependency order' but requirement #6 says prioritize working components. Do we build bottom-up (Availability first) or top-down (Booking orchestrator first with stubs)? These are opposite strategies.",
+      "**'4-tier override hierarchy' semantics**: Platform → brand → property → unit — does a unit-level setting completely replace the property-level setting, or is it a deep merge? What about null values — does null at unit level mean 'inherit from property' or 'explicitly unset'?",
+      "**Content-addressable event IDs**: SHA-256 of payload — but which payload? The raw bytes? A canonical JSON serialization? Does this include metadata like timestamp? If timestamp is included, the same logical event at different times gets different IDs (defeating deduplication). If excluded, two genuinely different events with same payload are treated as duplicates.",
+      "**What does 'bitmask cache' mean alongside PostgreSQL persistence?**: Is Redis the cache and PostgreSQL the source of truth? On cache miss, is the bitmask reconstructed from booking records? What's the cache invalidation strategy?",
+      "**API contract format**: The spec says contracts are in decomposition.json but we can't see them. Are these OpenAPI specs? Informal JSON? Do they include error response shapes, pagination, authentication headers?",
+      "**Authentication and authorization**: Zero mention of how services authenticate with each other (API keys? JWTs? mTLS?) or how end-user auth works. The checkout scenario implies a user session exists somewhere.",
+      "**'Hash-sharded by unit_id'**: Sharded across what? Multiple Redis instances? Multiple hash buckets in one instance? This affects whether we need Redis Cluster configuration or just a key-naming convention.",
+      "**Event Service: Kafka or HTTP?**: Services communicate via HTTP REST (per SOPs), but Event Service uses Kafka. Is Kafka internal to the Event Service (other services push/pull events via HTTP to Event Service which internally uses Kafka)? Or do all services connect directly to Kafka? These are fundamentally different architectures."
+    ],
+    "questions": [
+      "Can you provide the actual contents of reference/architecture.md, reference/decomposition.json, and reference/schemas/? Without these, every engineer will invent their own contracts.",
+      "What is the actual budget — hours, days, sprints? 'As many as you can' is not actionable. If I have 40 hours, do you want 3 solid services or 7 scaffolded ones?",
+      "Which 8 PMS systems does the Sync Service need adapters for? Are any of them mock/stub adapters for testing, or are all 8 real integrations?",
+      "Is this a greenfield build or does 'match existing codebase' mean there's existing Deno code we must integrate with? If so, where is it?",
+      "For the <3s booking flow: is that 3 seconds wall-clock including Stripe's API latency? What's the acceptable degradation — do we fail fast, retry, or queue?",
+      "Should each service have its own PostgreSQL database, or is it a shared database with per-service schemas? This fundamentally changes the data isolation model.",
+      "Is there an existing Kafka cluster, or do we need to provision one? If provisioning, is a simpler message queue (Redis Streams, in-memory) acceptable for MVP?",
+      "What's the expected data scale? 100 properties or 100,000? This determines whether bitmask and sharding designs are premature optimization or essential.",
+      "Who/what calls the Booking Service to initiate checkout? Is there a frontend or API gateway contract we need to honor?"
+    ],
+    "assumptions": [
+      "The reference documents (architecture.md, decomposition.json, schemas/) exist and are internally consistent. If they conflict with this task spec, the reference documents take precedence since they're described as the detailed spec.",
+      "We'll use TypeScript/Deno as primary language since it's 'preferred' and matches the existing codebase. Falling back to Python only if a specific library need demands it.",
+      "Database-per-service pattern: each service owns its own PostgreSQL schema/database to maintain independent deployability.",
+      "The Event Service exposes an HTTP API to other services; Kafka is an internal implementation detail. Other services do NOT connect directly to Kafka.",
+      "The 8 PMS adapters for the Sync Service will be implemented as interface stubs with 1-2 real reference implementations. Building 8 full bidirectional integrations is not feasible within any reasonable budget.",
+      "Hash-sharding refers to a key-naming convention within a single Redis instance, not a multi-node Redis Cluster deployment.",
+      "Authentication between services is not required for MVP — services trust each other on a private network. End-user auth is out of scope.",
+      "The <3s constraint is wall-clock time from API call receipt to response, including all downstream calls. We'll budget ~1s for Stripe, ~500ms for each internal service call, with the rest as overhead.",
+      "Docker Compose will be used to stand up the full stack (PostgreSQL, Redis, Kafka, all services) for local development and integration testing.",
+      "For the bitmask availability design: bit resolution is 1 day, bitmasks represent a rolling 365-day window per unit, and Redis is the cache with PostgreSQL as source of truth."
+    ],
+    "user_answers": {},
+    "approved": false
+  },
+  "total_cost_usd": 18.366270000000004,
+  "total_tokens": 384522,
+  "last_check_in": "2026-02-14T15:10:28.183245",
+  "created_at": "2026-02-14T14:12:15.448494",
+  "completed_at": "2026-02-14T15:10:28.177959",
+  "pause_reason": "Unexpected error: Anthropic API call timed out after 300s for ContractTestSuite"
+}

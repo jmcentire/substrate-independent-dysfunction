@@ -1,0 +1,1142 @@
+{
+  "component_id": "pricing_service",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "create_happy_path",
+      "description": "createPricingService with valid config returns ServiceResultOk containing a PricingService with all 6 methods",
+      "function": "createPricingService",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.createPricingRepository": "returns mock repository object",
+        "pricing_cache_engine": "returns mock cache engine object"
+      },
+      "input_values": {},
+      "input_description": "Valid PricingServiceConfig with mock DB pool, mock Redis client, default cache config",
+      "expected_output_description": "ServiceResultOk with value being a PricingService object exposing getQuote, getRates, updateRateConfiguration, upsertFee, warmCache, invalidateCache",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['error'] is None",
+        "result['value'] is not None",
+        "'getQuote' in result['value'] or hasattr(result['value'], 'getQuote')",
+        "'getRates' in result['value'] or hasattr(result['value'], 'getRates')",
+        "'updateRateConfiguration' in result['value'] or hasattr(result['value'], 'updateRateConfiguration')",
+        "'upsertFee' in result['value'] or hasattr(result['value'], 'upsertFee')",
+        "'warmCache' in result['value'] or hasattr(result['value'], 'warmCache')",
+        "'invalidateCache' in result['value'] or hasattr(result['value'], 'invalidateCache')"
+      ]
+    },
+    {
+      "id": "create_no_db_calls",
+      "description": "createPricingService does NOT make any database or Redis calls during construction",
+      "function": "createPricingService",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.createPricingRepository": "returns mock repo, tracks calls",
+        "pricing_cache_engine": "returns mock engine, tracks calls"
+      },
+      "input_values": {},
+      "input_description": "Valid PricingServiceConfig with instrumented mock DB pool and Redis client",
+      "expected_output_description": "ServiceResultOk and zero calls to DB pool or Redis client methods",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "mock_db_pool.execute.call_count == 0",
+        "mock_redis_client.get.call_count == 0"
+      ]
+    },
+    {
+      "id": "create_invalid_db_pool",
+      "description": "createPricingService with null/invalid database pool returns CONFIGURATION_ERROR",
+      "function": "createPricingService",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "PricingServiceConfig with databasePool=None",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['value'] is None",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'",
+        "'message' in result['error']"
+      ]
+    },
+    {
+      "id": "create_invalid_redis_client",
+      "description": "createPricingService with null/invalid Redis client returns CONFIGURATION_ERROR",
+      "function": "createPricingService",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "PricingServiceConfig with redisClient=None",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['value'] is None",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "create_invalid_cache_config",
+      "description": "createPricingService with invalid cache config (e.g. shardCount=0, defaultTtlSeconds=-1) returns CONFIGURATION_ERROR",
+      "function": "createPricingService",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "PricingServiceConfig with cache.shardCount=0",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "get_quote_happy_path",
+      "description": "getQuote returns complete QuoteBreakdown for a valid 3-night stay with base rate, one flat fee, one percentage fee, one tax, and a qualifying LOS discount",
+      "function": "getQuote",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cache miss",
+        "pricing_schema.resolveRatesForDateRange": "returns 3 nightly rates at 10000 cents each",
+        "pricing_schema.listFeesByUnit": "returns one FLAT fee (2500 cents, taxable) and one PERCENTAGE fee (500 basis points, non-taxable)",
+        "pricing_schema.listTaxesByUnit": "returns one OCCUPANCY tax at 1000 basis points",
+        "pricing_schema.listLosDiscountsByUnit": "returns one LOS discount: minNights=3, discountPctBasisPoints=1000"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-04, currency=USD",
+      "expected_output_description": "ServiceResultOk with QuoteBreakdown containing 3 nightly rates, subtotal, LOS discount, fees, taxes, and grandTotal",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['error'] is None",
+        "result['value']['numNights'] == 3",
+        "len(result['value']['nightlyRates']) == 3",
+        "result['value']['currency'] == 'USD'",
+        "result['value']['checkIn'] == '2024-06-01'",
+        "result['value']['checkOut'] == '2024-06-04'",
+        "result['value']['nightlySubtotal'] == sum(r['rate'] for r in result['value']['nightlyRates'])",
+        "result['value']['grandTotal'] == result['value']['discountedSubtotal'] + result['value']['feesTotal'] + result['value']['taxesTotal']",
+        "result['value']['grandTotal'] >= 0",
+        "result['value']['resolvedAt'] is not None"
+      ]
+    },
+    {
+      "id": "get_quote_single_night",
+      "description": "getQuote for a 1-night stay correctly computes with no LOS discount qualifying",
+      "function": "getQuote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cache miss",
+        "pricing_schema.resolveRatesForDateRange": "returns 1 nightly rate at 15000 cents",
+        "pricing_schema.listFeesByUnit": "returns empty list",
+        "pricing_schema.listTaxesByUnit": "returns empty list",
+        "pricing_schema.listLosDiscountsByUnit": "returns LOS discount with minNights=7 (does not qualify)"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-02, currency=USD",
+      "expected_output_description": "QuoteBreakdown with 1 nightly rate, no LOS discount, discountedSubtotal == nightlySubtotal",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['numNights'] == 1",
+        "len(result['value']['nightlyRates']) == 1",
+        "result['value']['losDiscount'] is None",
+        "result['value']['discountedSubtotal'] == result['value']['nightlySubtotal']"
+      ]
+    },
+    {
+      "id": "get_quote_no_fees_no_taxes",
+      "description": "getQuote with zero fees and zero taxes returns grandTotal equal to discountedSubtotal",
+      "function": "getQuote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cache miss",
+        "pricing_schema.resolveRatesForDateRange": "returns 2 nightly rates",
+        "pricing_schema.listFeesByUnit": "returns empty list",
+        "pricing_schema.listTaxesByUnit": "returns empty list",
+        "pricing_schema.listLosDiscountsByUnit": "returns empty list"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD, no fees or taxes configured",
+      "expected_output_description": "QuoteBreakdown with feesTotal=0, taxesTotal=0, grandTotal=discountedSubtotal",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['feesTotal'] == 0",
+        "result['value']['taxesTotal'] == 0",
+        "result['value']['grandTotal'] == result['value']['discountedSubtotal']",
+        "len(result['value']['fees']) == 0",
+        "len(result['value']['taxes']) == 0"
+      ]
+    },
+    {
+      "id": "get_quote_cache_hit",
+      "description": "getQuote uses cached rates from Redis when available and does not call DB for rate resolution",
+      "function": "getQuote",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cached rates for the 2 nights",
+        "pricing_schema.resolveRatesForDateRange": "should not be called",
+        "pricing_schema.listFeesByUnit": "returns empty list",
+        "pricing_schema.listTaxesByUnit": "returns empty list",
+        "pricing_schema.listLosDiscountsByUnit": "returns empty list"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD, cache has rates",
+      "expected_output_description": "QuoteBreakdown computed from cached rates; DB resolveRatesForDateRange NOT called",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['numNights'] == 2",
+        "mock_resolve_rates.call_count == 0"
+      ]
+    },
+    {
+      "id": "get_quote_cache_failure_fallback",
+      "description": "getQuote gracefully falls back to DB when Redis cache raises an error",
+      "function": "getQuote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "raises ConnectionError('Redis unreachable')",
+        "pricing_schema.resolveRatesForDateRange": "returns 2 nightly rates at 10000 cents each",
+        "pricing_schema.listFeesByUnit": "returns empty list",
+        "pricing_schema.listTaxesByUnit": "returns empty list",
+        "pricing_schema.listLosDiscountsByUnit": "returns empty list"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD, cache raises ConnectionError",
+      "expected_output_description": "ServiceResultOk with valid QuoteBreakdown computed from DB data; no error returned to caller",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['numNights'] == 2",
+        "result['error'] is None"
+      ]
+    },
+    {
+      "id": "get_quote_skip_cache",
+      "description": "getQuote with options.skipCache=True bypasses Redis and reads directly from DB",
+      "function": "getQuote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "should not be called",
+        "pricing_schema.resolveRatesForDateRange": "returns 2 nightly rates",
+        "pricing_schema.listFeesByUnit": "returns empty list",
+        "pricing_schema.listTaxesByUnit": "returns empty list",
+        "pricing_schema.listLosDiscountsByUnit": "returns empty list"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD, options={'skipCache': True}",
+      "expected_output_description": "QuoteBreakdown computed from DB; getCachedRates NOT called",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "mock_get_cached_rates.call_count == 0"
+      ]
+    },
+    {
+      "id": "get_quote_unit_not_found",
+      "description": "getQuote returns UNIT_NOT_FOUND when no active rate plan exists for the unit",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.listRatePlansByUnit": "returns empty list",
+        "pricing_schema.resolveRatesForDateRange": "raises/returns unit not found error"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID with no rate plan, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "UNIT_NOT_FOUND",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'UNIT_NOT_FOUND'",
+        "result['value'] is None"
+      ]
+    },
+    {
+      "id": "get_quote_dates_uncovered",
+      "description": "getQuote returns DATES_UNCOVERED when some nights have no rate coverage",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "returns error indicating uncovered dates"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-05, currency=USD, rates only cover first 2 nights",
+      "expected_output_description": "",
+      "expected_error": "DATES_UNCOVERED",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'DATES_UNCOVERED'"
+      ]
+    },
+    {
+      "id": "get_quote_invalid_date_range_same_day",
+      "description": "getQuote returns INVALID_DATE_RANGE when checkIn == checkOut (0 nights)",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-01, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_quote_invalid_date_range_reversed",
+      "description": "getQuote returns INVALID_DATE_RANGE when checkIn > checkOut",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-05, checkOut=2024-06-01, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_quote_invalid_date_range_exceeds_730",
+      "description": "getQuote returns INVALID_DATE_RANGE when date range exceeds 730 nights",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-01-01, checkOut=2026-02-01 (731+ nights), currency=USD",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_quote_currency_mismatch",
+      "description": "getQuote returns CURRENCY_MISMATCH when requested currency differs from unit's configured currency",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "returns error indicating currency mismatch (unit is EUR, requested USD)"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID configured for EUR, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "get_quote_configuration_error",
+      "description": "getQuote returns CONFIGURATION_ERROR when rate plan has inconsistent configuration",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.listFeesByUnit": "returns fees with mixed currencies (USD and EUR)"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID with mixed-currency fees, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "get_quote_internal_error",
+      "description": "getQuote returns INTERNAL_ERROR on unexpected database failure",
+      "function": "getQuote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "raises unexpected database error"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-03, currency=USD, DB pool is broken",
+      "expected_output_description": "",
+      "expected_error": "INTERNAL_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "get_quote_arithmetic_invariant",
+      "description": "getQuote QuoteBreakdown satisfies all arithmetic invariants: nightlySubtotal == sum(rates), grandTotal == discountedSubtotal + feesTotal + taxesTotal",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cache miss",
+        "pricing_schema.resolveRatesForDateRange": "returns 3 nightly rates at 10000, 12000, 11000 cents",
+        "pricing_schema.listFeesByUnit": "returns one FLAT fee 2500 cents taxable, one PERCENTAGE fee 500bp non-taxable",
+        "pricing_schema.listTaxesByUnit": "returns OCCUPANCY tax 1000bp",
+        "pricing_schema.listLosDiscountsByUnit": "returns LOS discount minNights=3, 1000bp"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-04, currency=USD, with fees, taxes, and LOS discount",
+      "expected_output_description": "QuoteBreakdown where all arithmetic relationships hold exactly",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['nightlySubtotal'] == sum(r['rate'] for r in result['value']['nightlyRates'])",
+        "result['value']['discountedSubtotal'] == result['value']['nightlySubtotal'] - (result['value']['losDiscount']['discountAmount'] if result['value']['losDiscount'] else 0)",
+        "result['value']['discountedSubtotal'] >= 0",
+        "result['value']['feesTotal'] == sum(f['resolvedAmount'] for f in result['value']['fees'])",
+        "result['value']['taxesTotal'] == sum(t['taxAmount'] for t in result['value']['taxes'])",
+        "result['value']['grandTotal'] == result['value']['discountedSubtotal'] + result['value']['feesTotal'] + result['value']['taxesTotal']"
+      ]
+    },
+    {
+      "id": "get_quote_nonnegative_amounts",
+      "description": "All CentsAmount fields in QuoteBreakdown are non-negative integers",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "returns 3 rates",
+        "pricing_schema.listFeesByUnit": "returns empty list",
+        "pricing_schema.listTaxesByUnit": "returns empty list",
+        "pricing_schema.listLosDiscountsByUnit": "returns empty list"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, checkIn=2024-06-01, checkOut=2024-06-04, currency=USD",
+      "expected_output_description": "All monetary fields >= 0 and are integers",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "isinstance(result['value']['nightlySubtotal'], int)",
+        "result['value']['nightlySubtotal'] >= 0",
+        "isinstance(result['value']['discountedSubtotal'], int)",
+        "result['value']['discountedSubtotal'] >= 0",
+        "isinstance(result['value']['feesTotal'], int)",
+        "result['value']['feesTotal'] >= 0",
+        "isinstance(result['value']['taxesTotal'], int)",
+        "result['value']['taxesTotal'] >= 0",
+        "isinstance(result['value']['grandTotal'], int)",
+        "result['value']['grandTotal'] >= 0",
+        "all(isinstance(r['rate'], int) and r['rate'] >= 0 for r in result['value']['nightlyRates'])"
+      ]
+    },
+    {
+      "id": "get_quote_flat_fees_before_percentage",
+      "description": "In QuoteBreakdown.fees, flat fees appear before percentage fees per pipeline specification",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.listFeesByUnit": "returns one FLAT fee and one PERCENTAGE fee"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID with both FLAT and PERCENTAGE fees configured",
+      "expected_output_description": "fees list has all FLAT entries before any PERCENTAGE entries",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "len(result['value']['fees']) >= 2",
+        "all(f['feeType'] == 'FLAT' for f in result['value']['fees'][:flat_count])",
+        "all(f['feeType'] == 'PERCENTAGE' for f in result['value']['fees'][flat_count:])"
+      ]
+    },
+    {
+      "id": "get_quote_los_discount_best_only",
+      "description": "Only the single best (highest discount %) qualifying LOS discount is applied",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.listLosDiscountsByUnit": "returns two discounts: minNights=3/500bp, minNights=7/1000bp"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, 7-night stay, two LOS discounts: minNights=3 at 500bp, minNights=7 at 1000bp",
+      "expected_output_description": "losDiscount uses the 1000bp discount (higher), not the 500bp one",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['losDiscount'] is not None",
+        "result['value']['losDiscount']['discountPctBasisPoints'] == 1000"
+      ]
+    },
+    {
+      "id": "get_quote_taxable_amount_calculation",
+      "description": "taxableAmount equals discountedSubtotal plus sum of taxable fee amounts only",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.listFeesByUnit": "returns one taxable FLAT 2500c, one non-taxable PERCENTAGE 500bp"
+      },
+      "input_values": {},
+      "input_description": "unitId with one taxable flat fee (2500c) and one non-taxable percentage fee",
+      "expected_output_description": "taxableAmount == discountedSubtotal + taxable_fee_amount, excludes non-taxable fee",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "taxable_fee_sum == sum(f['resolvedAmount'] for f in result['value']['fees'] if f['isTaxable'])",
+        "result['value']['taxableAmount'] == result['value']['discountedSubtotal'] + taxable_fee_sum"
+      ]
+    },
+    {
+      "id": "get_rates_happy_path",
+      "description": "getRates returns nightly rates for a valid date range with correct structure",
+      "function": "getRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cache miss",
+        "pricing_schema.resolveRatesForDateRange": "returns 3 nightly rates"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, startDate=2024-06-01, endDate=2024-06-04, currency=USD",
+      "expected_output_description": "ServiceResultOk with RatesResult containing 3 nightly rate entries",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['error'] is None",
+        "result['value']['unitId'] is not None",
+        "result['value']['startDate'] == '2024-06-01'",
+        "result['value']['endDate'] == '2024-06-04'",
+        "result['value']['currency'] == 'USD'",
+        "len(result['value']['nightlyRates']) == 3"
+      ]
+    },
+    {
+      "id": "get_rates_cache_hit",
+      "description": "getRates returns cached rates from Redis without calling DB",
+      "function": "getRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cached rates with cachedAt timestamp",
+        "pricing_schema.resolveRatesForDateRange": "should not be called"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, startDate=2024-06-01, endDate=2024-06-03, currency=USD, rates cached",
+      "expected_output_description": "RatesResult with cachedAt timestamp set; DB not called",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "mock_resolve_rates.call_count == 0"
+      ]
+    },
+    {
+      "id": "get_rates_unit_not_found",
+      "description": "getRates returns UNIT_NOT_FOUND for unknown unit",
+      "function": "getRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=non-existent UUID, startDate=2024-06-01, endDate=2024-06-03, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "UNIT_NOT_FOUND",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "get_rates_dates_uncovered",
+      "description": "getRates returns DATES_UNCOVERED when rates are missing for some dates",
+      "function": "getRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, date range with gaps in coverage",
+      "expected_output_description": "",
+      "expected_error": "DATES_UNCOVERED",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'DATES_UNCOVERED'"
+      ]
+    },
+    {
+      "id": "get_rates_invalid_date_range",
+      "description": "getRates returns INVALID_DATE_RANGE when startDate >= endDate",
+      "function": "getRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, startDate=2024-06-05, endDate=2024-06-01, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_rates_currency_mismatch",
+      "description": "getRates returns CURRENCY_MISMATCH when currency doesn't match unit config",
+      "function": "getRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID configured for EUR, currency=USD",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "get_rates_internal_error",
+      "description": "getRates returns INTERNAL_ERROR on unexpected DB failure",
+      "function": "getRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, DB raises unexpected error",
+      "expected_output_description": "",
+      "expected_error": "INTERNAL_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "get_rates_single_night",
+      "description": "getRates for single-day range (1 night) returns exactly 1 rate entry",
+      "function": "getRates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, startDate=2024-06-01, endDate=2024-06-02, currency=USD",
+      "expected_output_description": "RatesResult with exactly 1 nightly rate entry",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "len(result['value']['nightlyRates']) == 1"
+      ]
+    },
+    {
+      "id": "update_rate_config_happy_path",
+      "description": "updateRateConfiguration successfully updates base rate and invalidates cache",
+      "function": "updateRateConfiguration",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.updateRatePlan": "returns success with updated rate plan",
+        "pricing_cache_engine.invalidateUnit": "returns success"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, config={baseRate: 15000}",
+      "expected_output_description": "ServiceResultOk with UpdateResult showing baseRate was updated and cache was invalidated",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['error'] is None",
+        "result['value']['unitId'] is not None",
+        "'baseRate' in result['value']['updatedFields']",
+        "result['value']['cacheInvalidated'] is True",
+        "result['value']['updatedAt'] is not None"
+      ]
+    },
+    {
+      "id": "update_rate_config_cache_invalidation_failure",
+      "description": "updateRateConfiguration commits DB update even when cache invalidation fails",
+      "function": "updateRateConfiguration",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.updateRatePlan": "returns success",
+        "pricing_cache_engine.invalidateUnit": "raises ConnectionError"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, config={baseRate: 15000}, Redis is down",
+      "expected_output_description": "UpdateResult with cacheInvalidated=False but ok=True (DB committed)",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['cacheInvalidated'] is False",
+        "'baseRate' in result['value']['updatedFields']"
+      ]
+    },
+    {
+      "id": "update_rate_config_unit_not_found",
+      "description": "updateRateConfiguration returns UNIT_NOT_FOUND for unknown unit",
+      "function": "updateRateConfiguration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=non-existent UUID, config={baseRate: 15000}",
+      "expected_output_description": "",
+      "expected_error": "UNIT_NOT_FOUND",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "update_rate_config_currency_mismatch",
+      "description": "updateRateConfiguration returns CURRENCY_MISMATCH when new currency doesn't match existing",
+      "function": "updateRateConfiguration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID (EUR), config={currency: 'USD'}",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "update_rate_config_configuration_error",
+      "description": "updateRateConfiguration returns CONFIGURATION_ERROR for invalid input (negative baseRate)",
+      "function": "updateRateConfiguration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, config={baseRate: -100}",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "update_rate_config_internal_error",
+      "description": "updateRateConfiguration returns INTERNAL_ERROR on DB failure",
+      "function": "updateRateConfiguration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, DB raises error during update",
+      "expected_output_description": "",
+      "expected_error": "INTERNAL_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "upsert_fee_create_happy_path",
+      "description": "upsertFee creates a new fee when feeId is not provided",
+      "function": "upsertFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.createFee": "returns new fee with generated UUID",
+        "pricing_cache_engine.invalidateUnit": "returns success"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, fee={name:'Cleaning', feeType:'FLAT', amount:5000, currency:'USD'}",
+      "expected_output_description": "FeeResult with created=True, valid feeId, cacheInvalidated=True",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['created'] is True",
+        "result['value']['feeId'] is not None",
+        "result['value']['cacheInvalidated'] is True"
+      ]
+    },
+    {
+      "id": "upsert_fee_update_happy_path",
+      "description": "upsertFee updates an existing fee when feeId is provided",
+      "function": "upsertFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.updateFee": "returns updated fee",
+        "pricing_cache_engine.invalidateUnit": "returns success"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, fee={feeId:existing-uuid, name:'Cleaning Updated', feeType:'FLAT', amount:6000, currency:'USD'}",
+      "expected_output_description": "FeeResult with created=False",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['created'] is False",
+        "result['value']['cacheInvalidated'] is True"
+      ]
+    },
+    {
+      "id": "upsert_fee_unit_not_found",
+      "description": "upsertFee returns UNIT_NOT_FOUND when no rate plan exists for the unit",
+      "function": "upsertFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=non-existent UUID, fee={name:'Cleaning', feeType:'FLAT', amount:5000, currency:'USD'}",
+      "expected_output_description": "",
+      "expected_error": "UNIT_NOT_FOUND",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "upsert_fee_currency_mismatch",
+      "description": "upsertFee returns CURRENCY_MISMATCH when fee currency doesn't match rate plan",
+      "function": "upsertFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID (USD), fee={name:'Fee', feeType:'FLAT', amount:5000, currency:'EUR'}",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "upsert_fee_configuration_error",
+      "description": "upsertFee returns CONFIGURATION_ERROR for invalid fee input (empty name)",
+      "function": "upsertFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, fee={name:'', feeType:'FLAT', amount:5000, currency:'USD'}",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "upsert_fee_percentage_exceeds_10000",
+      "description": "upsertFee returns CONFIGURATION_ERROR for PERCENTAGE fee with amount > 10000",
+      "function": "upsertFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, fee={name:'Fee', feeType:'PERCENTAGE', amount:10001, currency:'USD'}",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "upsert_fee_internal_error",
+      "description": "upsertFee returns INTERNAL_ERROR on DB failure",
+      "function": "upsertFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId=valid UUID, DB raises error during insert",
+      "expected_output_description": "",
+      "expected_error": "INTERNAL_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "warm_cache_happy_path",
+      "description": "warmCache successfully warms cache for multiple units",
+      "function": "warmCache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "returns rates for each unit",
+        "pricing_cache_engine.cacheRates": "succeeds for all units"
+      },
+      "input_values": {},
+      "input_description": "unitIds=[uuid1, uuid2, uuid3], dateRange={startDate:'2024-06-01', endDate:'2024-06-08'}",
+      "expected_output_description": "WarmCacheResult with totalUnits=3, successCount=3, failureCount=0",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['totalUnits'] == 3",
+        "result['value']['successCount'] == 3",
+        "result['value']['failureCount'] == 0",
+        "len(result['value']['results']) == 3",
+        "result['value']['durationMs'] >= 0",
+        "all(r['success'] for r in result['value']['results'])",
+        "all(r['nightsCached'] == 7 for r in result['value']['results'])"
+      ]
+    },
+    {
+      "id": "warm_cache_partial_failure",
+      "description": "warmCache reports per-unit failures without aborting the batch",
+      "function": "warmCache",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "succeeds for uuid1, raises not found for uuid2",
+        "pricing_cache_engine.cacheRates": "succeeds for uuid1"
+      },
+      "input_values": {},
+      "input_description": "unitIds=[uuid1, uuid2], dateRange valid, uuid2 has no rate plan",
+      "expected_output_description": "WarmCacheResult with successCount=1, failureCount=1, per-unit details",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['totalUnits'] == 2",
+        "result['value']['successCount'] == 1",
+        "result['value']['failureCount'] == 1",
+        "result['value']['results'][0]['success'] is True",
+        "result['value']['results'][1]['success'] is False",
+        "result['value']['results'][1]['nightsCached'] == 0",
+        "result['value']['results'][1]['errorMessage'] != ''"
+      ]
+    },
+    {
+      "id": "warm_cache_invalid_date_range",
+      "description": "warmCache returns INVALID_DATE_RANGE when startDate >= endDate",
+      "function": "warmCache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitIds=[uuid1], dateRange={startDate:'2024-06-05', endDate:'2024-06-01'}",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "warm_cache_empty_unit_list",
+      "description": "warmCache returns CONFIGURATION_ERROR when unitIds is empty",
+      "function": "warmCache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitIds=[], dateRange={startDate:'2024-06-01', endDate:'2024-06-08'}",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "warm_cache_internal_error",
+      "description": "warmCache returns INTERNAL_ERROR on catastrophic DB failure",
+      "function": "warmCache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitIds=[uuid1], dateRange valid, DB pool exhausted",
+      "expected_output_description": "",
+      "expected_error": "INTERNAL_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "invalidate_cache_existing_key",
+      "description": "invalidateCache successfully deletes an existing cache key",
+      "function": "invalidateCache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.invalidateUnit": "returns success, key existed"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID with existing cache entry",
+      "expected_output_description": "InvalidateResult with success=True, keyExisted=True",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['success'] is True",
+        "result['value']['keyExisted'] is True",
+        "result['value']['unitId'] is not None"
+      ]
+    },
+    {
+      "id": "invalidate_cache_nonexistent_key",
+      "description": "invalidateCache succeeds even when no cache key exists (idempotent)",
+      "function": "invalidateCache",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.invalidateUnit": "returns success, key did not exist"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID with no cache entry",
+      "expected_output_description": "InvalidateResult with success=True, keyExisted=False",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['success'] is True",
+        "result['value']['keyExisted'] is False"
+      ]
+    },
+    {
+      "id": "invalidate_cache_redis_failure",
+      "description": "invalidateCache reports failure via InvalidateResult.success=False when Redis is unreachable, not via ServiceResultErr",
+      "function": "invalidateCache",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.invalidateUnit": "raises ConnectionError"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, Redis is down",
+      "expected_output_description": "ServiceResultOk (NOT Err) with InvalidateResult.success=False",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['success'] is False"
+      ]
+    },
+    {
+      "id": "invalidate_cache_invalid_unit_id",
+      "description": "invalidateCache returns CONFIGURATION_ERROR for invalid UUID",
+      "function": "invalidateCache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unitId='not-a-valid-uuid'",
+      "expected_output_description": "",
+      "expected_error": "CONFIGURATION_ERROR",
+      "assertions": [
+        "result['ok'] is False",
+        "result['error']['kind'] == 'CONFIGURATION_ERROR'"
+      ]
+    },
+    {
+      "id": "invariant_no_method_throws",
+      "description": "No public PricingService method ever throws an exception; all return ServiceResult",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Various inputs including ones that cause internal errors",
+      "expected_output_description": "All calls return a dict with 'ok' key; no exceptions raised",
+      "expected_error": "",
+      "assertions": [
+        "'ok' in result",
+        "isinstance(result['ok'], bool)"
+      ]
+    },
+    {
+      "id": "invariant_pipeline_order_fees",
+      "description": "Percentage fees are computed on discountedSubtotal, not on nightlySubtotal or grandTotal",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.resolveRatesForDateRange": "returns 2 nights at 10000c",
+        "pricing_schema.listLosDiscountsByUnit": "returns LOS discount minNights=2, 1000bp",
+        "pricing_schema.listFeesByUnit": "returns one PERCENTAGE fee at 1000bp",
+        "pricing_schema.listTaxesByUnit": "returns empty list"
+      },
+      "input_values": {},
+      "input_description": "unitId with 2 nights at 10000c each, LOS discount 10%, one PERCENTAGE fee at 1000bp (10%)",
+      "expected_output_description": "Percentage fee resolvedAmount == 10% of discountedSubtotal (18000), not 10% of nightlySubtotal (20000)",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "result['value']['nightlySubtotal'] == 20000",
+        "result['value']['discountedSubtotal'] == 18000",
+        "pct_fee['resolvedAmount'] == 1800"
+      ]
+    },
+    {
+      "id": "invariant_cache_aside_populates_on_miss",
+      "description": "On cache miss, getRates populates the Redis cache after fetching from DB",
+      "function": "getRates",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_cache_engine.getCachedRates": "returns cache miss",
+        "pricing_schema.resolveRatesForDateRange": "returns rates",
+        "pricing_cache_engine.cacheRates": "succeeds"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, cache miss, DB returns rates",
+      "expected_output_description": "cacheRates is called once to populate cache",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "mock_cache_rates.call_count == 1"
+      ]
+    },
+    {
+      "id": "invariant_write_through_invalidation_after_update",
+      "description": "updateRateConfiguration invalidates cache after DB commit, not before",
+      "function": "updateRateConfiguration",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_schema.updateRatePlan": "returns success, records call order",
+        "pricing_cache_engine.invalidateUnit": "returns success, records call order"
+      },
+      "input_values": {},
+      "input_description": "unitId=valid UUID, config={baseRate: 15000}",
+      "expected_output_description": "DB update called before cache invalidation",
+      "expected_error": "",
+      "assertions": [
+        "result['ok'] is True",
+        "mock_update_rate_plan_call_order < mock_invalidate_unit_call_order"
+      ]
+    },
+    {
+      "id": "invariant_service_result_union_exclusive",
+      "description": "ServiceResult always has exactly one of value or error set, never both, never neither",
+      "function": "getQuote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Both success and error scenarios",
+      "expected_output_description": "ok=True implies value is not None and error is None; ok=False implies value is None and error is not None",
+      "expected_error": "",
+      "assertions": [
+        "(result['ok'] is True and result['value'] is not None and result['error'] is None) or (result['ok'] is False and result['value'] is None and result['error'] is not None)"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": ""
+}

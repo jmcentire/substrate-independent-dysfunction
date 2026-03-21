@@ -1,0 +1,24 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --allow-read src/main.ts",
+    "dev": "deno run --watch --allow-net --allow-env --allow-read src/main.ts",
+    "test": "deno test --allow-net --allow-env --allow-read tests/",
+    "test:unit": "deno test --allow-net --allow-env --allow-read tests/unit/",
+    "test:integration": "deno test --allow-net --allow-env --allow-read tests/integration/",
+    "fmt": "deno fmt",
+    "lint": "deno lint"
+  },
+  "imports": {
+    "oak": "https://deno.land/x/oak@v12.6.1/mod.ts",
+    "postgres": "https://deno.land/x/postgres@v0.17.0/mod.ts",
+    "redis": "https://deno.land/x/redis@v0.31.0/mod.ts",
+    "std/": "https://deno.land/std@0.208.0/",
+    "testing": "https://deno.land/std@0.208.0/testing/asserts.ts",
+    "testing/bdd": "https://deno.land/std@0.208.0/testing/bdd.ts",
+    "testing/mock": "https://deno.land/std@0.208.0/testing/mock.ts",
+    "uuid": "https://deno.land/std@0.208.0/uuid/mod.ts"
+  },
+  "compilerOptions": {
+    "strict": true
+  }
+}

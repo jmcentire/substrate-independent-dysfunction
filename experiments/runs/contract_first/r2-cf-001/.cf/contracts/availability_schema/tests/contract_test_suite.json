@@ -1,0 +1,616 @@
+{
+  "component_id": "availability_schema",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "hp_get_blocks_for_unit_found",
+      "description": "getBlocksForUnit returns overlapping blocks for a unit sorted by startDate ascending",
+      "function": "getBlocksForUnit",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns two AvailabilityBlockRow objects in snake_case with matching unit_id"
+      },
+      "input_values": {},
+      "input_description": "Valid unitId and date range that overlaps with two existing blocks",
+      "expected_output_description": "List of two AvailabilityBlock objects in startDate ascending order with all fields populated",
+      "expected_error": "",
+      "assertions": [
+        "Returns a list of length 2",
+        "All returned blocks have unitId matching the queried unitId",
+        "Blocks are sorted by startDate ascending",
+        "Each block has id, unitId, startDate, endDate, blockType, createdAt populated",
+        "Every returned block overlaps with the requested date range"
+      ]
+    },
+    {
+      "id": "hp_get_blocks_for_unit_empty",
+      "description": "getBlocksForUnit returns empty list when no blocks overlap the date range",
+      "function": "getBlocksForUnit",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns empty rows list"
+      },
+      "input_values": {},
+      "input_description": "Valid unitId and date range with no overlapping blocks in DB",
+      "expected_output_description": "Empty list",
+      "expected_error": "",
+      "assertions": [
+        "Returns an empty list",
+        "DB query was called with correct unitId and date range parameters"
+      ]
+    },
+    {
+      "id": "hp_create_block_success",
+      "description": "createBlock inserts a new block and returns fully-populated AvailabilityBlock with generated id and createdAt",
+      "function": "createBlock",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns one AvailabilityBlockRow with generated id and created_at"
+      },
+      "input_values": {},
+      "input_description": "Valid CreateBlockInput with unitId, startDate, endDate, blockType='reserved'",
+      "expected_output_description": "AvailabilityBlock with generated UUID id, matching input fields, and createdAt timestamp",
+      "expected_error": "",
+      "assertions": [
+        "Returned block has a valid UUID v4 id",
+        "Returned block.unitId matches input unitId",
+        "Returned block.startDate matches input startDate",
+        "Returned block.endDate matches input endDate",
+        "Returned block.blockType matches input blockType",
+        "Returned block.createdAt is a non-empty ISO datetime string"
+      ]
+    },
+    {
+      "id": "hp_create_block_maintenance",
+      "description": "createBlock successfully creates a maintenance block type",
+      "function": "createBlock",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns one AvailabilityBlockRow with block_type='maintenance'"
+      },
+      "input_values": {},
+      "input_description": "Valid CreateBlockInput with blockType='maintenance'",
+      "expected_output_description": "AvailabilityBlock with blockType='maintenance'",
+      "expected_error": "",
+      "assertions": [
+        "Returned block.blockType equals 'maintenance'"
+      ]
+    },
+    {
+      "id": "hp_create_block_owner_hold",
+      "description": "createBlock successfully creates an owner_hold block type",
+      "function": "createBlock",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns one AvailabilityBlockRow with block_type='owner_hold'"
+      },
+      "input_values": {},
+      "input_description": "Valid CreateBlockInput with blockType='owner_hold'",
+      "expected_output_description": "AvailabilityBlock with blockType='owner_hold'",
+      "expected_error": "",
+      "assertions": [
+        "Returned block.blockType equals 'owner_hold'"
+      ]
+    },
+    {
+      "id": "hp_delete_block_success",
+      "description": "deleteBlock returns True when block exists and is successfully deleted",
+      "function": "deleteBlock",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns rowCount=1 from DELETE"
+      },
+      "input_values": {},
+      "input_description": "Valid BlockId that exists in the database",
+      "expected_output_description": "Boolean True",
+      "expected_error": "",
+      "assertions": [
+        "Returns True",
+        "DB delete was called with the correct blockId parameter"
+      ]
+    },
+    {
+      "id": "hp_get_blocks_for_units_multiple",
+      "description": "getBlocksForUnits returns map with blocks grouped by unitId for multiple units",
+      "function": "getBlocksForUnits",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns three AvailabilityBlockRow objects with appropriate unit_ids"
+      },
+      "input_values": {},
+      "input_description": "Two unitIds and a date range, first unit has 2 blocks, second has 1 block",
+      "expected_output_description": "UnitBlocksMap with both unitIds as keys, first with 2 blocks, second with 1 block",
+      "expected_error": "",
+      "assertions": [
+        "Map has exactly 2 keys",
+        "First unit key has list of 2 blocks",
+        "Second unit key has list of 1 block",
+        "All blocks have correct unitId matching their map key",
+        "Each unit's blocks are sorted by startDate ascending"
+      ]
+    },
+    {
+      "id": "hp_get_blocks_for_units_some_empty",
+      "description": "getBlocksForUnits includes empty list for units with no overlapping blocks",
+      "function": "getBlocksForUnits",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns rows only for first unit_id"
+      },
+      "input_values": {},
+      "input_description": "Two unitIds, only one has blocks in the date range",
+      "expected_output_description": "UnitBlocksMap with both keys, one with blocks and one with empty list",
+      "expected_error": "",
+      "assertions": [
+        "Map has exactly 2 keys",
+        "Unit with blocks has non-empty list",
+        "Unit without blocks has empty list"
+      ]
+    },
+    {
+      "id": "edge_get_blocks_single_day_range",
+      "description": "getBlocksForUnit with start == end (single day range) returns blocks that include that day",
+      "function": "getBlocksForUnit",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns one block whose range includes the queried day"
+      },
+      "input_values": {},
+      "input_description": "Date range where start equals end (single day, e.g. 2024-06-15 to 2024-06-15)",
+      "expected_output_description": "Blocks that overlap with that single day",
+      "expected_error": "",
+      "assertions": [
+        "Query is executed with start == end date parameters",
+        "Returned blocks all overlap with the single day"
+      ]
+    },
+    {
+      "id": "edge_create_block_single_day",
+      "description": "createBlock with startDate == endDate creates a single-day block successfully",
+      "function": "createBlock",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns one row with start_date == end_date"
+      },
+      "input_values": {},
+      "input_description": "CreateBlockInput where startDate equals endDate",
+      "expected_output_description": "AvailabilityBlock with startDate == endDate",
+      "expected_error": "",
+      "assertions": [
+        "Returned block.startDate equals block.endDate",
+        "Block is created successfully"
+      ]
+    },
+    {
+      "id": "edge_get_blocks_for_units_single_unit",
+      "description": "getBlocksForUnits with a single unitId in the list works correctly",
+      "function": "getBlocksForUnits",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns rows for the single unit"
+      },
+      "input_values": {},
+      "input_description": "List with exactly one unitId",
+      "expected_output_description": "UnitBlocksMap with one key",
+      "expected_error": "",
+      "assertions": [
+        "Map has exactly 1 key matching the input unitId"
+      ]
+    },
+    {
+      "id": "edge_row_to_domain_mapping",
+      "description": "AvailabilityBlockRow snake_case fields are correctly mapped to AvailabilityBlock camelCase fields",
+      "function": "createBlock",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns specific snake_case AvailabilityBlockRow"
+      },
+      "input_values": {},
+      "input_description": "CreateBlockInput with known values",
+      "expected_output_description": "AvailabilityBlock with camelCase field names mapped from snake_case DB row",
+      "expected_error": "",
+      "assertions": [
+        "row.unit_id maps to block.unitId",
+        "row.start_date maps to block.startDate",
+        "row.end_date maps to block.endDate",
+        "row.block_type maps to block.blockType",
+        "row.created_at maps to block.createdAt",
+        "row.id maps to block.id"
+      ]
+    },
+    {
+      "id": "edge_date_boundary_overlap",
+      "description": "getBlocksForUnit returns a block whose endDate exactly equals range.start (boundary overlap with inclusive ranges)",
+      "function": "getBlocksForUnit",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns the boundary-touching block"
+      },
+      "input_values": {},
+      "input_description": "Range 2024-06-15 to 2024-06-20 and existing block 2024-06-10 to 2024-06-15",
+      "expected_output_description": "The block is returned because ranges are inclusive-inclusive and share date 2024-06-15",
+      "expected_error": "",
+      "assertions": [
+        "Block with endDate == range.start is included in results"
+      ]
+    },
+    {
+      "id": "edge_duplicate_unit_ids_in_bulk",
+      "description": "getBlocksForUnits handles duplicate unitIds in the input list gracefully",
+      "function": "getBlocksForUnits",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns rows for the unit"
+      },
+      "input_values": {},
+      "input_description": "unitIds list containing the same unitId twice",
+      "expected_output_description": "Map with the unitId as a key (deduplicated or present once)",
+      "expected_error": "",
+      "assertions": [
+        "Map contains the unitId as a key",
+        "No error is raised"
+      ]
+    },
+    {
+      "id": "err_get_blocks_invalid_date_range",
+      "description": "getBlocksForUnit raises InvalidDateRangeError when end < start",
+      "function": "getBlocksForUnit",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Date range with end='2024-01-01' and start='2024-06-01'",
+      "expected_output_description": "InvalidDateRangeError is raised",
+      "expected_error": "InvalidDateRangeError",
+      "assertions": [
+        "InvalidDateRangeError is raised",
+        "Error contains the start and end dates",
+        "Error message indicates end must be >= start"
+      ]
+    },
+    {
+      "id": "err_get_blocks_db_connection_failure",
+      "description": "getBlocksForUnit raises DatabaseError when DB connection fails",
+      "function": "getBlocksForUnit",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Raises connection error"
+      },
+      "input_values": {},
+      "input_description": "Valid unitId and range but DB connection pool exhausted",
+      "expected_output_description": "DatabaseError is raised",
+      "expected_error": "DatabaseError",
+      "assertions": [
+        "DatabaseError is raised with descriptive message"
+      ]
+    },
+    {
+      "id": "err_get_blocks_db_query_error",
+      "description": "getBlocksForUnit raises DatabaseError on unexpected PostgreSQL query error",
+      "function": "getBlocksForUnit",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Raises unexpected PG error"
+      },
+      "input_values": {},
+      "input_description": "Valid unitId and range but DB returns unexpected error",
+      "expected_output_description": "DatabaseError is raised",
+      "expected_error": "DatabaseError",
+      "assertions": [
+        "DatabaseError is raised",
+        "Error preserves original error information"
+      ]
+    },
+    {
+      "id": "err_create_block_overlap_23P01",
+      "description": "createBlock raises BlockOverlapError when PostgreSQL returns exclusion_violation 23P01",
+      "function": "createBlock",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Raises PG error with code 23P01"
+      },
+      "input_values": {},
+      "input_description": "CreateBlockInput that overlaps with existing block for the same unit",
+      "expected_output_description": "BlockOverlapError is raised with pgCode 23P01",
+      "expected_error": "BlockOverlapError",
+      "assertions": [
+        "BlockOverlapError is raised",
+        "Error pgCode equals '23P01'",
+        "Error contains unitId, startDate, endDate from the input",
+        "Error message mentions overlap"
+      ]
+    },
+    {
+      "id": "err_create_block_invalid_date_range",
+      "description": "createBlock raises InvalidDateRangeError when endDate < startDate",
+      "function": "createBlock",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "CreateBlockInput with endDate='2024-01-01' and startDate='2024-06-01'",
+      "expected_output_description": "InvalidDateRangeError is raised",
+      "expected_error": "InvalidDateRangeError",
+      "assertions": [
+        "InvalidDateRangeError is raised",
+        "Error contains the invalid start and end dates"
+      ]
+    },
+    {
+      "id": "err_create_block_invalid_type",
+      "description": "createBlock raises InvalidBlockTypeError when blockType is not in allowed variants",
+      "function": "createBlock",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "CreateBlockInput with blockType='vacation' (invalid)",
+      "expected_output_description": "InvalidBlockTypeError is raised",
+      "expected_error": "InvalidBlockTypeError",
+      "assertions": [
+        "InvalidBlockTypeError is raised",
+        "Error providedType equals 'vacation'",
+        "Error allowedTypes contains 'reserved', 'maintenance', 'owner_hold'"
+      ]
+    },
+    {
+      "id": "err_create_block_db_connection_failure",
+      "description": "createBlock raises DatabaseError when DB connection fails",
+      "function": "createBlock",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Raises connection error"
+      },
+      "input_values": {},
+      "input_description": "Valid CreateBlockInput but DB is unreachable",
+      "expected_output_description": "DatabaseError is raised",
+      "expected_error": "DatabaseError",
+      "assertions": [
+        "DatabaseError is raised with descriptive message"
+      ]
+    },
+    {
+      "id": "err_delete_block_not_found",
+      "description": "deleteBlock raises BlockNotFoundError when no row matches the blockId",
+      "function": "deleteBlock",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns rowCount=0 from DELETE"
+      },
+      "input_values": {},
+      "input_description": "BlockId that does not exist in the database",
+      "expected_output_description": "BlockNotFoundError is raised",
+      "expected_error": "BlockNotFoundError",
+      "assertions": [
+        "BlockNotFoundError is raised",
+        "Error blockId matches the input blockId",
+        "Error message indicates block not found"
+      ]
+    },
+    {
+      "id": "err_delete_block_db_connection_failure",
+      "description": "deleteBlock raises DatabaseError when DB connection fails",
+      "function": "deleteBlock",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Raises connection error"
+      },
+      "input_values": {},
+      "input_description": "Valid blockId but DB is unreachable",
+      "expected_output_description": "DatabaseError is raised",
+      "expected_error": "DatabaseError",
+      "assertions": [
+        "DatabaseError is raised"
+      ]
+    },
+    {
+      "id": "err_get_blocks_for_units_empty_list",
+      "description": "getBlocksForUnits raises error when unitIds is an empty list",
+      "function": "getBlocksForUnits",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Empty unitIds list with valid date range",
+      "expected_output_description": "Error raised indicating unitIds must be non-empty",
+      "expected_error": "InvalidDateRangeError",
+      "assertions": [
+        "Error is raised for empty unitIds list",
+        "Error message mentions unitIds must contain at least one element"
+      ]
+    },
+    {
+      "id": "err_get_blocks_for_units_invalid_date_range",
+      "description": "getBlocksForUnits raises InvalidDateRangeError when end < start",
+      "function": "getBlocksForUnits",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Valid unitIds but date range with end < start",
+      "expected_output_description": "InvalidDateRangeError is raised",
+      "expected_error": "InvalidDateRangeError",
+      "assertions": [
+        "InvalidDateRangeError is raised"
+      ]
+    },
+    {
+      "id": "err_get_blocks_for_units_db_failure",
+      "description": "getBlocksForUnits raises DatabaseError on DB connection failure",
+      "function": "getBlocksForUnits",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Raises connection error"
+      },
+      "input_values": {},
+      "input_description": "Valid inputs but DB connection fails",
+      "expected_output_description": "DatabaseError is raised",
+      "expected_error": "DatabaseError",
+      "assertions": [
+        "DatabaseError is raised"
+      ]
+    },
+    {
+      "id": "inv_no_overlap_same_unit",
+      "description": "Invariant: No two blocks for the same unitId may have overlapping date ranges - createBlock enforces EXCLUDE constraint",
+      "function": "createBlock",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "First call succeeds, second raises PG 23P01"
+      },
+      "input_values": {},
+      "input_description": "Two CreateBlockInputs for the same unit with overlapping ranges",
+      "expected_output_description": "First succeeds, second raises BlockOverlapError",
+      "expected_error": "",
+      "assertions": [
+        "Second createBlock call raises BlockOverlapError",
+        "Error pgCode is '23P01'"
+      ]
+    },
+    {
+      "id": "inv_end_gte_start",
+      "description": "Invariant: end_date >= start_date for every block - enforced before DB insertion",
+      "function": "createBlock",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "CreateBlockInput where endDate < startDate",
+      "expected_output_description": "InvalidDateRangeError raised before any DB call",
+      "expected_error": "",
+      "assertions": [
+        "InvalidDateRangeError is raised",
+        "No database call was made"
+      ]
+    },
+    {
+      "id": "inv_block_type_check_constraint",
+      "description": "Invariant: blockType must be one of 'reserved', 'maintenance', 'owner_hold'",
+      "function": "createBlock",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "CreateBlockInput with invalid blockType 'unknown'",
+      "expected_output_description": "InvalidBlockTypeError raised",
+      "expected_error": "",
+      "assertions": [
+        "InvalidBlockTypeError is raised",
+        "Error lists all allowed types"
+      ]
+    },
+    {
+      "id": "inv_all_unit_ids_present_in_map",
+      "description": "Invariant: getBlocksForUnits result map has keys for every requested unitId, even if empty",
+      "function": "getBlocksForUnits",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns rows only for one unit"
+      },
+      "input_values": {},
+      "input_description": "Three unitIds where only one has blocks",
+      "expected_output_description": "Map has 3 keys; 2 have empty lists, 1 has blocks",
+      "expected_error": "",
+      "assertions": [
+        "Map has exactly 3 keys",
+        "All 3 input unitIds appear as keys",
+        "Units without blocks have empty lists"
+      ]
+    },
+    {
+      "id": "inv_results_sorted_by_start_date",
+      "description": "Invariant: All query results are sorted by startDate ascending",
+      "function": "getBlocksForUnit",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns 3 rows ordered by start_date ASC"
+      },
+      "input_values": {},
+      "input_description": "Unit with 3 blocks returned in startDate order",
+      "expected_output_description": "Blocks are in startDate ascending order",
+      "expected_error": "",
+      "assertions": [
+        "block[0].startDate <= block[1].startDate <= block[2].startDate"
+      ]
+    },
+    {
+      "id": "inv_inclusive_date_ranges",
+      "description": "Invariant: All date ranges are inclusive-inclusive [start, end]",
+      "function": "getBlocksForUnit",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns blocks at boundary conditions"
+      },
+      "input_values": {},
+      "input_description": "Query range exactly matching a block's boundary dates",
+      "expected_output_description": "Block is returned because ranges are inclusive on both ends",
+      "expected_error": "",
+      "assertions": [
+        "Block whose startDate equals range.end is included",
+        "Block whose endDate equals range.start is included"
+      ]
+    },
+    {
+      "id": "inv_parameterized_queries",
+      "description": "Invariant: All SQL queries use parameterized placeholders, no string interpolation",
+      "function": "getBlocksForUnit",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Spy records query and parameters separately"
+      },
+      "input_values": {},
+      "input_description": "UnitId containing SQL injection attempt characters",
+      "expected_output_description": "Parameters are passed as bind values, not interpolated into query string",
+      "expected_error": "",
+      "assertions": [
+        "DB client receives parameterized query call",
+        "Input values are passed as separate parameters, not embedded in SQL string"
+      ]
+    },
+    {
+      "id": "inv_uuid_v4_format",
+      "description": "Invariant: Block id is always a valid UUID v4",
+      "function": "createBlock",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "db_client": "Returns row with valid UUID v4 id"
+      },
+      "input_values": {},
+      "input_description": "Standard CreateBlockInput",
+      "expected_output_description": "Returned block.id matches UUID v4 regex pattern",
+      "expected_error": "",
+      "assertions": [
+        "block.id matches ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract tests for availability_schema component.\nTests the Availability Database Schema & Repository layer.\n\nVerifies:\n- getBlocksForUnit: querying blocks by unit and date range\n- createBlock: inserting new availability blocks\n- deleteBlock: removing blocks by ID\n- getBlocksForUnits: bulk querying blocks for multiple units\n- Error mapping from PostgreSQL error codes to domain errors\n- Invariants: no overlaps, date ordering, type constraints, parameterized queries\n\"\"\"\n\nimport re\nimport uuid\nimport pytest\nfrom unittest.mock import AsyncMock, MagicMock, patch, call\nfrom datetime import datetime, timezone\n\n# Import the component under test\nfrom src.availability_schema import (\n    getBlocksForUnit,\n    createBlock,\n    deleteBlock,\n    getBlocksForUnits,\n    AvailabilityBlock,\n    AvailabilityBlockRow,\n    CreateBlockInput,\n    DateRange,\n    UnitBlocksMap,\n    BlockOverlapError,\n    BlockNotFoundError,\n    InvalidDateRangeError,\n    InvalidBlockTypeError,\n    DatabaseError,\n)\n\n\n# ---------------------------------------------------------------------------\n# Helpers\n# ---------------------------------------------------------------------------\n\nUUID_V4_REGEX = re.compile(\n    r\"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"\n)\n\nISO_DATE_REGEX = re.compile(\n    r\"^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$\"\n)\n\n\ndef make_uuid() -> str:\n    \"\"\"Generate a lowercase UUID v4 string.\"\"\"\n    return str(uuid.uuid4())\n\n\ndef make_block_row(\n    *,\n    id: str = None,\n    unit_id: str = None,\n    start_date: str = \"2024-06-01\",\n    end_date: str = \"2024-06-10\",\n    block_type: str = \"reserved\",\n    created_at: str = None,\n) -> dict:\n    \"\"\"Create an AvailabilityBlockRow-like dict (snake_case, mimicking DB driver output).\"\"\"\n    return {\n        \"id\": id or make_uuid(),\n        \"unit_id\": unit_id or make_uuid(),\n        \"start_date\": start_date,\n        \"end_date\": end_date,\n        \"block_type\": block_type,\n        \"created_at\": created_at or datetime.now(timezone.utc).isoformat(),\n    }\n\n\ndef make_db_client(*, query_result=None, query_side_effect=None):\n    \"\"\"Create a mock database client with configurable query behaviour.\"\"\"\n    client = MagicMock()\n    client.query = AsyncMock()\n    if query_side_effect is not None:\n        client.query.side_effect = query_side_effect\n    elif query_result is not None:\n        client.query.return_value = query_result\n    else:\n        client.query.return_value = {\"rows\": [], \"rowCount\": 0}\n    return client\n\n\ndef pg_error(code: str, message: str = \"PG error\"):\n    \"\"\"Create an exception mimicking a PostgreSQL driver error with a code attribute.\"\"\"\n    err = Exception(message)\n    err.code = code  # type: ignore[attr-defined]\n    err.pgCode = code  # type: ignore[attr-defined]\n    return err\n\n\n# ===================================================================\n# 1. HAPPY PATH TESTS\n# ===================================================================\n\n\nclass TestGetBlocksForUnitHappyPath:\n    \"\"\"Happy-path tests for getBlocksForUnit.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_returns_overlapping_blocks_sorted_by_start_date(self):\n        \"\"\"hp_get_blocks_for_unit_found: returns matching blocks sorted ascending.\"\"\"\n        unit_id = make_uuid()\n        row1 = make_block_row(unit_id=unit_id, start_date=\"2024-06-01\", end_date=\"2024-06-05\")\n        row2 = make_block_row(unit_id=unit_id, start_date=\"2024-06-08\", end_date=\"2024-06-12\")\n        db = make_db_client(query_result={\"rows\": [row1, row2], \"rowCount\": 2})\n\n        result = await getBlocksForUnit(\n            db,\n            unit_id,\n            DateRange(start=\"2024-06-01\", end=\"2024-06-15\"),\n        )\n\n        assert isinstance(result, list), \"Result should be a list\"\n        assert len(result) == 2, f\"Expected 2 blocks, got {len(result)}\"\n        for block in result:\n            assert block.unitId == unit_id, \"Each block unitId must match queried unit\"\n            assert block.id is not None, \"Block id must be populated\"\n            assert block.createdAt is not None, \"Block createdAt must be populated\"\n        assert result[0].startDate <= result[1].startDate, (\n            \"Blocks must be sorted by startDate ascending\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_returns_empty_list_when_no_overlap(self):\n        \"\"\"hp_get_blocks_for_unit_empty: empty list for non-overlapping range.\"\"\"\n        unit_id = make_uuid()\n        db = make_db_client(query_result={\"rows\": [], \"rowCount\": 0})\n\n        result = await getBlocksForUnit(\n            db,\n            unit_id,\n            DateRange(start=\"2025-01-01\", end=\"2025-01-31\"),\n        )\n\n        assert result == [], \"Should return empty list when no blocks overlap\"\n        db.query.assert_called_once()\n\n\nclass TestCreateBlockHappyPath:\n    \"\"\"Happy-path tests for createBlock.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_creates_reserved_block_with_generated_id_and_timestamp(self):\n        \"\"\"hp_create_block_success: returns fully-populated block.\"\"\"\n        unit_id = make_uuid()\n        generated_id = make_uuid()\n        created_at = datetime.now(timezone.utc).isoformat()\n        row = make_block_row(\n            id=generated_id,\n            unit_id=unit_id,\n            start_date=\"2024-07-01\",\n            end_date=\"2024-07-10\",\n            block_type=\"reserved\",\n            created_at=created_at,\n        )\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        block_input = CreateBlockInput(\n            unitId=unit_id,\n            startDate=\"2024-07-01\",\n            endDate=\"2024-07-10\",\n            blockType=\"reserved\",\n        )\n        result = await createBlock(db, block_input)\n\n        assert UUID_V4_REGEX.match(result.id), f\"id must be UUID v4, got {result.id}\"\n        assert result.unitId == unit_id\n        assert result.startDate == \"2024-07-01\"\n        assert result.endDate == \"2024-07-10\"\n        assert result.blockType == \"reserved\"\n        assert result.createdAt == created_at\n\n    @pytest.mark.asyncio\n    async def test_creates_maintenance_block(self):\n        \"\"\"hp_create_block_maintenance: blockType='maintenance' works.\"\"\"\n        unit_id = make_uuid()\n        row = make_block_row(unit_id=unit_id, block_type=\"maintenance\")\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await createBlock(\n            db,\n            CreateBlockInput(\n                unitId=unit_id,\n                startDate=\"2024-07-01\",\n                endDate=\"2024-07-10\",\n                blockType=\"maintenance\",\n            ),\n        )\n        assert result.blockType == \"maintenance\"\n\n    @pytest.mark.asyncio\n    async def test_creates_owner_hold_block(self):\n        \"\"\"hp_create_block_owner_hold: blockType='owner_hold' works.\"\"\"\n        unit_id = make_uuid()\n        row = make_block_row(unit_id=unit_id, block_type=\"owner_hold\")\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await createBlock(\n            db,\n            CreateBlockInput(\n                unitId=unit_id,\n                startDate=\"2024-07-01\",\n                endDate=\"2024-07-10\",\n                blockType=\"owner_hold\",\n            ),\n        )\n        assert result.blockType == \"owner_hold\"\n\n\nclass TestDeleteBlockHappyPath:\n    \"\"\"Happy-path tests for deleteBlock.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_returns_true_when_block_deleted(self):\n        \"\"\"hp_delete_block_success: returns True when row is deleted.\"\"\"\n        block_id = make_uuid()\n        db = make_db_client(query_result={\"rows\": [], \"rowCount\": 1})\n\n        result = await deleteBlock(db, block_id)\n\n        assert result is True, \"deleteBlock should return True when block is deleted\"\n        db.query.assert_called_once()\n\n\nclass TestGetBlocksForUnitsHappyPath:\n    \"\"\"Happy-path tests for getBlocksForUnits.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_returns_map_grouped_by_unit_id(self):\n        \"\"\"hp_get_blocks_for_units_multiple: groups blocks by unitId.\"\"\"\n        uid1 = make_uuid()\n        uid2 = make_uuid()\n        rows = [\n            make_block_row(unit_id=uid1, start_date=\"2024-06-01\", end_date=\"2024-06-05\"),\n            make_block_row(unit_id=uid1, start_date=\"2024-06-08\", end_date=\"2024-06-10\"),\n            make_block_row(unit_id=uid2, start_date=\"2024-06-03\", end_date=\"2024-06-07\"),\n        ]\n        db = make_db_client(query_result={\"rows\": rows, \"rowCount\": 3})\n\n        result = await getBlocksForUnits(\n            db,\n            [uid1, uid2],\n            DateRange(start=\"2024-06-01\", end=\"2024-06-15\"),\n        )\n\n        assert uid1 in result.entries, f\"Map must contain key {uid1}\"\n        assert uid2 in result.entries, f\"Map must contain key {uid2}\"\n        assert len(result.entries[uid1]) == 2, f\"Unit1 should have 2 blocks\"\n        assert len(result.entries[uid2]) == 1, f\"Unit2 should have 1 block\"\n        for block in result.entries[uid1]:\n            assert block.unitId == uid1\n        for block in result.entries[uid2]:\n            assert block.unitId == uid2\n        # Verify sort order within each unit\n        blocks_u1 = result.entries[uid1]\n        assert blocks_u1[0].startDate <= blocks_u1[1].startDate\n\n    @pytest.mark.asyncio\n    async def test_units_with_no_blocks_have_empty_list(self):\n        \"\"\"hp_get_blocks_for_units_some_empty: empty list for unit without blocks.\"\"\"\n        uid1 = make_uuid()\n        uid2 = make_uuid()\n        rows = [\n            make_block_row(unit_id=uid1, start_date=\"2024-06-01\", end_date=\"2024-06-05\"),\n        ]\n        db = make_db_client(query_result={\"rows\": rows, \"rowCount\": 1})\n\n        result = await getBlocksForUnits(\n            db,\n            [uid1, uid2],\n            DateRange(start=\"2024-06-01\", end=\"2024-06-15\"),\n        )\n\n        assert uid1 in result.entries\n        assert uid2 in result.entries\n        assert len(result.entries[uid1]) == 1\n        assert result.entries[uid2] == [], \"Unit with no blocks should have empty list\"\n\n\n# ===================================================================\n# 2. EDGE CASE TESTS\n# ===================================================================\n\n\nclass TestEdgeCases:\n    \"\"\"Edge case tests for boundary conditions and mapping.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_single_day_range_returns_matching_block(self):\n        \"\"\"edge_get_blocks_single_day_range: start == end works.\"\"\"\n        unit_id = make_uuid()\n        row = make_block_row(\n            unit_id=unit_id, start_date=\"2024-06-10\", end_date=\"2024-06-20\"\n        )\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await getBlocksForUnit(\n            db,\n            unit_id,\n            DateRange(start=\"2024-06-15\", end=\"2024-06-15\"),\n        )\n\n        assert len(result) == 1, \"Single-day range that overlaps a block should return it\"\n\n    @pytest.mark.asyncio\n    async def test_create_single_day_block(self):\n        \"\"\"edge_create_block_single_day: startDate == endDate.\"\"\"\n        unit_id = make_uuid()\n        row = make_block_row(\n            unit_id=unit_id, start_date=\"2024-06-15\", end_date=\"2024-06-15\"\n        )\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await createBlock(\n            db,\n            CreateBlockInput(\n                unitId=unit_id,\n                startDate=\"2024-06-15\",\n                endDate=\"2024-06-15\",\n                blockType=\"reserved\",\n            ),\n        )\n\n        assert result.startDate == result.endDate == \"2024-06-15\"\n\n    @pytest.mark.asyncio\n    async def test_row_to_domain_mapping_snake_to_camel(self):\n        \"\"\"edge_row_to_domain_mapping: snake_case DB row → camelCase domain model.\"\"\"\n        unit_id = make_uuid()\n        block_id = make_uuid()\n        created_at = \"2024-06-01T12:00:00+00:00\"\n        row = {\n            \"id\": block_id,\n            \"unit_id\": unit_id,\n            \"start_date\": \"2024-07-01\",\n            \"end_date\": \"2024-07-10\",\n            \"block_type\": \"maintenance\",\n            \"created_at\": created_at,\n        }\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await createBlock(\n            db,\n            CreateBlockInput(\n                unitId=unit_id,\n                startDate=\"2024-07-01\",\n                endDate=\"2024-07-10\",\n                blockType=\"maintenance\",\n            ),\n        )\n\n        assert result.id == block_id, \"row.id → block.id\"\n        assert result.unitId == unit_id, \"row.unit_id → block.unitId\"\n        assert result.startDate == \"2024-07-01\", \"row.start_date → block.startDate\"\n        assert result.endDate == \"2024-07-10\", \"row.end_date → block.endDate\"\n        assert result.blockType == \"maintenance\", \"row.block_type → block.blockType\"\n        assert result.createdAt == created_at, \"row.created_at → block.createdAt\"\n\n    @pytest.mark.asyncio\n    async def test_boundary_overlap_inclusive_ranges(self):\n        \"\"\"edge_date_boundary_overlap: block endDate == range.start is included (inclusive).\"\"\"\n        unit_id = make_uuid()\n        row = make_block_row(\n            unit_id=unit_id, start_date=\"2024-06-10\", end_date=\"2024-06-15\"\n        )\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await getBlocksForUnit(\n            db,\n            unit_id,\n            DateRange(start=\"2024-06-15\", end=\"2024-06-20\"),\n        )\n\n        assert len(result) == 1, (\n            \"Block whose endDate==range.start must be included (inclusive ranges)\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_get_blocks_for_units_single_unit(self):\n        \"\"\"edge_get_blocks_for_units_single_unit: single unitId in list.\"\"\"\n        uid = make_uuid()\n        row = make_block_row(unit_id=uid)\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await getBlocksForUnits(\n            db, [uid], DateRange(start=\"2024-06-01\", end=\"2024-06-30\")\n        )\n\n        assert len(result.entries) == 1\n        assert uid in result.entries\n\n    @pytest.mark.asyncio\n    async def test_get_blocks_for_units_duplicate_ids(self):\n        \"\"\"edge_duplicate_unit_ids_in_bulk: duplicates handled gracefully.\"\"\"\n        uid = make_uuid()\n        row = make_block_row(unit_id=uid)\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await getBlocksForUnits(\n            db, [uid, uid], DateRange(start=\"2024-06-01\", end=\"2024-06-30\")\n        )\n\n        assert uid in result.entries, \"Duplicate unitId still appears as key\"\n\n\n# ===================================================================\n# 3. ERROR CASE TESTS\n# ===================================================================\n\n\nclass TestGetBlocksForUnitErrors:\n    \"\"\"Error case tests for getBlocksForUnit.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_invalid_date_range_end_before_start(self):\n        \"\"\"err_get_blocks_invalid_date_range: end < start → InvalidDateRangeError.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises(InvalidDateRangeError) as exc_info:\n            await getBlocksForUnit(\n                db,\n                make_uuid(),\n                DateRange(start=\"2024-06-30\", end=\"2024-06-01\"),\n            )\n\n        err = exc_info.value\n        assert err.start == \"2024-06-30\", \"Error should contain the start date\"\n        assert err.end == \"2024-06-01\", \"Error should contain the end date\"\n        assert \"end\" in err.message.lower() and \"start\" in err.message.lower()\n\n    @pytest.mark.asyncio\n    async def test_database_connection_failure(self):\n        \"\"\"err_get_blocks_db_connection_failure: DB down → DatabaseError.\"\"\"\n        db = make_db_client(query_side_effect=ConnectionError(\"Connection refused\"))\n\n        with pytest.raises(DatabaseError) as exc_info:\n            await getBlocksForUnit(\n                db,\n                make_uuid(),\n                DateRange(start=\"2024-06-01\", end=\"2024-06-30\"),\n            )\n\n        assert exc_info.value.message, \"DatabaseError should have a message\"\n\n    @pytest.mark.asyncio\n    async def test_unexpected_query_error(self):\n        \"\"\"err_get_blocks_db_query_error: unexpected PG error → DatabaseError.\"\"\"\n        db = make_db_client(query_side_effect=pg_error(\"42P01\", \"relation does not exist\"))\n\n        with pytest.raises(DatabaseError) as exc_info:\n            await getBlocksForUnit(\n                db,\n                make_uuid(),\n                DateRange(start=\"2024-06-01\", end=\"2024-06-30\"),\n            )\n\n        assert exc_info.value.message, \"DatabaseError should have a message\"\n\n\nclass TestCreateBlockErrors:\n    \"\"\"Error case tests for createBlock.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_overlap_23P01_raises_block_overlap_error(self):\n        \"\"\"err_create_block_overlap_23P01: exclusion violation → BlockOverlapError.\"\"\"\n        unit_id = make_uuid()\n        db = make_db_client(\n            query_side_effect=pg_error(\"23P01\", \"conflicting key value violates exclusion constraint\")\n        )\n\n        with pytest.raises(BlockOverlapError) as exc_info:\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=unit_id,\n                    startDate=\"2024-07-01\",\n                    endDate=\"2024-07-10\",\n                    blockType=\"reserved\",\n                ),\n            )\n\n        err = exc_info.value\n        assert err.pgCode == \"23P01\", f\"pgCode must be 23P01, got {err.pgCode}\"\n        assert err.unitId == unit_id\n        assert err.startDate == \"2024-07-01\"\n        assert err.endDate == \"2024-07-10\"\n        assert \"overlap\" in err.message.lower()\n\n    @pytest.mark.asyncio\n    async def test_invalid_date_range_end_before_start(self):\n        \"\"\"err_create_block_invalid_date_range: endDate < startDate.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises(InvalidDateRangeError) as exc_info:\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=make_uuid(),\n                    startDate=\"2024-06-30\",\n                    endDate=\"2024-01-01\",\n                    blockType=\"reserved\",\n                ),\n            )\n\n        err = exc_info.value\n        assert err.start == \"2024-06-30\"\n        assert err.end == \"2024-01-01\"\n\n    @pytest.mark.asyncio\n    async def test_invalid_block_type(self):\n        \"\"\"err_create_block_invalid_type: unknown blockType → InvalidBlockTypeError.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises(InvalidBlockTypeError) as exc_info:\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=make_uuid(),\n                    startDate=\"2024-07-01\",\n                    endDate=\"2024-07-10\",\n                    blockType=\"vacation\",\n                ),\n            )\n\n        err = exc_info.value\n        assert err.providedType == \"vacation\"\n        assert \"reserved\" in err.allowedTypes\n        assert \"maintenance\" in err.allowedTypes\n        assert \"owner_hold\" in err.allowedTypes\n\n    @pytest.mark.asyncio\n    async def test_database_connection_failure(self):\n        \"\"\"err_create_block_db_connection_failure: DB down → DatabaseError.\"\"\"\n        db = make_db_client(query_side_effect=ConnectionError(\"Connection refused\"))\n\n        with pytest.raises(DatabaseError):\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=make_uuid(),\n                    startDate=\"2024-07-01\",\n                    endDate=\"2024-07-10\",\n                    blockType=\"reserved\",\n                ),\n            )\n\n\nclass TestDeleteBlockErrors:\n    \"\"\"Error case tests for deleteBlock.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_block_not_found(self):\n        \"\"\"err_delete_block_not_found: missing blockId → BlockNotFoundError.\"\"\"\n        block_id = make_uuid()\n        db = make_db_client(query_result={\"rows\": [], \"rowCount\": 0})\n\n        with pytest.raises(BlockNotFoundError) as exc_info:\n            await deleteBlock(db, block_id)\n\n        err = exc_info.value\n        assert err.blockId == block_id, \"Error must contain the missing blockId\"\n        assert \"not found\" in err.message.lower()\n\n    @pytest.mark.asyncio\n    async def test_database_connection_failure(self):\n        \"\"\"err_delete_block_db_connection_failure: DB down → DatabaseError.\"\"\"\n        db = make_db_client(query_side_effect=ConnectionError(\"Connection refused\"))\n\n        with pytest.raises(DatabaseError):\n            await deleteBlock(db, make_uuid())\n\n\nclass TestGetBlocksForUnitsErrors:\n    \"\"\"Error case tests for getBlocksForUnits.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_empty_unit_ids_raises_error(self):\n        \"\"\"err_get_blocks_for_units_empty_list: empty list → error.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises((InvalidDateRangeError, ValueError)) as exc_info:\n            await getBlocksForUnits(\n                db,\n                [],\n                DateRange(start=\"2024-06-01\", end=\"2024-06-30\"),\n            )\n\n        # The error message should mention unitIds\n        err_msg = str(exc_info.value).lower()\n        assert \"unit\" in err_msg or \"empty\" in err_msg or \"at least\" in err_msg\n\n    @pytest.mark.asyncio\n    async def test_invalid_date_range(self):\n        \"\"\"err_get_blocks_for_units_invalid_date_range: end < start.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises(InvalidDateRangeError):\n            await getBlocksForUnits(\n                db,\n                [make_uuid()],\n                DateRange(start=\"2024-12-31\", end=\"2024-01-01\"),\n            )\n\n    @pytest.mark.asyncio\n    async def test_database_failure(self):\n        \"\"\"err_get_blocks_for_units_db_failure: DB down → DatabaseError.\"\"\"\n        db = make_db_client(query_side_effect=ConnectionError(\"Connection refused\"))\n\n        with pytest.raises(DatabaseError):\n            await getBlocksForUnits(\n                db,\n                [make_uuid()],\n                DateRange(start=\"2024-06-01\", end=\"2024-06-30\"),\n            )\n\n\n# ===================================================================\n# 4. INVARIANT TESTS\n# ===================================================================\n\n\nclass TestInvariants:\n    \"\"\"Tests for system invariants defined in the contract.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_no_overlapping_blocks_same_unit(self):\n        \"\"\"inv_no_overlap_same_unit: second overlapping createBlock → BlockOverlapError.\"\"\"\n        unit_id = make_uuid()\n        row = make_block_row(unit_id=unit_id, start_date=\"2024-07-01\", end_date=\"2024-07-10\")\n\n        # First call succeeds, second raises PG 23P01\n        db = make_db_client(\n            query_side_effect=[\n                {\"rows\": [row], \"rowCount\": 1},\n                pg_error(\"23P01\", \"exclusion constraint violated\"),\n            ]\n        )\n\n        # First create should succeed\n        result1 = await createBlock(\n            db,\n            CreateBlockInput(\n                unitId=unit_id,\n                startDate=\"2024-07-01\",\n                endDate=\"2024-07-10\",\n                blockType=\"reserved\",\n            ),\n        )\n        assert result1 is not None\n\n        # Second create with overlapping range should fail\n        with pytest.raises(BlockOverlapError) as exc_info:\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=unit_id,\n                    startDate=\"2024-07-05\",\n                    endDate=\"2024-07-15\",\n                    blockType=\"maintenance\",\n                ),\n            )\n        assert exc_info.value.pgCode == \"23P01\"\n\n    @pytest.mark.asyncio\n    async def test_end_date_gte_start_date_enforced_before_db(self):\n        \"\"\"inv_end_gte_start: endDate < startDate rejected without DB call.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises(InvalidDateRangeError):\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=make_uuid(),\n                    startDate=\"2024-07-10\",\n                    endDate=\"2024-07-01\",\n                    blockType=\"reserved\",\n                ),\n            )\n\n        db.query.assert_not_called(), \"No DB call should be made for invalid date range\"\n\n    @pytest.mark.asyncio\n    async def test_block_type_must_be_allowed_variant(self):\n        \"\"\"inv_block_type_check_constraint: invalid type → InvalidBlockTypeError.\"\"\"\n        db = make_db_client()\n\n        with pytest.raises(InvalidBlockTypeError) as exc_info:\n            await createBlock(\n                db,\n                CreateBlockInput(\n                    unitId=make_uuid(),\n                    startDate=\"2024-07-01\",\n                    endDate=\"2024-07-10\",\n                    blockType=\"unknown\",\n                ),\n            )\n\n        allowed = exc_info.value.allowedTypes\n        assert set(allowed) == {\"reserved\", \"maintenance\", \"owner_hold\"}, (\n            f\"Allowed types must be exactly the 3 variants, got {allowed}\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_all_requested_unit_ids_present_in_map(self):\n        \"\"\"inv_all_unit_ids_present_in_map: every requested unitId appears as key.\"\"\"\n        uid1 = make_uuid()\n        uid2 = make_uuid()\n        uid3 = make_uuid()\n        rows = [\n            make_block_row(unit_id=uid2, start_date=\"2024-06-05\", end_date=\"2024-06-10\"),\n        ]\n        db = make_db_client(query_result={\"rows\": rows, \"rowCount\": 1})\n\n        result = await getBlocksForUnits(\n            db,\n            [uid1, uid2, uid3],\n            DateRange(start=\"2024-06-01\", end=\"2024-06-30\"),\n        )\n\n        assert len(result.entries) == 3, f\"Map should have 3 keys, got {len(result.entries)}\"\n        for uid in [uid1, uid2, uid3]:\n            assert uid in result.entries, f\"unitId {uid} must be present in map\"\n        assert result.entries[uid1] == [], \"Unit without blocks must have empty list\"\n        assert len(result.entries[uid2]) == 1, \"Unit with blocks must have them\"\n        assert result.entries[uid3] == [], \"Unit without blocks must have empty list\"\n\n    @pytest.mark.asyncio\n    async def test_results_sorted_by_start_date_ascending(self):\n        \"\"\"inv_results_sorted_by_start_date: blocks returned in startDate order.\"\"\"\n        unit_id = make_uuid()\n        rows = [\n            make_block_row(unit_id=unit_id, start_date=\"2024-06-01\", end_date=\"2024-06-03\"),\n            make_block_row(unit_id=unit_id, start_date=\"2024-06-05\", end_date=\"2024-06-07\"),\n            make_block_row(unit_id=unit_id, start_date=\"2024-06-10\", end_date=\"2024-06-12\"),\n        ]\n        db = make_db_client(query_result={\"rows\": rows, \"rowCount\": 3})\n\n        result = await getBlocksForUnit(\n            db, unit_id, DateRange(start=\"2024-06-01\", end=\"2024-06-30\")\n        )\n\n        assert len(result) == 3\n        assert result[0].startDate <= result[1].startDate <= result[2].startDate, (\n            \"Blocks must be sorted by startDate ascending\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_inclusive_date_ranges_boundary(self):\n        \"\"\"inv_inclusive_date_ranges: boundary dates are included (inclusive-inclusive).\"\"\"\n        unit_id = make_uuid()\n        # Block exactly on boundary\n        row = make_block_row(\n            unit_id=unit_id, start_date=\"2024-06-15\", end_date=\"2024-06-15\"\n        )\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await getBlocksForUnit(\n            db, unit_id, DateRange(start=\"2024-06-15\", end=\"2024-06-15\")\n        )\n\n        assert len(result) == 1, (\n            \"Block on exact boundary date must be included (inclusive-inclusive)\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_parameterized_queries_no_interpolation(self):\n        \"\"\"inv_parameterized_queries: input passed as parameters, not interpolated.\"\"\"\n        unit_id = make_uuid()\n        db = make_db_client(query_result={\"rows\": [], \"rowCount\": 0})\n\n        await getBlocksForUnit(\n            db, unit_id, DateRange(start=\"2024-06-01\", end=\"2024-06-30\")\n        )\n\n        db.query.assert_called_once()\n        call_args = db.query.call_args\n\n        # The query should use parameterized placeholders\n        # Check that the unitId is passed as a parameter, not embedded in SQL\n        if call_args.args:\n            query_str = call_args.args[0]\n            params = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get(\"params\", [])\n        else:\n            query_str = call_args.kwargs.get(\"query\", call_args.kwargs.get(\"sql\", \"\"))\n            params = call_args.kwargs.get(\"params\", call_args.kwargs.get(\"values\", []))\n\n        # The unit_id value should NOT appear literally in the SQL string\n        assert unit_id not in str(query_str), (\n            \"Unit ID should not be interpolated into SQL string — use parameterized queries\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_created_block_has_uuid_v4_id(self):\n        \"\"\"inv_uuid_v4_format: block id must be a valid UUID v4.\"\"\"\n        unit_id = make_uuid()\n        generated_id = make_uuid()\n        row = make_block_row(id=generated_id, unit_id=unit_id)\n        db = make_db_client(query_result={\"rows\": [row], \"rowCount\": 1})\n\n        result = await createBlock(\n            db,\n            CreateBlockInput(\n                unitId=unit_id,\n                startDate=\"2024-07-01\",\n                endDate=\"2024-07-10\",\n                blockType=\"reserved\",\n            ),\n        )\n\n        assert UUID_V4_REGEX.match(result.id), (\n            f\"Block id must match UUID v4 pattern, got: {result.id}\"\n        )\n\n\n# ===================================================================\n# 5. ADDITIONAL VALIDATION TESTS\n# ===================================================================\n\n\nclass TestDateRangeValidation:\n    \"\"\"Tests for DateRange validation rules.\"\"\"\n\n    def test_date_range_valid(self):\n        \"\"\"DateRange with valid ISO dates and end >= start is accepted.\"\"\"\n        dr = DateRange(start=\"2024-01-01\", end=\"2024-12-31\")\n        assert dr.start == \"2024-01-01\"\n        assert dr.end == \"2024-12-31\"\n\n    def test_date_range_same_day(self):\n        \"\"\"DateRange with start == end is valid.\"\"\"\n        dr = DateRange(start=\"2024-06-15\", end=\"2024-06-15\")\n        assert dr.start == dr.end\n\n    def test_date_range_start_format_validation(self):\n        \"\"\"DateRange rejects non-ISO-8601 start date.\"\"\"\n        with pytest.raises((ValueError, InvalidDateRangeError)):\n            DateRange(start=\"not-a-date\", end=\"2024-06-30\")\n\n    def test_date_range_end_format_validation(self):\n        \"\"\"DateRange rejects non-ISO-8601 end date.\"\"\"\n        with pytest.raises((ValueError, InvalidDateRangeError)):\n            DateRange(start=\"2024-06-01\", end=\"not-a-date\")\n\n    def test_date_range_end_before_start_rejected(self):\n        \"\"\"DateRange with end < start is rejected.\"\"\"\n        with pytest.raises((ValueError, InvalidDateRangeError)):\n            DateRange(start=\"2024-06-30\", end=\"2024-06-01\")\n\n\nclass TestBlockTypeValidation:\n    \"\"\"Tests for BlockType enum validation.\"\"\"\n\n    @pytest.mark.parametrize(\"valid_type\", [\"reserved\", \"maintenance\", \"owner_hold\"])\n    def test_valid_block_types_accepted(self, valid_type):\n        \"\"\"All three valid block types are accepted in CreateBlockInput.\"\"\"\n        input_data = CreateBlockInput(\n            unitId=make_uuid(),\n            startDate=\"2024-07-01\",\n            endDate=\"2024-07-10\",\n            blockType=valid_type,\n        )\n        assert input_data.blockType == valid_type\n\n    @pytest.mark.parametrize(\"invalid_type\", [\"\", \"RESERVED\", \"Reserved\", \"vacation\", \"blocked\", \"hold\"])\n    def test_invalid_block_types_rejected(self, invalid_type):\n        \"\"\"Invalid block types are rejected.\"\"\"\n        with pytest.raises((ValueError, InvalidBlockTypeError)):\n            CreateBlockInput(\n                unitId=make_uuid(),\n                startDate=\"2024-07-01\",\n                endDate=\"2024-07-10\",\n                blockType=invalid_type,\n            )\n\n\nclass TestCreateBlockInputValidation:\n    \"\"\"Tests for CreateBlockInput validation.\"\"\"\n\n    def test_valid_input_accepted(self):\n        \"\"\"Fully valid CreateBlockInput is constructed successfully.\"\"\"\n        uid = make_uuid()\n        inp = CreateBlockInput(\n            unitId=uid,\n            startDate=\"2024-07-01\",\n            endDate=\"2024-07-10\",\n            blockType=\"reserved\",\n        )\n        assert inp.unitId == uid\n        assert inp.startDate == \"2024-07-01\"\n        assert inp.endDate == \"2024-07-10\"\n        assert inp.blockType == \"reserved\"\n\n    def test_end_date_before_start_date_rejected(self):\n        \"\"\"CreateBlockInput with endDate < startDate is rejected.\"\"\"\n        with pytest.raises((ValueError, InvalidDateRangeError)):\n            CreateBlockInput(\n                unitId=make_uuid(),\n                startDate=\"2024-07-10\",\n                endDate=\"2024-07-01\",\n                blockType=\"reserved\",\n            )\n\n\nclass TestAvailabilityBlockFields:\n    \"\"\"Tests for AvailabilityBlock field validation.\"\"\"\n\n    def test_start_date_regex_valid(self):\n        \"\"\"startDate field matches ISO 8601 date pattern.\"\"\"\n        valid_dates = [\"2024-01-01\", \"2024-06-15\", \"2024-12-31\", \"2000-02-29\"]\n        for d in valid_dates:\n            assert ISO_DATE_REGEX.match(d), f\"{d} should match ISO date pattern\"\n\n    def test_start_date_regex_invalid(self):\n        \"\"\"Non-ISO-8601 strings are rejected by the date regex.\"\"\"\n        invalid_dates = [\"2024-13-01\", \"2024-00-15\", \"2024-06-00\", \"24-06-15\", \"not-a-date\"]\n        for d in invalid_dates:\n            assert not ISO_DATE_REGEX.match(d), f\"{d} should NOT match ISO date pattern\"\n"
+}

@@ -1,0 +1,23 @@
+\begin{table}[H]
+\centering
+\caption{Summary statistics by architecture at $n=5$ and $n=10$}
+\label{tab:token-analysis}
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+\textbf{Architecture} & \textbf{$n$} & \textbf{Gov\%} & \textbf{Links} & \textbf{Ent.\ Ret.} & \textbf{DPI} & \textbf{Tokens} & \textbf{Efficiency} \\
+\midrule
+Centralized (Hub-Spoke) & 5 & 24.0% & 8 & 53.9% & 4.61 & 90,610 & 0.4573 \\
+Fully Connected & 5 & 42.1% & 20 & 36.2% & 4.78 & 118,893 & 0.3067 \\
+Hierarchical (Tree) & 5 & 23.6% & 8 & 30.9% & 6.91 & 90,143 & 0.4520 \\
+Ring & 5 & 27.3% & 10 & 35.8% & 4.01 & 94,640 & 0.4453 \\
+Star-Mesh Hybrid & 5 & 39.3% & 16 & 47.4% & 6.57 & 113,395 & 0.4214 \\
+\midrule
+Centralized (Hub-Spoke) & 10 & 25.4% & 18 & 49.8% & 5.02 & 199,801 & 0.3504 \\
+Fully Connected & 10 & 59.9% & 90 & 30.9% & 6.91 & 372,014 & 0.0349 \\
+Hierarchical (Tree) & 10 & 26.3% & 18 & 25.8% & 11.14 & 202,451 & 0.3278 \\
+Ring & 10 & 27.8% & 20 & 31.2% & 8.60 & 206,648 & 0.3308 \\
+Star-Mesh Hybrid & 10 & 31.9% & 24 & 42.6% & 7.17 & 218,898 & 0.3203 \\
+\bottomrule
+\end{tabular}
+\end{table}

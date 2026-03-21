@@ -1,0 +1,103 @@
+{
+  "task_summary": "Define the interface contract for the Availability Service — the lowest-dependency microservice in a vacation rental booking platform. The service manages unit availability via bitmask caching (Redis) backed by a PostgreSQL source of truth. It exposes three REST endpoints (check, update, bulk check) and must define precise TypeScript types, function signatures, error handling conventions, and serialization formats that downstream services (booking, search, etc.) will depend on.",
+  "findings": [
+    {
+      "topic": "REST API Contract Design for Availability Services",
+      "finding": "Availability check endpoints should return both a boolean 'available' flag AND the granular per-date status array. This dual response avoids N+1 calls when UIs need to render calendars vs. when booking flow just needs a yes/no. The bulk endpoint should cap unit_ids (e.g., 50-100) to bound response size and prevent abuse. Date range should be [start, end) half-open interval — this is the standard in hotel/rental availability systems to avoid off-by-one errors on checkout dates.",
+      "source": "Industry patterns from Airbnb/Booking.com API designs; Google Calendar API uses half-open intervals",
+      "relevance": "Directly defines the shape of request/response types and validation rules for all three endpoints",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Bitmask Availability Representation",
+      "finding": "Bitmasks for availability are typically sharded by year (365/366 bits per unit per year). A date range spanning year boundaries requires checking two bitmasks and combining results. The bitmask should use 0=available, 1=blocked convention (so AND-ing a range mask with the bitmask, if result is 0, the range is available). This yields true O(1) checking via bitwise operations. Cache keys should encode unit_id + year, e.g., 'avail:{shard}:{unit_id}:{year}'.",
+      "source": "Bitmask calendar systems in booking engines; Redis BITFIELD/GETBIT documentation",
+      "relevance": "Impacts the cache layer types (ShardKey, BitmaskMetadata) and how the service interface delegates to the cache vs. DB",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Error Handling in Microservice Contracts",
+      "finding": "Use a consistent error envelope: { error: { code: string, message: string, details?: object } } with machine-readable error codes (e.g., 'INVALID_DATE_RANGE', 'UNIT_NOT_FOUND', 'CACHE_UNAVAILABLE'). HTTP status codes should be: 400 for validation errors, 404 for unknown units, 409 for conflicts (overlapping blocks), 503 for cache/DB failures. The service should degrade gracefully — if Redis is down, fall back to direct DB query (slower but correct).",
+      "source": "Google API Design Guide error model; Microsoft REST API guidelines; Stripe API error patterns",
+      "relevance": "Defines the ErrorCode enum, ApiErrorEnvelope type, and the fallback behavior contract that callers depend on",
+      "confidence": 0.95
+    },
+    {
+      "topic": "TypeScript Interface Contract Patterns for Deno Services",
+      "finding": "Define the service interface as a TypeScript interface (not class) with async methods returning Result<T, E> discriminated unions rather than throwing. This makes the contract testable via in-memory implementations and avoids untyped exception flows. Use Zod or manual validation for request parsing at the HTTP boundary, converting to strongly-typed domain objects before passing to the service layer. Export all types from a single mod.ts barrel file.",
+      "source": "Deno module conventions; TypeScript handbook discriminated unions; Oak middleware patterns",
+      "relevance": "Directly shapes how the interface is defined — the AvailabilityServiceInterface type and its method signatures",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Bulk Endpoint Design Patterns",
+      "finding": "Bulk availability checks should accept unit_ids as a comma-separated query parameter (GET) rather than POST body to maintain cacheability at the HTTP/CDN layer. Response should be a map/record keyed by unit_id, not an array, so consumers can do O(1) lookup. Each entry should include the unit_id, available boolean, and optionally the blocked dates within the range. Set a maximum of 50-100 unit_ids per request with a 400 error if exceeded.",
+      "source": "Stripe list endpoints; Elasticsearch _mget pattern; REST bulk operation best practices",
+      "relevance": "Defines the BulkAvailabilityResult type shape and validation constraints for the bulk endpoint",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Date Handling Edge Cases",
+      "finding": "Common pitfalls: (1) Timezone confusion — all dates must be 'YYYY-MM-DD' date strings (not datetimes) since availability is inherently date-based, not instant-based. (2) Leap year handling in bitmasks (Feb 29 = bit index 59). (3) Validation must reject: start >= end, dates in the far past, ranges exceeding maximum window (e.g., 365 days). (4) The update endpoint must handle idempotency — setting an already-available date as available should be a no-op, not an error.",
+      "source": "IANA timezone database edge cases; hotel PMS system documentation; ISO 8601 date-only format",
+      "relevance": "Defines DateString type constraints, validation rules, and idempotency guarantees in the contract",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Cache Invalidation Strategy Contract",
+      "finding": "Write-through invalidation is preferred over write-behind for availability (correctness > performance). The contract should specify: on any PUT /availability/:unit_id, the service MUST invalidate the cached bitmask for the affected year(s) BEFORE returning the response. Cache warming happens on next read (lazy). This avoids stale reads in the booking flow where a user might double-book. The invalidation should be per-unit, per-year — not a full flush.",
+      "source": "Cache-aside pattern (Microsoft Azure Architecture Center); distributed caching best practices",
+      "relevance": "Defines the ordering guarantees and consistency model that the booking service depends on",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Idempotent Update Operations",
+      "finding": "PUT for availability updates should be idempotent. The request body should contain the desired state (list of date ranges + block type), not a delta. This simplifies retry logic for callers. The response should return the resulting state of the unit's availability for the affected range, plus a list of changes that were actually made (created/deleted blocks). Use BlockType enum: 'manual_block', 'booking_hold', 'maintenance', 'owner_hold' — not just available/blocked.",
+      "source": "REST idempotency patterns; Airbnb hosting API availability model",
+      "relevance": "Shapes the AvailabilityUpdateBody and AvailabilityUpdateResult types",
+      "confidence": 0.88
+    },
+    {
+      "topic": "Health Check and Observability Contract",
+      "finding": "The /health endpoint should return a structured response with status of each dependency: { status: 'healthy'|'degraded'|'unhealthy', dependencies: { postgres: { status, latencyMs }, redis: { status, latencyMs } } }. 'degraded' means Redis is down but DB is reachable (service can still function). This is critical for orchestration systems to make routing decisions.",
+      "source": "Kubernetes health check best practices; Microsoft Health Endpoint Monitoring pattern",
+      "relevance": "Defines the HealthStatus type and degradation semantics",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Request Validation at Service Boundary",
+      "finding": "Validate at the HTTP layer (Oak middleware), not in the service core. UnitId must be validated as UUID v4 format. DateString must match /^\\d{4}-\\d{2}-\\d{2}$/ and parse to a valid date. The service interface should accept already-validated domain types, never raw strings. This separation keeps the service interface clean and testable while the HTTP layer handles parsing and 400 responses.",
+      "source": "Hexagonal architecture / ports-and-adapters pattern; Oak middleware documentation",
+      "relevance": "Defines the boundary between the API layer types and the service interface types",
+      "confidence": 0.94
+    }
+  ],
+  "recommended_approach": "Define the Availability Service interface contract as a layered TypeScript design with these key elements:\n\n1. **Core Service Interface** (`AvailabilityServiceInterface`): A TypeScript interface with three async methods — `checkAvailability`, `updateAvailability`, `checkBulkAvailability` — each returning discriminated union Result types (success | error) rather than throwing exceptions. This interface is the primary contract that all layers (HTTP handlers, tests, mocks) program against.\n\n2. **Domain Types**: Strong branded types for `UnitId` (UUID string), `DateString` (YYYY-MM-DD), `BlockType` (union of literal strings). Use half-open intervals `[start, end)` consistently. All dates are UTC date-only strings, never datetimes.\n\n3. **HTTP Contract**: Three REST endpoints with clearly defined request shapes (validated at the Oak router layer via middleware) and response shapes using a consistent JSON envelope. Error responses use `ApiErrorEnvelope` with machine-readable `ErrorCode` values. Bulk endpoint capped at 50 unit_ids.\n\n4. **Error Taxonomy**: Define a finite set of error codes as a union type: `INVALID_DATE_RANGE`, `UNIT_NOT_FOUND`, `BLOCK_OVERLAP`, `CACHE_UNAVAILABLE`, `INTERNAL_ERROR`, `VALIDATION_ERROR`, `BULK_LIMIT_EXCEEDED`. Map each to an HTTP status code.\n\n5. **Consistency Model**: Document that writes invalidate cache synchronously (write-through) before responding. Reads fall back to DB on cache miss (cache-aside with lazy warming). The service is safe for the booking flow's read-then-write pattern.\n\n6. **Composition**: Wire together the three dependency contracts (schema/repository, bitmask cache, HTTP API) through the service interface, using dependency injection of `PgClient` and `RedisClient`. The service orchestrates cache-check → DB-fallback → cache-warm and write → cache-invalidate → respond flows.\n\nExport all types from a barrel `mod.ts`. Keep the interface file under 300 lines. Provide contract tests that validate request/response shapes against the type definitions using in-memory mocks.",
+  "alternatives_considered": [
+    "GraphQL instead of REST: Rejected because the availability contract is simple (3 endpoints), REST is more cacheable at the HTTP layer, and the project spec mandates REST+JSON.",
+    "Throwing exceptions instead of Result types: Rejected because discriminated unions make the error contract explicit in the type system, which is critical for a service that is the first call in the booking flow — callers MUST handle errors.",
+    "POST for bulk check instead of GET with query params: Considered for unlimited unit_id counts, but GET is more cacheable and the 50-unit cap makes query string length manageable. GET preserves HTTP semantics (safe, idempotent read).",
+    "Event-driven cache invalidation (pub/sub) instead of synchronous invalidation: Too complex for V1 and introduces eventual consistency risk in the booking flow. Can be added later for cross-service cache invalidation.",
+    "Closed intervals [start, end] instead of half-open [start, end): Half-open is industry standard for date ranges, avoids off-by-one errors with checkout dates, and matches how the bitmask bit indices work."
+  ],
+  "risks": [
+    "Year boundary spanning: A date range like Dec 28 - Jan 5 spans two bitmask shards (two Redis keys). The service interface must handle this transparently — callers should not need to know about sharding. The contract must specify that cross-year ranges are supported.",
+    "Stale cache reads during concurrent writes: If two PUT requests arrive simultaneously for the same unit, the last-write-wins but the cache invalidation ordering must be correct. The contract should note that individual unit operations are serializable but not globally ordered.",
+    "Bulk endpoint abuse: Without a cap on unit_ids, a single request could trigger hundreds of cache/DB lookups. The 50-unit cap mitigates this, but the contract must define the error response for exceeding the limit.",
+    "Leap year bitmask alignment: Bit index 59 (Feb 29) must be handled correctly in non-leap years. The bitmask cache layer handles this, but the service contract must specify that date validation rejects Feb 29 for non-leap years.",
+    "Graceful degradation complexity: When Redis is down, falling back to PostgreSQL changes the latency profile dramatically (sub-ms to 10-50ms). Callers (especially the search/booking flow) should be aware of this via response headers or health check status.",
+    "BlockType evolution: Adding new block types later must not break existing consumers. The contract should use a string union type that is forward-compatible (consumers should handle unknown block types gracefully)."
+  ],
+  "compliance_notes": [
+    "All entity identifiers must be UUID v4 format per project standards",
+    "All dates must be ISO 8601 date-only format (YYYY-MM-DD) in UTC per project standards",
+    "Services communicate via HTTP REST APIs with JSON per project standards",
+    "Type annotations required on all public functions per project standards",
+    "Each service independently deployable under services/ directory per project standards",
+    "Tests must be runnable without external services (mock DB/Redis) per project standards",
+    "Integration boundaries must have contract tests validating request/response shapes per project standards",
+    "Files must stay under 300 lines per project standards",
+    "Prefer Deno stdlib over third-party libraries per project standards",
+    "Shared types must be consistent across service boundaries — the types exported from this contract will be consumed by booking service, search service, and potentially a frontend BFF"
+  ]
+}

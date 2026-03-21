@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  booking:
+    build: .
+    ports:
+      - "8007:8007"
+    environment:
+      PORT: 8007
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: booking
+      PG_PASSWORD: booking
+      PG_DATABASE: booking
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AVAILABILITY_SERVICE_URL: http://availability:8001
+      PRICING_SERVICE_URL: http://pricing:8002
+      PROPERTY_SERVICE_URL: http://property:8003
+      PAYMENTS_SERVICE_URL: http://payments:8004
+      EVENT_SERVICE_URL: http://event:8005
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: booking
+      POSTGRES_PASSWORD: booking
+      POSTGRES_DB: booking
+    ports:
+      - "5437:5432"
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6387:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

@@ -1,0 +1,8 @@
+=== Software Versions ===
+Date: 2026-02-14T02:16:14Z
+Python: Python 3.14.3
+anthropic: 0.78.0
+emergence: installed
+swarm: installed
+OS: Darwin 25.2.0 arm64
+=========================

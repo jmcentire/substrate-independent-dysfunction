@@ -1,0 +1,60 @@
+{
+  "id": "1e30e23abe3b",
+  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/r2-orgswarm-001/.swarm_project",
+  "status": "paused",
+  "formation": "epic",
+  "current_stage_index": 1,
+  "stages": [
+    {
+      "stage": "diagnose",
+      "passed": true,
+      "confidence": 0.55,
+      "detail": "Build a microservices backend platform for vacation rental booking with 7 indepe",
+      "tokens_in": 2006,
+      "tokens_out": 775,
+      "cost_usd": 0.088215
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.72,
+      "detail": "16 decisions, 3 questions",
+      "tokens_in": 2565,
+      "tokens_out": 4270,
+      "cost_usd": 0.35872499999999996
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.9,
+      "detail": "7 components",
+      "tokens_in": 3493,
+      "tokens_out": 3383,
+      "cost_usd": 0.30611999999999995
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "7 contracts",
+      "tokens_in": 3193,
+      "tokens_out": 11268,
+      "cost_usd": 0.892995
+    },
+    {
+      "stage": "decompose",
+      "passed": true,
+      "confidence": 0.97,
+      "detail": "7 steps",
+      "tokens_in": 7563,
+      "tokens_out": 1864,
+      "cost_usd": 0.253245
+    }
+  ],
+  "total_tokens": 40380,
+  "total_cost_usd": 1.8992999999999998,
+  "created_at": "2026-02-13T22:51:26.193559",
+  "completed_at": null,
+  "pause_reason": "Signal: Multiple consternation signals (decompose, decompose, decompose, decompose) — systemic concern",
+  "signals": []
+}

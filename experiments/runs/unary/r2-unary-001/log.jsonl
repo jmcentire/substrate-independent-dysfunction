@@ -1,0 +1,37 @@
+{"ts": "2026-02-14T04:09:14.239599+00:00", "wall_s": 0.024, "agent": "system", "event": "run_started", "summary": "Unary (single agent) | budget=$50.0", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T04:09:14.239855+00:00", "wall_s": 0.024, "agent": "agent", "event": "task_received", "summary": "Build the Wander Backend Services platform \u2014 a microservices backend for a\nvacation rental booking and property management system.\n\nCORE CONSTRAINT: \"User standing at checkout with credit card. 3 seco", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T04:09:17.830418+00:00", "wall_s": 3.615, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 1556, "tokens_out": 200}
+{"ts": "2026-02-14T04:09:21.095505+00:00", "wall_s": 6.88, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 33526, "tokens_out": 106}
+{"ts": "2026-02-14T04:09:24.911477+00:00", "wall_s": 10.696, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 33754, "tokens_out": 243}
+{"ts": "2026-02-14T04:09:30.824152+00:00", "wall_s": 16.609, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 41175, "tokens_out": 252}
+{"ts": "2026-02-14T04:09:52.642990+00:00", "wall_s": 38.427, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 41512, "tokens_out": 1675}
+{"ts": "2026-02-14T04:10:49.700087+00:00", "wall_s": 95.484, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 43313, "tokens_out": 4808}
+{"ts": "2026-02-14T04:11:23.460045+00:00", "wall_s": 129.244, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 48331, "tokens_out": 2931}
+{"ts": "2026-02-14T04:12:31.378236+00:00", "wall_s": 197.162, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 51393, "tokens_out": 6338}
+{"ts": "2026-02-14T04:13:12.638697+00:00", "wall_s": 238.423, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 57863, "tokens_out": 3482}
+{"ts": "2026-02-14T04:14:32.703682+00:00", "wall_s": 318.487, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 61477, "tokens_out": 7381}
+{"ts": "2026-02-14T04:16:08.236066+00:00", "wall_s": 414.018, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 68990, "tokens_out": 8498}
+{"ts": "2026-02-14T04:18:00.039198+00:00", "wall_s": 525.821, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 77661, "tokens_out": 9910}
+{"ts": "2026-02-14T04:18:14.649323+00:00", "wall_s": 540.431, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 87744, "tokens_out": 811}
+{"ts": "2026-02-14T04:21:10.325183+00:00", "wall_s": 716.107, "agent": "agent", "event": "api_call", "summary": "tool loop turn (max_tokens)", "tokens_in": 88578, "tokens_out": 16384}
+{"ts": "2026-02-14T04:21:23.999866+00:00", "wall_s": 729.781, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 105239, "tokens_out": 982}
+{"ts": "2026-02-14T04:22:18.758775+00:00", "wall_s": 784.54, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 106252, "tokens_out": 4378}
+{"ts": "2026-02-14T04:22:23.734956+00:00", "wall_s": 789.516, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 110659, "tokens_out": 97}
+{"ts": "2026-02-14T04:22:27.482770+00:00", "wall_s": 793.264, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 110778, "tokens_out": 88}
+{"ts": "2026-02-14T04:22:31.856057+00:00", "wall_s": 797.637, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 111034, "tokens_out": 94}
+{"ts": "2026-02-14T04:22:36.529889+00:00", "wall_s": 802.311, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 111543, "tokens_out": 86}
+{"ts": "2026-02-14T04:22:41.105970+00:00", "wall_s": 806.887, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 111646, "tokens_out": 135}
+{"ts": "2026-02-14T04:22:47.175256+00:00", "wall_s": 812.956, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 111832, "tokens_out": 192}
+{"ts": "2026-02-14T04:22:55.154867+00:00", "wall_s": 820.936, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 112042, "tokens_out": 497}
+{"ts": "2026-02-14T04:23:00.929472+00:00", "wall_s": 826.711, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 112757, "tokens_out": 184}
+{"ts": "2026-02-14T04:23:21.517719+00:00", "wall_s": 847.299, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 112965, "tokens_out": 1293}
+{"ts": "2026-02-14T04:23:26.000574+00:00", "wall_s": 851.782, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 114285, "tokens_out": 96}
+{"ts": "2026-02-14T04:23:29.666825+00:00", "wall_s": 855.448, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 114428, "tokens_out": 75}
+{"ts": "2026-02-14T04:23:34.886578+00:00", "wall_s": 860.668, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 115423, "tokens_out": 94}
+{"ts": "2026-02-14T04:23:41.290972+00:00", "wall_s": 867.072, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 116743, "tokens_out": 123}
+{"ts": "2026-02-14T04:24:11.923311+00:00", "wall_s": 897.704, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 120242, "tokens_out": 2808}
+{"ts": "2026-02-14T04:24:15.712486+00:00", "wall_s": 901.493, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 123081, "tokens_out": 75}
+{"ts": "2026-02-14T04:24:22.921700+00:00", "wall_s": 908.703, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 124629, "tokens_out": 247}
+{"ts": "2026-02-14T04:24:39.947320+00:00", "wall_s": 925.728, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 124974, "tokens_out": 965}
+{"ts": "2026-02-14T04:24:43.724396+00:00", "wall_s": 929.505, "agent": "system", "event": "budget_exceeded", "summary": "Budget exceeded: $51.1711 spent, cap was $50.00", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T04:24:43.734671+00:00", "wall_s": 929.515, "agent": "system", "event": "run_completed", "summary": "$51.17 spent, 76 files, 930s", "tokens_in": 0, "tokens_out": 0}

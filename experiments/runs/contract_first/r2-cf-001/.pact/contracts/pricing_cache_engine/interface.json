@@ -1,0 +1,836 @@
+{
+  "component_id": "pricing_cache_engine",
+  "name": "Hash-Sharded Price Cache",
+  "description": "Redis caching layer for pricing data, hash-sharded by unit_id. Implements the Redis-side operations of a cache-aside pattern: stores nightly rates as Redis Hashes keyed by date, sharded by consistent hash of unit_id for even distribution across configurable shard count. All monetary values use integer-cents representation. JSON-serialized payloads include a schema version field (_v) for forward compatibility. Redis errors are caught and surfaced as discriminated cache-miss results — never thrown — making all write operations fire-and-forget safe. The engine owns ONLY Redis operations; cache-aside orchestration (check cache → fallback to DB → populate) lives in a higher-level service, keeping the engine testable with only a Redis mock.",
+  "version": 1,
+  "types": [
+    {
+      "name": "UnitId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a rental unit. Re-exported from shared_foundation for local type resolution."
+    },
+    {
+      "name": "Currency",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "USD",
+        "EUR",
+        "GBP",
+        "CAD",
+        "AUD",
+        "JPY",
+        "MXN"
+      ],
+      "inner_types": [],
+      "description": "ISO 4217 currency code. Extensible enum; only codes actually used in the system are listed."
+    },
+    {
+      "name": "MoneyAmount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "amount_cents",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Amount in the smallest currency unit (cents for USD/EUR/GBP, yen for JPY, etc.).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "Monetary amount must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "Currency",
+          "required": true,
+          "default": "",
+          "description": "ISO 4217 currency code for this amount.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Monetary value represented as integer cents to avoid floating-point precision issues. For zero-decimal currencies (e.g. JPY), amount_cents represents the smallest unit."
+    },
+    {
+      "name": "FeeDetail",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "fee_code",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Machine-readable fee identifier, e.g. 'cleaning_fee', 'occupancy_tax', 'resort_fee'.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[a-z][a-z0-9_]{1,63}$",
+              "error_message": "Fee code must be lowercase snake_case, 2-64 chars"
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable label for display, e.g. 'Cleaning Fee'.",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "MoneyAmount",
+          "required": true,
+          "default": "",
+          "description": "Fee amount in integer cents.",
+          "validators": []
+        },
+        {
+          "name": "is_tax",
+          "type_ref": "bool",
+          "required": true,
+          "default": "false",
+          "description": "True if this line item is a tax rather than a fee.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single named fee or tax line item applied to a nightly rate."
+    },
+    {
+      "name": "FeeDetailList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "FeeDetail",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of fee/tax line items."
+    },
+    {
+      "name": "LosDiscount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "min_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Minimum number of consecutive nights required to qualify for this discount.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 2",
+              "error_message": "LOS discount requires at least 2 nights"
+            }
+          ]
+        },
+        {
+          "name": "discount_percent",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Discount percentage as integer (e.g. 10 means 10%). Applied to adjusted rate before fees/taxes.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1 && value <= 99",
+              "error_message": "Discount percent must be between 1 and 99"
+            }
+          ]
+        },
+        {
+          "name": "discount_amount",
+          "type_ref": "MoneyAmount",
+          "required": true,
+          "default": "",
+          "description": "Computed discount amount in cents for this specific night.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Length-of-stay discount that was applied or is applicable to this rate."
+    },
+    {
+      "name": "OptionalLosDiscount",
+      "kind": "optional",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "LosDiscount"
+      ],
+      "description": "LOS discount if applicable, or null if no LOS discount applies."
+    },
+    {
+      "name": "NightlyRate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The calendar date this rate applies to, in ISO 8601 format YYYY-MM-DD (UTC).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+              "error_message": "Date must be ISO 8601 YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "base_rate",
+          "type_ref": "MoneyAmount",
+          "required": true,
+          "default": "",
+          "description": "Base nightly rate before any adjustments, seasonal pricing, or discounts.",
+          "validators": []
+        },
+        {
+          "name": "seasonal_rate",
+          "type_ref": "MoneyAmount",
+          "required": true,
+          "default": "",
+          "description": "Rate after seasonal adjustment. Equals base_rate if no seasonal adjustment applies.",
+          "validators": []
+        },
+        {
+          "name": "adjusted_rate",
+          "type_ref": "MoneyAmount",
+          "required": true,
+          "default": "",
+          "description": "Rate after dynamic pricing adjustments (demand, day-of-week, etc.). Applied on top of seasonal_rate.",
+          "validators": []
+        },
+        {
+          "name": "los_discount",
+          "type_ref": "OptionalLosDiscount",
+          "required": false,
+          "default": "",
+          "description": "Length-of-stay discount details if applicable, or null.",
+          "validators": []
+        },
+        {
+          "name": "fees_and_taxes",
+          "type_ref": "FeeDetailList",
+          "required": true,
+          "default": "[]",
+          "description": "Itemized fees and taxes applicable to this night.",
+          "validators": []
+        },
+        {
+          "name": "total_cents",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Final total for this night in cents: adjusted_rate - los_discount + sum(fees_and_taxes). Must be >= 0.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "Total must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "Currency",
+          "required": true,
+          "default": "",
+          "description": "Currency for all monetary fields in this rate record. Must match all nested MoneyAmount currencies.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Complete rate breakdown for a single night. All monetary fields use integer-cents representation. Dates are ISO 8601 date strings (YYYY-MM-DD) in UTC."
+    },
+    {
+      "name": "NightlyRateList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "NightlyRate",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of nightly rates, sorted by date ascending."
+    },
+    {
+      "name": "DateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "check_in",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Start date (inclusive) in ISO 8601 YYYY-MM-DD format.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+              "error_message": "check_in must be ISO 8601 YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "check_out",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "End date (exclusive — last night is check_out minus 1 day) in ISO 8601 YYYY-MM-DD format.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$",
+              "error_message": "check_out must be ISO 8601 YYYY-MM-DD format"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Inclusive date range for querying cached rates. Both dates are ISO 8601 YYYY-MM-DD strings in UTC."
+    },
+    {
+      "name": "CacheOptions",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ttl_seconds",
+          "type_ref": "int",
+          "required": false,
+          "default": "3600",
+          "description": "TTL in seconds for the cached data. Overrides the default from PRICING_CACHE_TTL_SECONDS env var. 0 means no expiry.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "TTL must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "schema_version",
+          "type_ref": "int",
+          "required": false,
+          "default": "1",
+          "description": "Schema version to stamp on serialized payloads. Defaults to current engine schema version (1).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": "Schema version must be >= 1"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Optional configuration overrides for a cache write operation."
+    },
+    {
+      "name": "CacheMissReason",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "miss",
+        "error"
+      ],
+      "inner_types": [],
+      "description": "Discriminator for why a cache lookup did not return data."
+    },
+    {
+      "name": "CacheHit",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "hit",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true for a cache hit.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "value == true",
+              "error_message": "CacheHit.hit must be true"
+            }
+          ]
+        },
+        {
+          "name": "data",
+          "type_ref": "NightlyRateList",
+          "required": true,
+          "default": "",
+          "description": "The cached nightly rates for the requested date range, sorted by date ascending.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Discriminated union variant: cache hit. Contains the cached data."
+    },
+    {
+      "name": "CacheMiss",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "hit",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always false for a cache miss/error.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "value == false",
+              "error_message": "CacheMiss.hit must be false"
+            }
+          ]
+        },
+        {
+          "name": "reason",
+          "type_ref": "CacheMissReason",
+          "required": true,
+          "default": "",
+          "description": "Why the cache did not return data: 'miss' for key not found, 'error' for Redis/deserialization failure.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Discriminated union variant: cache miss or error. No data returned."
+    },
+    {
+      "name": "CacheResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "CacheHit",
+        "CacheMiss"
+      ],
+      "description": "Discriminated union representing the outcome of a cache read. Discriminated on the 'hit' boolean field. Either a CacheHit (hit=true, data present) or a CacheMiss (hit=false, reason present). This replaces nullable returns to distinguish 'data not cached' from 'Redis is down'."
+    },
+    {
+      "name": "CacheEngineConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "64",
+          "description": "Number of hash shards for distributing unit keys across Redis key space. From PRICING_CACHE_SHARD_COUNT env var.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1 && value <= 4096",
+              "error_message": "Shard count must be between 1 and 4096"
+            }
+          ]
+        },
+        {
+          "name": "default_ttl_seconds",
+          "type_ref": "int",
+          "required": true,
+          "default": "3600",
+          "description": "Default TTL in seconds for cached rate data. From PRICING_CACHE_TTL_SECONDS env var. 0 means no expiry.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": "Default TTL must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "current_schema_version",
+          "type_ref": "int",
+          "required": true,
+          "default": "1",
+          "description": "Current schema version for serialization. Cache entries with a different _v are treated as stale and auto-invalidated.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": "Schema version must be >= 1"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Configuration for the pricing cache engine, resolved from environment variables at construction time."
+    },
+    {
+      "name": "SerializedCachePayload",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "_v",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Schema version number. Used for forward-compatible deserialization. Entries with _v != current_schema_version are auto-invalidated.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": "Schema version must be >= 1"
+            }
+          ]
+        },
+        {
+          "name": "rate",
+          "type_ref": "NightlyRate",
+          "required": true,
+          "default": "",
+          "description": "The serialized nightly rate data for a single date.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Internal JSON structure stored in Redis hash fields. Each field in the hash corresponds to one date, and the value is a JSON string matching this schema. Not exposed in the public API but documented for serialization contract."
+    }
+  ],
+  "functions": [
+    {
+      "name": "shardKey",
+      "description": "Pure function that computes the Redis key for a given unit_id using consistent hashing. Returns a key in the format 'pricing:{hash(unitId) % shardCount}:{unitId}'. The hash function is deterministic (CRC32 or equivalent) so the same unitId always maps to the same shard. This function performs no I/O and never throws.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit identifier (UUID v4 string) to compute the shard key for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid UUID v4 string"
+            }
+          ]
+        }
+      ],
+      "output_type": "str",
+      "error_cases": [],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string",
+        "Engine has been constructed with a valid CacheEngineConfig (shard_count >= 1)"
+      ],
+      "postconditions": [
+        "Returned string matches pattern 'pricing:{N}:{unit_id}' where N is an integer in [0, shard_count)",
+        "Same unit_id always produces the same key (deterministic)",
+        "Key is a valid Redis key string (no embedded nulls)"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "cacheRates",
+      "description": "Writes nightly rates for a unit into the Redis hash. Each rate is stored as a separate hash field keyed by its ISO date string, with the value being a JSON-serialized SerializedCachePayload (including _v schema version). Uses HSET for the batch write followed by EXPIRE to set/reset TTL. Fire-and-forget safe: all Redis and serialization errors are caught, logged, and swallowed — this function never throws.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit to cache rates for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid UUID v4 string"
+            }
+          ]
+        },
+        {
+          "name": "rates",
+          "type_ref": "NightlyRateList",
+          "required": true,
+          "default": "",
+          "description": "The nightly rates to cache. Each rate's date field is used as the hash field key. Duplicate dates in the list result in last-write-wins.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "length >= 1 && length <= 730",
+              "error_message": "Must provide between 1 and 730 rates (up to 2 years)"
+            }
+          ]
+        },
+        {
+          "name": "options",
+          "type_ref": "CacheOptions",
+          "required": false,
+          "default": "",
+          "description": "Optional overrides for TTL and schema version. If omitted, defaults from CacheEngineConfig are used.",
+          "validators": []
+        }
+      ],
+      "output_type": "None",
+      "error_cases": [
+        {
+          "name": "redis_connection_failure",
+          "condition": "RedisClientPort is unreachable or returns a connection error on HSET or EXPIRE",
+          "error_type": "None",
+          "error_data": {
+            "behavior": "Error is logged at WARN level. Function resolves void. Cache may be partially written."
+          }
+        },
+        {
+          "name": "serialization_failure",
+          "condition": "A NightlyRate object cannot be serialized to JSON (e.g. circular reference, BigInt without serializer)",
+          "error_type": "None",
+          "error_data": {
+            "behavior": "Error is logged at ERROR level. Function resolves void. No data written for the failed entry."
+          }
+        },
+        {
+          "name": "redis_timeout",
+          "condition": "Redis operation exceeds the client timeout threshold",
+          "error_type": "None",
+          "error_data": {
+            "behavior": "Error is logged at WARN level. Function resolves void. Cache may be partially written."
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string",
+        "rates list is non-empty and contains no more than 730 entries",
+        "All NightlyRate entries have consistent currency fields",
+        "All monetary amounts within each NightlyRate use the same currency as the rate's currency field",
+        "RedisClientPort has been injected and is callable (connection may be down; errors are swallowed)"
+      ],
+      "postconditions": [
+        "On success: Redis hash at shardKey(unit_id) contains one field per rate date, each with a valid JSON SerializedCachePayload",
+        "On success: Redis hash TTL is set/reset to the effective TTL (from options or config default)",
+        "On Redis/serialization error: error is logged, no exception propagates, cache state is unchanged or partially written",
+        "Function always resolves (never rejects the Promise)"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Writes to Redis: HSET on the shard key with date-keyed fields",
+        "Writes to Redis: EXPIRE on the shard key to set/reset TTL",
+        "Logs errors at WARN or ERROR level on failure"
+      ]
+    },
+    {
+      "name": "getCachedRates",
+      "description": "Reads cached nightly rates for a unit within a date range from Redis. Uses HMGET to fetch all date fields in the range from the unit's hash key. Returns a discriminated CacheResult union: CacheHit with data if ALL requested dates are present and deserializable with matching schema version, or CacheMiss with reason 'miss' if any date is missing, or CacheMiss with reason 'error' on Redis/deserialization failure. Corrupt or version-mismatched entries trigger automatic invalidation (DEL) of the entire hash key. Never throws.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit to look up cached rates for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid UUID v4 string"
+            }
+          ]
+        },
+        {
+          "name": "date_range",
+          "type_ref": "DateRange",
+          "required": true,
+          "default": "",
+          "description": "The check-in (inclusive) to check-out (exclusive) date range. The function enumerates each calendar date in [check_in, check_out) and fetches the corresponding hash fields.",
+          "validators": []
+        }
+      ],
+      "output_type": "CacheResult",
+      "error_cases": [
+        {
+          "name": "redis_connection_failure",
+          "condition": "RedisClientPort is unreachable or returns a connection error on HMGET",
+          "error_type": "CacheMiss",
+          "error_data": {
+            "reason": "error",
+            "behavior": "Error logged at WARN level. Returns CacheMiss with reason 'error'."
+          }
+        },
+        {
+          "name": "redis_timeout",
+          "condition": "Redis HMGET operation exceeds client timeout threshold",
+          "error_type": "CacheMiss",
+          "error_data": {
+            "reason": "error",
+            "behavior": "Error logged at WARN level. Returns CacheMiss with reason 'error'."
+          }
+        },
+        {
+          "name": "deserialization_failure",
+          "condition": "One or more cached JSON payloads cannot be parsed or fail structural validation",
+          "error_type": "CacheMiss",
+          "error_data": {
+            "reason": "error",
+            "behavior": "Error logged at ERROR level. Triggers async DEL of the hash key. Returns CacheMiss with reason 'error'."
+          }
+        },
+        {
+          "name": "schema_version_mismatch",
+          "condition": "One or more cached payloads have _v != current_schema_version",
+          "error_type": "CacheMiss",
+          "error_data": {
+            "reason": "miss",
+            "behavior": "Stale data treated as miss. Triggers async DEL of the hash key. Returns CacheMiss with reason 'miss'."
+          }
+        },
+        {
+          "name": "partial_cache_miss",
+          "condition": "Some dates in the range are cached but others are not (HMGET returns nil for some fields)",
+          "error_type": "CacheMiss",
+          "error_data": {
+            "reason": "miss",
+            "behavior": "Partial data is discarded. Returns CacheMiss with reason 'miss'. No auto-invalidation triggered."
+          }
+        },
+        {
+          "name": "invalid_date_range",
+          "condition": "check_in >= check_out or date range exceeds 730 days",
+          "error_type": "CacheMiss",
+          "error_data": {
+            "reason": "error",
+            "behavior": "Validation error logged at ERROR level. Returns CacheMiss with reason 'error'. No Redis call made."
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string",
+        "date_range.check_in < date_range.check_out (start before end)",
+        "Date range spans at most 730 days",
+        "RedisClientPort has been injected and is callable"
+      ],
+      "postconditions": [
+        "Returns CacheHit if and only if ALL dates in [check_in, check_out) have valid, version-matched entries in Redis",
+        "CacheHit.data is sorted by date ascending and contains exactly (check_out - check_in) entries in days",
+        "Returns CacheMiss(reason='miss') if any date in the range has no cached entry or has a schema version mismatch",
+        "Returns CacheMiss(reason='error') if Redis is unreachable, times out, or returns malformed data",
+        "On schema version mismatch or deserialization failure: the entire hash key is asynchronously DEL'd (auto-invalidation)",
+        "Function always resolves (never rejects the Promise)"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Reads from Redis: HMGET on the shard key for each date in the range",
+        "May write to Redis: DEL on the shard key if deserialization fails or schema version mismatches (async, fire-and-forget)",
+        "Logs errors at WARN or ERROR level on failure"
+      ]
+    },
+    {
+      "name": "invalidateUnit",
+      "description": "Deletes the entire Redis hash key for a unit, removing all cached nightly rates for that unit across all dates. Idempotent: succeeds silently if the key does not exist. Fire-and-forget safe: all Redis errors are caught, logged, and swallowed — this function never throws.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit whose cached rates should be invalidated.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid UUID v4 string"
+            }
+          ]
+        }
+      ],
+      "output_type": "None",
+      "error_cases": [
+        {
+          "name": "redis_connection_failure",
+          "condition": "RedisClientPort is unreachable or returns a connection error on DEL",
+          "error_type": "None",
+          "error_data": {
+            "behavior": "Error is logged at WARN level. Function resolves void. Key may still exist in Redis."
+          }
+        },
+        {
+          "name": "redis_timeout",
+          "condition": "Redis DEL operation exceeds client timeout threshold",
+          "error_type": "None",
+          "error_data": {
+            "behavior": "Error is logged at WARN level. Function resolves void. Key may still exist in Redis."
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string",
+        "RedisClientPort has been injected and is callable (connection may be down; errors are swallowed)"
+      ],
+      "postconditions": [
+        "On success: Redis key at shardKey(unit_id) no longer exists",
+        "On Redis error: error is logged, no exception propagates",
+        "Idempotent: calling with a non-existent key is a no-op success",
+        "Function always resolves (never rejects the Promise)"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Writes to Redis: DEL on the shard key",
+        "Logs errors at WARN level on failure"
+      ]
+    }
+  ],
+  "dependencies": [
+    "shared_foundation"
+  ],
+  "dependency_contracts": {
+    "shared_foundation": [
+      "RedisClientPort",
+      "UnitId"
+    ]
+  },
+  "invariants": [
+    "All cached data is stored as JSON with a '_v' schema version field; entries with _v != current_schema_version are treated as stale on read and auto-invalidated",
+    "All monetary values in cache payloads are integer cents (no floating-point); the MoneyAmount.amount_cents field is always a non-negative integer",
+    "All date strings in cache keys and NightlyRate.date fields are ISO 8601 YYYY-MM-DD format in UTC",
+    "shardKey is a pure deterministic function: same unit_id always produces the same Redis key regardless of system state",
+    "The shard key format is always 'pricing:{N}:{unit_id}' where N = hash(unit_id) % shard_count and N is in [0, shard_count)",
+    "No public method of the engine ever throws or rejects a Promise; all Redis errors are caught, logged, and either swallowed (writes) or surfaced as CacheMiss(reason='error') (reads)",
+    "The engine performs ONLY Redis operations; it never accesses PostgreSQL or any other data store directly",
+    "Cache-aside orchestration (check cache → fallback to DB → populate cache) is NOT the responsibility of this engine",
+    "All NightlyRate entries within a single cacheRates call must share the same currency; cross-currency mixing within a unit's cache is undefined behavior",
+    "getCachedRates returns CacheHit only when ALL dates in the requested range are present and valid; partial hits are treated as full misses",
+    "Corrupt or version-mismatched cache entries trigger automatic async invalidation (DEL) of the entire unit hash key to prevent serving stale data",
+    "The Redis hash key is the shard key; hash fields within it are ISO date strings; hash field values are JSON SerializedCachePayload strings",
+    "shard_count is read once at engine construction from PRICING_CACHE_SHARD_COUNT env var (default 64) and is immutable for the engine's lifetime",
+    "default_ttl_seconds is read once at engine construction from PRICING_CACHE_TTL_SECONDS env var (default 3600) and can be overridden per-call via CacheOptions"
+  ],
+  "requires": [
+    "shared_foundation must export RedisClientPort interface with get, set, del, hset, hmget, expire methods",
+    "shared_foundation must export branded UnitId type (UUID v4 string)",
+    "Environment variable PRICING_CACHE_SHARD_COUNT must be a positive integer or absent (default 64)",
+    "Environment variable PRICING_CACHE_TTL_SECONDS must be a non-negative integer or absent (default 3600)"
+  ]
+}

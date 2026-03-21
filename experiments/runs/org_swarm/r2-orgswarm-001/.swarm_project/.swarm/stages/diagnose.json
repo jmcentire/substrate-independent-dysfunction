@@ -1,0 +1,32 @@
+{
+  "task_type": "feature",
+  "complexity": "epic",
+  "confidence": 0.55,
+  "language": "TypeScript",
+  "framework": "Deno",
+  "summary": "Build a microservices backend platform for vacation rental booking with 7 independent services (Availability, Pricing, Property, Event, Sync, Payments, Booking) integrating PostgreSQL, Redis, Kafka, and Stripe. Each service has its own API contracts, data models, and test requirements.",
+  "reasoning": "This is a genuine epic-complexity task. It requires 7 independent microservices, each with their own:\n- API endpoints and contracts\n- Database schemas (PostgreSQL)\n- Caching layers (Redis)\n- Integration points (Kafka, Stripe, PMS adapters)\n- Test suites\n\nThe services have independent lifecycles and interfaces but integrate via defined API contracts. Key complexity indicators:\n1. Multiple genuinely independent services (Availability, Pricing, Property, Event, Sync, Payments, Booking)\n2. Multiple infrastructure dependencies (PostgreSQL, Redis, Kafka, Stripe)\n3. Cross-service orchestration (Booking service orchestrates across others in <3s)\n4. Domain-specific algorithms (bitmask availability, hash-sharded pricing, 4-tier override hierarchy, content-addressable event IDs, hash-chained payout snapshots)\n5. Bidirectional sync with 8 external PMS adapters\n6. The task explicitly describes these as microservices with separate concerns\n\nThis clearly qualifies as epic — these are genuinely independent components with separate interfaces that could be built by separate teams. The decomposition plan already exists in reference/decomposition.json, which should guide the automatic decomposition pipeline.",
+  "constraints": [
+    "Sub-3-second end-to-end booking flow (checkout constraint)",
+    "O(1) availability checks via bitmask cache",
+    "Hash-sharded pricing cache by unit_id",
+    "4-tier property override hierarchy",
+    "Content-addressable event IDs for idempotency",
+    "Bidirectional PMS sync with 8 adapters",
+    "Hash-chained payout snapshots for audit integrity",
+    "PostgreSQL for persistence, Redis for caching",
+    "Services must integrate via defined API contracts",
+    "Working integrated components prioritized over comprehensive coverage"
+  ],
+  "risks": [
+    "Integration complexity between 7 services may surface contract mismatches not caught in spec",
+    "Kafka dependency adds infrastructure complexity — may need to stub/mock for testing",
+    "Stripe integration requires API keys and careful mock setup for payments service",
+    "3-second booking flow constraint requires careful orchestration and may be hard to validate without load testing",
+    "8 PMS adapters in sync service is ambitious — likely need to implement a subset",
+    "Reference files (architecture.md, decomposition.json, schemas/, etc.) must be consulted to understand exact contracts — confidence is moderate until those are read",
+    "Redis and PostgreSQL setup/configuration needed for each service"
+  ],
+  "consternation": "",
+  "escalation": ""
+}

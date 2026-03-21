@@ -1,0 +1,38 @@
+{
+  "architecture": "hi_trust",
+  "run_id": "simple-hitrust-001",
+  "task_prompt": "Build the Anonymous Identity system for a privacy-preserving internet architecture.\n\nA user authenticates once to an SSO. The SSO never learns which sites the user visits. Sites never learn the user's real identity. Two sites cannot correlate that they're serving the same user.\n\nProperties that must hold:\n\n1. Credential hash: The client computes hash(username || password) locally. Only the hash is transmitted to the SSO. The SSO never sees the password.\n2. Site-specific token derivation: For each site, the client derives token = hash(username || site_id || user_id || user_salt) entirely client-side. The SSO provides user_id and user_salt during authentication but never learns which site_id is being used.\n3. Unlinkability: Tokens for the same user on different sites are computationally unlinkable. No party \u2014 not the SSO, not either site, not an eavesdropper \u2014 can determine that token_A (for site A) and token_B (for site B) belong to the same user, without knowing the user's credentials.\n4. Token construction: The client signs a token T containing (verification_hash, site_id, timestamp, proof_of_human_score) with Ed25519. The site verifies the signature and uses verification_hash as the user's persistent site-local identifier.\n5. Routing key derivation: routing_key = hash(username || \"routing\" || site_id || user_id || user_salt). Sites send messages to the SSO addressed to a routing key. The SSO resolves the routing key to the user's contact info, delivers the message, and discards the plaintext. The site never learns the user's contact info.\n6. SSO protocol: Exposes authenticate(credential_hash) \u2192 (user_id, user_salt, session), register(credential_hash, encrypted_contact) \u2192 user_id, and route_message(routing_key, encrypted_payload) \u2192 delivered.\n7. Tests must pass: (a) Same user, two sites \u2192 tokens are different and unlinkable. (b) Different users, same site \u2192 tokens don't collide. (c) Token signature verifies. (d) Routing key correctly resolves. (e) SSO cannot derive site-specific tokens (doesn't know site_id). (f) Site cannot derive tokens for other sites (doesn't know user_salt).",
+  "model": "claude-opus-4-6",
+  "started_at": "2026-02-14T01:14:04.790139+00:00",
+  "completed_at": "2026-02-14T01:17:40.327999+00:00",
+  "wall_seconds": 215.6,
+  "budget": {
+    "cap_usd": 10.0,
+    "spent_usd": 3.0375,
+    "remaining_usd": 6.9625,
+    "total_input_tokens": 133400,
+    "total_output_tokens": 13820
+  },
+  "files_produced": [
+    ".pytest_cache/.gitignore",
+    ".pytest_cache/CACHEDIR.TAG",
+    ".pytest_cache/README.md",
+    ".pytest_cache/v/cache/nodeids",
+    "README.md",
+    "anonymous_identity/__init__.py",
+    "anonymous_identity/__pycache__/__init__.cpython-314.pyc",
+    "anonymous_identity/__pycache__/client.cpython-314.pyc",
+    "anonymous_identity/__pycache__/crypto.cpython-314.pyc",
+    "anonymous_identity/__pycache__/site.cpython-314.pyc",
+    "anonymous_identity/__pycache__/sso.cpython-314.pyc",
+    "anonymous_identity/client.py",
+    "anonymous_identity/crypto.py",
+    "anonymous_identity/site.py",
+    "anonymous_identity/sso.py",
+    "tests/__init__.py",
+    "tests/__pycache__/__init__.cpython-314.pyc",
+    "tests/__pycache__/test_anonymous_identity.cpython-314-pytest-9.0.2.pyc",
+    "tests/test_anonymous_identity.py"
+  ],
+  "error": null
+}

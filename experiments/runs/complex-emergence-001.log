@@ -1,0 +1,17 @@
+
+============================================================
+Emergence Swarm — complex-emergence-001
+============================================================
+Status:  partial
+Cost:    $17.7826 / $25.00
+Tokens:  707,434
+Time:    548s
+Files:   28
+Tasks:   10/48 completed
+  agent-00: idle (done=1, created=4, iters=19)
+  agent-01: idle (done=1, created=7, iters=17)
+  agent-02: idle (done=2, created=12, iters=19)
+  agent-03: idle (done=2, created=7, iters=18)
+  agent-04: idle (done=4, created=17, iters=15)
+Output:  /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/emergence/complex-emergence-001
+============================================================

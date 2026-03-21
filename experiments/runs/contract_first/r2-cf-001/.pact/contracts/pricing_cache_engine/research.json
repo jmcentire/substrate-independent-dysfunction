@@ -1,0 +1,104 @@
+{
+  "task_summary": "Define the interface contract for 'Hash-Sharded Price Cache' (pricing_cache_engine) — a Redis caching layer for rental unit pricing data, hash-sharded by unit_id. The contract must specify TypeScript types, function signatures, error handling, and serialization formats for: shardKey(), cacheRates(), getCachedRates(), invalidateUnit(), plus the cache-aside pattern with PostgreSQL fallback. Must align with Deno/TypeScript stack, shared_foundation dependency, and the 4-component decomposition (schema/engine/API/tests).",
+  "findings": [
+    {
+      "topic": "Consistent Hashing for Redis Sharding",
+      "finding": "CRC16 (used by Redis Cluster) and xxHash/MurmurHash3 are standard choices for hash-sharding keys across Redis instances. For application-level sharding (not Redis Cluster), a simple modulo of a stable hash over a configurable shard count is the dominant pattern. The shard key should be deterministic and pure: given the same unitId and shard count, always produce the same shard index. Using a hash tag pattern like `pricing:{shardIndex}:{unitId}` ensures all data for a unit lands on the same logical shard and is compatible with future Redis Cluster migration via `{hash_tag}` semantics.",
+      "source": "Redis documentation on hash tags; Stripe's caching architecture blog posts; consistent-hashing literature",
+      "relevance": "Directly defines shardKey() behavior. The shard count must be an env-configurable value with a sensible default (e.g., 16 or 64). The function must be pure with no side effects.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Cache-Aside Pattern Implementation",
+      "finding": "Cache-aside (lazy-loading) follows a strict sequence: (1) check cache, (2) on miss, query DB, (3) populate cache with TTL, (4) return data. Critical invariants: never serve stale data after explicit invalidation; always set a TTL to prevent unbounded memory growth; handle cache failures gracefully (degrade to DB, never throw on Redis errors). The engine layer should NOT contain the DB fallback logic itself — it should expose cache primitives and let the orchestrating layer implement the full cache-aside flow, maintaining single responsibility.",
+      "source": "Microsoft Azure Architecture Center (Cache-Aside pattern); AWS ElastiCache best practices; Martin Fowler's patterns catalog",
+      "relevance": "Shapes the engine interface boundary. The engine should own Redis operations only. A separate orchestrator or service layer composes cache + DB. This aligns with the 4-component decomposition where the engine is pure cache logic.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Redis Data Structure for Date-Keyed Rate Storage",
+      "finding": "Redis Hashes (HSET/HGET/HMGET) are ideal for storing date-keyed nightly rates under a single key per unit. The hash field is the ISO 8601 date string (e.g., '2025-01-15') and the value is a JSON-serialized rate object. This gives O(1) per-date lookups, O(n) for date range scans via HMGET, and atomic invalidation via DEL on the entire hash key. Alternative: sorted sets with date scores, but hashes are simpler and sufficient for nightly rate lookups. HMGET with an array of date strings is the natural implementation for getCachedRates(unitId, dateRange).",
+      "source": "Redis documentation on Hash commands; real-world hotel/rental pricing system patterns",
+      "relevance": "Directly informs the Redis data model and getCachedRates implementation. Date range queries become HMGET with generated date strings between start and end.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "TypeScript Type Design for Rate Objects",
+      "finding": "Rate types should use branded/opaque types for UnitId (UUID string branded type) and Money (numeric with currency, never floating point for final amounts — use integer cents or Decimal). A NightlyRate type should include: date (ISO 8601 string), baseRate (money), adjustedRate (money after dynamic pricing), breakdown (optional object for seasonal adjustments, LOS discounts, fees, taxes). The getCachedRates return type should be `CachedRates | null` where null means cache miss (not 'no rates exist'), requiring callers to distinguish miss from empty. A discriminated union `{ hit: true, rates: NightlyRate[] } | { hit: false }` is even more explicit.",
+      "source": "TypeScript handbook on discriminated unions; domain-driven design patterns for financial types; Deno standard library conventions",
+      "relevance": "Core to the interface contract. Money representation and null-vs-empty semantics are the most common source of bugs in pricing caches.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Error Handling in Cache Layers",
+      "finding": "Cache layers should NEVER propagate Redis connection/timeout errors to callers as hard failures. Best practice is a Result type pattern: operations return `Result<T, CacheError>` where CacheError is a discriminated union of ConnectionError | TimeoutError | SerializationError | InvalidKeyError. Alternatively, cache methods can swallow errors and return null/miss (treating Redis failure as a cache miss), logging the error. The choice depends on whether callers need to distinguish 'miss' from 'error'. For a pricing system, treating Redis failure as miss (with logging/metrics) is safest — it degrades to DB reads rather than failing requests.",
+      "source": "Netflix Hystrix patterns; resilience engineering best practices; Redis client library conventions (ioredis, redis-py)",
+      "relevance": "Directly shapes return types and error contract. The interface must document whether Redis failures surface as errors or are absorbed as misses. Recommending a Result type that the orchestrator can inspect.",
+      "confidence": 0.91
+    },
+    {
+      "topic": "TTL Strategy for Pricing Data",
+      "finding": "Pricing caches need two TTL mechanisms: (1) a global default TTL per cached hash (e.g., 1 hour) to prevent stale data accumulation, and (2) per-entry TTL awareness for rates that change at known times (e.g., seasonal rate boundaries). Redis Hash fields don't support per-field TTL natively — only the top-level key has TTL. Workaround: store an `_expires_at` metadata field in the hash, or use the top-level key TTL and accept that all dates for a unit expire together. For rental pricing, per-unit TTL (all dates expire together) is acceptable since invalidateUnit() already operates at unit granularity.",
+      "source": "Redis documentation (EXPIRE only works on keys, not hash fields); rental/hotel pricing system design references",
+      "relevance": "TTL must be a configurable parameter in the engine. The cacheRates() signature should accept an optional TTL override. Default TTL should come from config/env.",
+      "confidence": 0.88
+    },
+    {
+      "topic": "Serialization Format for Redis Values",
+      "finding": "JSON is the standard serialization for Redis values in TypeScript/Deno ecosystems — it's human-debuggable and aligns with the project's JSON-over-REST convention. MessagePack or Protobuf offer ~30-40% size savings but add dependencies and debugging complexity. For pricing data (relatively small per-unit payloads), JSON is appropriate. Always include a schema version field in serialized data (e.g., `_v: 1`) to support forward-compatible cache evolution without requiring full invalidation on deploys.",
+      "source": "Redis best practices; Deno stdlib JSON support; schema evolution patterns",
+      "relevance": "Defines the serialization contract. Schema versioning in cached values prevents stale-format bugs during rolling deployments.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Deno Redis Client Options",
+      "finding": "For Deno 2.x, the primary Redis client options are: (1) `deno-redis` (npm:redis or deno.land/x/redis) — the community standard, (2) npm-compatible `ioredis` via Deno's npm compatibility. The `deno.land/x/redis` package is Deno-native and well-maintained. For the mock/stub requirement, the interface should accept a RedisClient abstraction (dependency injection) so tests can substitute an in-memory Map-based mock without any Redis dependency.",
+      "source": "Deno third-party modules registry; project engineering decision on mocking all external dependencies",
+      "relevance": "The engine must depend on an injected Redis client interface, not a concrete implementation. This enables the required mock/stub pattern for tests.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Interface Segregation for Cache Engine",
+      "finding": "The cache engine should expose a narrow interface (4 methods as specified) and accept dependencies via constructor injection. The pattern in TypeScript is to define an interface/type for the engine, a concrete implementation class/factory, and a separate interface for the Redis client dependency. This supports the shared_foundation dependency model — the Redis client abstraction likely belongs in shared_foundation, while the pricing-specific cache logic lives in the pricing service.",
+      "source": "SOLID principles; TypeScript DI patterns; project architecture decision on shared_foundation",
+      "relevance": "Shapes the module boundary. The engine interface type is the contract; the implementation depends on abstractions from shared_foundation.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Common Pitfalls in Pricing Caches",
+      "finding": "Top pitfalls: (1) Cache stampede / thundering herd — multiple concurrent cache misses for the same unit trigger parallel DB reads. Mitigate with a lock/singleflight pattern or probabilistic early expiration. (2) Stale cache after rate update — invalidateUnit() must be called on every rate write path; event-driven invalidation is more reliable than manual calls. (3) Date range boundary errors — off-by-one on check-in/check-out dates (typically rates are for nights, so a 3-night stay from Jan 1-4 needs rates for Jan 1, 2, 3 only). (4) Empty vs. missing confusion — a unit with no rates configured is different from a cache miss. (5) Shard rebalancing — changing shard count invalidates all existing keys; the shard count should rarely change and the key format must include the shard count or a version.",
+      "source": "Distributed systems literature; hotel/rental pricing system post-mortems; Redis caching anti-patterns",
+      "relevance": "All five pitfalls must be addressed in the interface contract, either via type design (null vs empty), documentation, or method signatures (lock parameter, shard version).",
+      "confidence": 0.94
+    }
+  ],
+  "recommended_approach": "Define the pricing_cache_engine interface contract with these key design decisions:\n\n**1. Type Foundation:**\n- Use branded `UnitId` type (UUID string) from shared_foundation\n- Define `NightlyRate` with integer-cents money representation, ISO 8601 date strings, and rate breakdown (base, adjusted, seasonal, LOS discount, fees, taxes)\n- Use a discriminated union `CacheResult<T> = { hit: true; data: T } | { hit: false; reason: 'miss' | 'error' }` to distinguish cache miss from Redis failure\n- Include a `_v: number` schema version in all serialized cache payloads\n\n**2. Engine Interface (4 methods):**\n- `shardKey(unitId: UnitId): string` — pure function, returns `pricing:{hash(unitId) % shardCount}:{unitId}` format\n- `cacheRates(unitId: UnitId, rates: NightlyRate[], options?: CacheOptions): Promise<void>` — HSET with JSON serialization, configurable TTL\n- `getCachedRates(unitId: UnitId, dateRange: DateRange): Promise<CacheResult<NightlyRate[]>>` — HMGET for each date in range, returns discriminated union\n- `invalidateUnit(unitId: UnitId): Promise<void>` — DEL on the unit's hash key, idempotent, never throws\n\n**3. Dependency Injection:**\n- Engine accepts a `RedisClientPort` interface (get/set/del/hset/hmget/expire abstractions) via constructor\n- `RedisClientPort` belongs in shared_foundation; pricing-specific types stay in the pricing service\n- Shard count from `PRICING_CACHE_SHARD_COUNT` env var with default of 64\n- Default TTL from `PRICING_CACHE_TTL_SECONDS` env var with default of 3600\n\n**4. Error Strategy:**\n- Redis errors are caught, logged, and surfaced as `{ hit: false, reason: 'error' }` — never thrown\n- `cacheRates` and `invalidateUnit` are fire-and-forget safe (errors logged, not propagated)\n- Serialization errors (corrupt cache data) trigger automatic invalidation of the affected key\n\n**5. Cache-Aside Boundary:**\n- The engine owns ONLY Redis operations. The cache-aside orchestration (check cache → fallback to DB → populate) lives in a higher-level service/handler, NOT in the engine\n- This keeps the engine testable with only a Redis mock, no DB mock needed\n\n**6. Serialization:**\n- JSON with schema version field `_v: 1`\n- All monetary values as integer cents (number type) with explicit currency field\n- All dates as ISO 8601 date strings (YYYY-MM-DD) in UTC",
+  "alternatives_considered": [
+    "Embedding cache-aside logic (DB fallback) inside the engine — rejected because it violates single responsibility, complicates testing (would need both Redis and DB mocks), and conflicts with the 4-component decomposition where the engine should be a focused unit",
+    "Using Redis Sorted Sets (ZADD/ZRANGEBYSCORE with date timestamps as scores) instead of Hashes — rejected because Hash HMGET with explicit date keys is simpler, O(1) per field, and the date range is always known (no open-ended range queries needed)",
+    "Using MessagePack or Protobuf for Redis serialization — rejected due to added dependency, debugging difficulty, and minimal size benefit for small per-unit rate payloads; JSON aligns with project's JSON-everywhere convention",
+    "Using a Result<T, E> type with full error typing instead of discriminated CacheResult union — considered viable but adds complexity; the discriminated union with 'miss' | 'error' reason is simpler and sufficient since callers handle both the same way (fall back to DB)",
+    "Making shardKey() accept shard count as a parameter vs reading from config — parameter approach is more testable and pure; recommend shardKey be constructed with shard count at initialization time, making the method a pure function of unitId only",
+    "Using Redis key-per-date (e.g., pricing:shard:unitId:2025-01-15) instead of hash-per-unit — rejected because it scatters a unit's rates across many keys, making invalidation expensive (requires SCAN or key tracking) versus a single DEL on the hash"
+  ],
+  "risks": [
+    "Cache stampede: Multiple concurrent requests for the same uncached unit trigger parallel DB reads. The engine contract doesn't include locking; the orchestrating layer should implement singleflight/mutex. Consider adding an optional acquireLock/releaseLock to the interface or documenting this as the caller's responsibility.",
+    "Shard count change invalidates all keys: If PRICING_CACHE_SHARD_COUNT changes, existing keys map to wrong shards and become orphaned. Mitigation: include shard count in key prefix (e.g., pricing:s64:{hash}:{unitId}) so old keys naturally expire via TTL rather than serving wrong data.",
+    "Date range boundary off-by-one: Check-in/check-out vs. night-of confusion. A stay from Jan 1 to Jan 4 has 3 nights (Jan 1, 2, 3). The DateRange type must clearly specify whether end date is inclusive or exclusive — recommend exclusive end (matching hotel industry convention).",
+    "Schema version mismatch during rolling deployments: Old-format cached values may be read by new code. The _v field in serialized data allows detection; contract should specify that version mismatches trigger cache invalidation and re-fetch.",
+    "Redis memory pressure: No eviction policy specified. If Redis runs out of memory with noeviction policy, writes fail silently. The engine should handle HSET failures gracefully. Document that Redis should be configured with an appropriate maxmemory-policy (allkeys-lru recommended).",
+    "Empty rates vs no rates ambiguity: A unit with zero configured rates (legitimate state) cached as an empty hash is indistinguishable from an expired/missing key after DEL. Mitigation: store a sentinel field (e.g., _cached_at timestamp) in every hash to distinguish 'cached with no rates' from 'not cached'."
+  ],
+  "compliance_notes": [
+    "All public functions must have TypeScript type annotations (project standard)",
+    "UUIDs required for all entity identifiers — UnitId must be UUID format",
+    "All dates must be ISO 8601 format in UTC (project standard)",
+    "Tests must be runnable without external services — RedisClientPort injection enables Map-based mock",
+    "Files must stay under 300 lines — the engine interface, types, and implementation should be separate files",
+    "Prefer stdlib over third-party — use Deno's built-in crypto for hashing (SHA-256 or similar) rather than importing a hash library",
+    "Services depend on shared_foundation, not on each other — RedisClientPort abstraction should live in shared_foundation",
+    "Integration boundaries must have contract tests validating request/response shapes — cache engine needs contract tests for serialization format and key format",
+    "Database-per-service via PostgreSQL schemas — the engine itself doesn't touch DB, but the cache-aside orchestrator must use the pricing service's own schema",
+    "Each service decomposed into exactly 4 sub-components — this engine is one of the 4; it should not contain schema definitions or API routing"
+  ]
+}

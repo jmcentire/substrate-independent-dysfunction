@@ -1,0 +1,1982 @@
+{
+  "component_id": "pricing_schema",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "hp_create_rate_plan",
+      "description": "createRatePlan with valid input returns a RatePlan with generated UUID, timestamps, and matching fields",
+      "function": "createRatePlan",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row with generated UUID and timestamps"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Standard",
+        "baseRate": "15000",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "RatePlan with generated id, matching unitId/name/baseRate/currency, isActive=true, createdAt and updatedAt set",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id matches UUID v4 pattern",
+        "result.unitId == input.unitId",
+        "result.name == 'Standard'",
+        "result.baseRate == 15000",
+        "result.currency == 'USD'",
+        "result.isActive is True",
+        "result.createdAt is set",
+        "result.updatedAt is set"
+      ]
+    },
+    {
+      "id": "hp_get_rate_plan",
+      "description": "getRatePlan with existing UUID returns the matching RatePlan",
+      "function": "getRatePlan",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning one row matching the id"
+      },
+      "input_values": {
+        "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "RatePlan matching the given id",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id == input id"
+      ]
+    },
+    {
+      "id": "hp_list_rate_plans_by_unit",
+      "description": "listRatePlansByUnit returns active rate plans for the unit ordered by createdAt",
+      "function": "listRatePlansByUnit",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning two active rate plans"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "activeOnly": "true"
+      },
+      "input_description": "",
+      "expected_output_description": "List of RatePlans with isActive=true, ordered by createdAt ascending",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "all items have isActive=True",
+        "items are ordered by createdAt ascending"
+      ]
+    },
+    {
+      "id": "hp_update_rate_plan",
+      "description": "updateRatePlan with valid partial input returns updated RatePlan with refreshed updatedAt",
+      "function": "updateRatePlan",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning updated row"
+      },
+      "input_values": {
+        "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "input": "{\"name\": \"Peak Season\", \"baseRate\": 20000}"
+      },
+      "input_description": "",
+      "expected_output_description": "RatePlan with updated name and baseRate, refreshed updatedAt",
+      "expected_error": "",
+      "assertions": [
+        "result.name == 'Peak Season'",
+        "result.baseRate == 20000",
+        "result.updatedAt is refreshed"
+      ]
+    },
+    {
+      "id": "hp_delete_rate_plan",
+      "description": "deleteRatePlan with existing id returns true",
+      "function": "deleteRatePlan",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rowCount=1"
+      },
+      "input_values": {
+        "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "True indicating successful deletion",
+      "expected_error": "",
+      "assertions": [
+        "result is True"
+      ]
+    },
+    {
+      "id": "err_create_rate_plan_validation",
+      "description": "createRatePlan with negative baseRate returns VALIDATION_ERROR",
+      "function": "createRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool (not called due to validation failure)"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Standard",
+        "baseRate": "-100",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_create_rate_plan_empty_name",
+      "description": "createRatePlan with empty name returns VALIDATION_ERROR",
+      "function": "createRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "",
+        "baseRate": "15000",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'",
+        "result.message mentions name"
+      ]
+    },
+    {
+      "id": "err_create_rate_plan_invalid_currency",
+      "description": "createRatePlan with invalid currency code returns VALIDATION_ERROR",
+      "function": "createRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Standard",
+        "baseRate": "15000",
+        "currency": "us"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_get_rate_plan_not_found",
+      "description": "getRatePlan with non-existent UUID returns RATE_PLAN_NOT_FOUND",
+      "function": "getRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning no rows"
+      },
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RATE_PLAN_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'RATE_PLAN_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "err_update_rate_plan_not_found",
+      "description": "updateRatePlan with non-existent id returns RATE_PLAN_NOT_FOUND",
+      "function": "updateRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning no rows"
+      },
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RATE_PLAN_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'RATE_PLAN_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "err_delete_rate_plan_not_found",
+      "description": "deleteRatePlan with non-existent id returns RATE_PLAN_NOT_FOUND",
+      "function": "deleteRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rowCount=0"
+      },
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RATE_PLAN_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'RATE_PLAN_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "err_create_rate_plan_db_error",
+      "description": "createRatePlan when database pool errors returns DATABASE_ERROR",
+      "function": "createRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool that raises connection error"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Standard",
+        "baseRate": "15000",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATABASE_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATABASE_ERROR'"
+      ]
+    },
+    {
+      "id": "hp_create_rate_override",
+      "description": "createRateOverride with valid non-overlapping date range returns inserted RateOverride",
+      "function": "createRateOverride",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateStart": "2025-07-01",
+        "dateEnd": "2025-07-15",
+        "nightlyRate": "25000",
+        "label": "Holiday Premium"
+      },
+      "input_description": "",
+      "expected_output_description": "RateOverride with generated id, matching fields, timestamps set",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id matches UUID v4",
+        "result.ratePlanId == input.ratePlanId",
+        "result.dateStart == '2025-07-01'",
+        "result.dateEnd == '2025-07-15'",
+        "result.nightlyRate == 25000",
+        "result.label == 'Holiday Premium'"
+      ]
+    },
+    {
+      "id": "err_create_rate_override_date_range_invalid",
+      "description": "createRateOverride with dateStart >= dateEnd returns DATE_RANGE_INVALID",
+      "function": "createRateOverride",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateStart": "2025-07-15",
+        "dateEnd": "2025-07-01",
+        "nightlyRate": "25000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATE_RANGE_INVALID",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATE_RANGE_INVALID'"
+      ]
+    },
+    {
+      "id": "err_create_rate_override_same_dates",
+      "description": "createRateOverride with dateStart == dateEnd returns DATE_RANGE_INVALID",
+      "function": "createRateOverride",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateStart": "2025-07-01",
+        "dateEnd": "2025-07-01",
+        "nightlyRate": "25000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATE_RANGE_INVALID",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATE_RANGE_INVALID'"
+      ]
+    },
+    {
+      "id": "err_create_rate_override_overlap",
+      "description": "createRateOverride with overlapping date range triggers OVERLAP_CONFLICT",
+      "function": "createRateOverride",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool that raises EXCLUDE constraint violation"
+      },
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateStart": "2025-07-10",
+        "dateEnd": "2025-07-20",
+        "nightlyRate": "25000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "OVERLAP_CONFLICT",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'OVERLAP_CONFLICT'"
+      ]
+    },
+    {
+      "id": "err_create_rate_override_rate_plan_not_found",
+      "description": "createRateOverride referencing non-existent rate plan returns RATE_PLAN_NOT_FOUND",
+      "function": "createRateOverride",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool that raises FK constraint violation"
+      },
+      "input_values": {
+        "ratePlanId": "00000000-0000-4000-8000-000000000000",
+        "dateStart": "2025-07-01",
+        "dateEnd": "2025-07-15",
+        "nightlyRate": "25000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RATE_PLAN_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'RATE_PLAN_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_get_rate_override",
+      "description": "getRateOverride with existing UUID returns the matching RateOverride",
+      "function": "getRateOverride",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning one row"
+      },
+      "input_values": {
+        "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+      },
+      "input_description": "",
+      "expected_output_description": "RateOverride matching the given id",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id == input id"
+      ]
+    },
+    {
+      "id": "err_get_rate_override_not_found",
+      "description": "getRateOverride with non-existent id returns RATE_NOT_FOUND",
+      "function": "getRateOverride",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning no rows"
+      },
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RATE_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'RATE_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_list_rate_overrides",
+      "description": "listRateOverridesByRatePlan returns overrides ordered by dateStart ascending",
+      "function": "listRateOverridesByRatePlan",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning multiple overrides"
+      },
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "List of RateOverrides ordered by dateStart ascending",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "items are ordered by dateStart ascending"
+      ]
+    },
+    {
+      "id": "hp_list_rate_overrides_filtered",
+      "description": "listRateOverridesByRatePlan with date range filter returns only overlapping overrides",
+      "function": "listRateOverridesByRatePlan",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning filtered overrides"
+      },
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateRangeStart": "2025-07-01",
+        "dateRangeEnd": "2025-07-15"
+      },
+      "input_description": "",
+      "expected_output_description": "Only overrides overlapping [2025-07-01, 2025-07-15)",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "all overrides overlap with the specified date range"
+      ]
+    },
+    {
+      "id": "err_list_rate_overrides_invalid_range",
+      "description": "listRateOverridesByRatePlan with dateRangeStart >= dateRangeEnd returns DATE_RANGE_INVALID",
+      "function": "listRateOverridesByRatePlan",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateRangeStart": "2025-07-15",
+        "dateRangeEnd": "2025-07-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATE_RANGE_INVALID",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATE_RANGE_INVALID'"
+      ]
+    },
+    {
+      "id": "hp_update_rate_override",
+      "description": "updateRateOverride with valid fields returns updated RateOverride",
+      "function": "updateRateOverride",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning updated row"
+      },
+      "input_values": {
+        "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+        "input": "{\"nightlyRate\": 30000, \"label\": \"Updated Label\"}"
+      },
+      "input_description": "",
+      "expected_output_description": "RateOverride with updated nightlyRate and label",
+      "expected_error": "",
+      "assertions": [
+        "result.nightlyRate == 30000",
+        "result.label == 'Updated Label'"
+      ]
+    },
+    {
+      "id": "err_update_rate_override_overlap",
+      "description": "updateRateOverride causing date overlap returns OVERLAP_CONFLICT",
+      "function": "updateRateOverride",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool raising EXCLUDE constraint violation"
+      },
+      "input_values": {
+        "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+        "input": "{\"dateStart\": \"2025-07-05\", \"dateEnd\": \"2025-07-20\"}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "OVERLAP_CONFLICT",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'OVERLAP_CONFLICT'"
+      ]
+    },
+    {
+      "id": "hp_delete_rate_override",
+      "description": "deleteRateOverride with existing id returns true",
+      "function": "deleteRateOverride",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rowCount=1"
+      },
+      "input_values": {
+        "id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+      },
+      "input_description": "",
+      "expected_output_description": "True indicating successful deletion",
+      "expected_error": "",
+      "assertions": [
+        "result is True"
+      ]
+    },
+    {
+      "id": "hp_create_fee_flat",
+      "description": "createFee with FLAT feeType returns inserted Fee with correct amount in cents",
+      "function": "createFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Cleaning Fee",
+        "feeType": "FLAT",
+        "amount": "5000",
+        "currency": "USD",
+        "isTaxable": "true"
+      },
+      "input_description": "",
+      "expected_output_description": "Fee with FLAT type, amount=5000 cents, isTaxable=true",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.feeType == 'FLAT'",
+        "result.amount == 5000",
+        "result.isTaxable is True",
+        "result.currency == 'USD'"
+      ]
+    },
+    {
+      "id": "hp_create_fee_percentage",
+      "description": "createFee with PERCENTAGE feeType and valid basis points returns inserted Fee",
+      "function": "createFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Service Fee",
+        "feeType": "PERCENTAGE",
+        "amount": "1000",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "Fee with PERCENTAGE type, amount=1000 basis points (10%)",
+      "expected_error": "",
+      "assertions": [
+        "result.feeType == 'PERCENTAGE'",
+        "result.amount == 1000"
+      ]
+    },
+    {
+      "id": "err_create_fee_percentage_over_10000",
+      "description": "createFee with PERCENTAGE amount > 10000 returns VALIDATION_ERROR",
+      "function": "createFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Bad Fee",
+        "feeType": "PERCENTAGE",
+        "amount": "10001",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_create_fee_negative_amount",
+      "description": "createFee with negative amount returns VALIDATION_ERROR",
+      "function": "createFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Bad Fee",
+        "feeType": "FLAT",
+        "amount": "-100",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "hp_get_fee",
+      "description": "getFee with existing id returns the matching Fee",
+      "function": "getFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning one row"
+      },
+      "input_values": {
+        "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id == input id"
+      ]
+    },
+    {
+      "id": "err_get_fee_not_found",
+      "description": "getFee with non-existent id returns FEE_NOT_FOUND",
+      "function": "getFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning no rows"
+      },
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "FEE_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'FEE_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_list_fees_by_unit",
+      "description": "listFeesByUnit returns fees for the unit ordered by createdAt",
+      "function": "listFeesByUnit",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning fees"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "items ordered by createdAt ascending"
+      ]
+    },
+    {
+      "id": "hp_update_fee",
+      "description": "updateFee with valid partial input returns updated Fee",
+      "function": "updateFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning updated row"
+      },
+      "input_values": {
+        "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f",
+        "input": "{\"amount\": 7500}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.amount == 7500"
+      ]
+    },
+    {
+      "id": "err_update_fee_not_found",
+      "description": "updateFee with non-existent id returns FEE_NOT_FOUND",
+      "function": "updateFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "FEE_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'FEE_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_delete_fee",
+      "description": "deleteFee with existing id returns true",
+      "function": "deleteFee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rowCount=1"
+      },
+      "input_values": {
+        "id": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is True"
+      ]
+    },
+    {
+      "id": "err_delete_fee_not_found",
+      "description": "deleteFee with non-existent id returns FEE_NOT_FOUND",
+      "function": "deleteFee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "FEE_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'FEE_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_create_tax",
+      "description": "createTax with valid input returns inserted Tax with rate in basis points",
+      "function": "createTax",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "taxType": "SALES",
+        "name": "State Sales Tax",
+        "rate": "875"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.taxType == 'SALES'",
+        "result.name == 'State Sales Tax'",
+        "result.rate == 875"
+      ]
+    },
+    {
+      "id": "err_create_tax_rate_over_10000",
+      "description": "createTax with rate > 10000 returns VALIDATION_ERROR",
+      "function": "createTax",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "taxType": "SALES",
+        "name": "Bad Tax",
+        "rate": "10001"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_create_tax_negative_rate",
+      "description": "createTax with negative rate returns VALIDATION_ERROR",
+      "function": "createTax",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "taxType": "SALES",
+        "name": "Bad Tax",
+        "rate": "-1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "hp_get_tax",
+      "description": "getTax with existing id returns the matching Tax",
+      "function": "getTax",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning one row"
+      },
+      "input_values": {
+        "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id == input id"
+      ]
+    },
+    {
+      "id": "err_get_tax_not_found",
+      "description": "getTax with non-existent id returns TAX_NOT_FOUND",
+      "function": "getTax",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TAX_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'TAX_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_list_taxes_by_unit",
+      "description": "listTaxesByUnit returns taxes ordered by createdAt ascending",
+      "function": "listTaxesByUnit",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning taxes"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "items ordered by createdAt ascending"
+      ]
+    },
+    {
+      "id": "hp_update_tax",
+      "description": "updateTax with valid partial input returns updated Tax",
+      "function": "updateTax",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning updated row"
+      },
+      "input_values": {
+        "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a",
+        "input": "{\"rate\": 900}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.rate == 900"
+      ]
+    },
+    {
+      "id": "err_update_tax_not_found",
+      "description": "updateTax with non-existent id returns TAX_NOT_FOUND",
+      "function": "updateTax",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TAX_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'TAX_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_delete_tax",
+      "description": "deleteTax with existing id returns true",
+      "function": "deleteTax",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rowCount=1"
+      },
+      "input_values": {
+        "id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is True"
+      ]
+    },
+    {
+      "id": "err_delete_tax_not_found",
+      "description": "deleteTax with non-existent id returns TAX_NOT_FOUND",
+      "function": "deleteTax",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TAX_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'TAX_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_create_los_discount",
+      "description": "createLosDiscount with valid input returns inserted LosDiscount",
+      "function": "createLosDiscount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "minNights": "7",
+        "discountPct": "1000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.minNights == 7",
+        "result.discountPct == 1000",
+        "result.isActive is True"
+      ]
+    },
+    {
+      "id": "err_create_los_discount_zero_nights",
+      "description": "createLosDiscount with minNights=0 returns VALIDATION_ERROR",
+      "function": "createLosDiscount",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "minNights": "0",
+        "discountPct": "1000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_create_los_discount_pct_over_10000",
+      "description": "createLosDiscount with discountPct > 10000 returns VALIDATION_ERROR",
+      "function": "createLosDiscount",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "minNights": "7",
+        "discountPct": "10001"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "VALIDATION_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "hp_get_los_discount",
+      "description": "getLosDiscount with existing id returns the matching LosDiscount",
+      "function": "getLosDiscount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning one row"
+      },
+      "input_values": {
+        "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.id == input id"
+      ]
+    },
+    {
+      "id": "err_get_los_discount_not_found",
+      "description": "getLosDiscount with non-existent id returns LOS_DISCOUNT_NOT_FOUND",
+      "function": "getLosDiscount",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "LOS_DISCOUNT_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'LOS_DISCOUNT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_list_los_discounts_by_unit",
+      "description": "listLosDiscountsByUnit returns discounts ordered by minNights ascending",
+      "function": "listLosDiscountsByUnit",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning los discounts"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "items ordered by minNights ascending"
+      ]
+    },
+    {
+      "id": "hp_update_los_discount",
+      "description": "updateLosDiscount with valid input returns updated LosDiscount",
+      "function": "updateLosDiscount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning updated row"
+      },
+      "input_values": {
+        "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b",
+        "input": "{\"discountPct\": 1500}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.discountPct == 1500"
+      ]
+    },
+    {
+      "id": "err_update_los_discount_not_found",
+      "description": "updateLosDiscount with non-existent id returns LOS_DISCOUNT_NOT_FOUND",
+      "function": "updateLosDiscount",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "LOS_DISCOUNT_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'LOS_DISCOUNT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_delete_los_discount",
+      "description": "deleteLosDiscount with existing id returns true",
+      "function": "deleteLosDiscount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rowCount=1"
+      },
+      "input_values": {
+        "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result is True"
+      ]
+    },
+    {
+      "id": "err_delete_los_discount_not_found",
+      "description": "deleteLosDiscount with non-existent id returns LOS_DISCOUNT_NOT_FOUND",
+      "function": "deleteLosDiscount",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "id": "00000000-0000-4000-8000-000000000000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "LOS_DISCOUNT_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'LOS_DISCOUNT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_base_only",
+      "description": "resolveRatesForDateRange with base rates only (no overrides, no fees, no taxes, no LOS discount) returns correct nightly breakdown and totals",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan with baseRate=15000, no overrides, no fees, no taxes, no LOS discounts"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with 3 nights at base rate, no discount, no fees, no taxes",
+      "expected_error": "",
+      "assertions": [
+        "result.numNights == 3",
+        "len(result.nightlyBreakdown) == 3",
+        "all entries have source == 'BASE'",
+        "result.nightlySubtotal == 3 * baseRate",
+        "result.losDiscount is None",
+        "result.discountedSubtotal == result.nightlySubtotal",
+        "result.feesTotal == 0",
+        "result.taxesTotal == 0",
+        "result.grandTotal == result.discountedSubtotal"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_with_overrides",
+      "description": "resolveRatesForDateRange with partial date overrides correctly applies override rates for covered nights and base rate for others",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan baseRate=15000, override [2025-08-02, 2025-08-04) at 25000"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-05"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with 4 nights, 2 at override rate, 2 at base rate",
+      "expected_error": "",
+      "assertions": [
+        "result.numNights == 4",
+        "nights in override range have override rate",
+        "nights outside override range have base rate",
+        "result.nightlySubtotal == sum of all nightly rates"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_with_los_discount",
+      "description": "resolveRatesForDateRange with qualifying LOS discount applies highest matching discount",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan, LOS discount minNights=7 discountPct=1000"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-08"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with 7 nights and 10% LOS discount applied",
+      "expected_error": "",
+      "assertions": [
+        "result.numNights == 7",
+        "result.losDiscount is not None",
+        "result.losDiscount.discountPctBasisPoints == 1000",
+        "result.discountedSubtotal == result.nightlySubtotal - result.losDiscount.discountAmount",
+        "result.discountedSubtotal >= 0"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_best_los_discount",
+      "description": "resolveRatesForDateRange with multiple qualifying LOS discounts uses the one with highest discountPct",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan, two LOS discounts: minNights=7/discountPct=1000 and minNights=14/discountPct=1500"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-15"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with 14 nights, best LOS discount applied (14 nights qualifies for both 7-night 10% and 14-night 15%)",
+      "expected_error": "",
+      "assertions": [
+        "result.losDiscount.discountPctBasisPoints == 1500",
+        "result.losDiscount.minNights == 14"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_with_fees",
+      "description": "resolveRatesForDateRange with flat and percentage fees computes correct feesTotal",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan baseRate=15000, flat fee 5000, percentage fee 1000 basis points"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with 3 nights, flat cleaning fee 5000 + percentage service fee 10% of discountedSubtotal",
+      "expected_error": "",
+      "assertions": [
+        "len(result.fees) == 2",
+        "flat fee resolvedAmount == 5000",
+        "percentage fee resolvedAmount computed from discountedSubtotal",
+        "result.feesTotal == sum of all fee resolvedAmounts"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_with_taxes",
+      "description": "resolveRatesForDateRange computes taxes on (discountedSubtotal + taxable fee amounts)",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan, taxable flat fee, non-taxable fee, and sales tax at 875 basis points"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with taxes computed on correct taxable base",
+      "expected_error": "",
+      "assertions": [
+        "len(result.taxes) > 0",
+        "tax taxableAmount == discountedSubtotal + taxable_fees_sum",
+        "result.taxesTotal == sum of all tax taxAmounts"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_full_scenario",
+      "description": "resolveRatesForDateRange full scenario: overrides + LOS discount + mixed fees + taxes verifies grandTotal = discountedSubtotal + feesTotal + taxesTotal",
+      "function": "resolveRatesForDateRange",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with full pricing data"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-08"
+      },
+      "input_description": "",
+      "expected_output_description": "Complete ResolvedRate with all components",
+      "expected_error": "",
+      "assertions": [
+        "result.grandTotal == result.discountedSubtotal + result.feesTotal + result.taxesTotal",
+        "result.nightlySubtotal == sum of nightlyBreakdown rates",
+        "result.discountedSubtotal == result.nightlySubtotal - result.losDiscount.discountAmount",
+        "result.resolvedAt is set"
+      ]
+    },
+    {
+      "id": "err_resolve_rates_no_active_plan",
+      "description": "resolveRatesForDateRange with no active rate plan returns RATE_NOT_FOUND",
+      "function": "resolveRatesForDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning no active rate plans"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "RATE_NOT_FOUND",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'RATE_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "err_resolve_rates_invalid_date_range",
+      "description": "resolveRatesForDateRange with checkIn >= checkOut returns DATE_RANGE_INVALID",
+      "function": "resolveRatesForDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-04",
+        "checkOut": "2025-08-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATE_RANGE_INVALID",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATE_RANGE_INVALID'"
+      ]
+    },
+    {
+      "id": "err_resolve_rates_same_date",
+      "description": "resolveRatesForDateRange with checkIn == checkOut returns DATE_RANGE_INVALID (zero nights)",
+      "function": "resolveRatesForDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATE_RANGE_INVALID",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATE_RANGE_INVALID'"
+      ]
+    },
+    {
+      "id": "err_resolve_rates_currency_mismatch",
+      "description": "resolveRatesForDateRange when fees have different currency than rate plan returns CURRENCY_MISMATCH",
+      "function": "resolveRatesForDateRange",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan with USD and fee with EUR"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_no_los_discount_short_stay",
+      "description": "resolveRatesForDateRange with stay shorter than any LOS discount minNights applies no discount",
+      "function": "resolveRatesForDateRange",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan and LOS discount minNights=7"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-03"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with 2 nights, no LOS discount applied",
+      "expected_error": "",
+      "assertions": [
+        "result.numNights == 2",
+        "result.losDiscount is None",
+        "result.discountedSubtotal == result.nightlySubtotal"
+      ]
+    },
+    {
+      "id": "hp_resolve_rates_single_night",
+      "description": "resolveRatesForDateRange for a single night stay (checkOut = checkIn + 1 day)",
+      "function": "resolveRatesForDateRange",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning rate plan baseRate=15000"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-02"
+      },
+      "input_description": "",
+      "expected_output_description": "ResolvedRate with exactly 1 night",
+      "expected_error": "",
+      "assertions": [
+        "result.numNights == 1",
+        "len(result.nightlyBreakdown) == 1",
+        "result.nightlyBreakdown[0].date == '2025-08-01'"
+      ]
+    },
+    {
+      "id": "hp_with_transaction_commit",
+      "description": "withTransaction commits when callback returns success",
+      "function": "withTransaction",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with call tracking for BEGIN/COMMIT/ROLLBACK"
+      },
+      "input_values": {
+        "callback": "async function that returns success result"
+      },
+      "input_description": "",
+      "expected_output_description": "The callback's return value, with transaction committed",
+      "expected_error": "",
+      "assertions": [
+        "BEGIN was called",
+        "COMMIT was called",
+        "ROLLBACK was not called",
+        "callback result is returned"
+      ]
+    },
+    {
+      "id": "err_with_transaction_rollback_on_error",
+      "description": "withTransaction rolls back when callback returns error result",
+      "function": "withTransaction",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with call tracking"
+      },
+      "input_values": {
+        "callback": "async function that returns error result"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TRANSACTION_ERROR",
+      "assertions": [
+        "BEGIN was called",
+        "ROLLBACK was called",
+        "COMMIT was not called"
+      ]
+    },
+    {
+      "id": "err_with_transaction_rollback_on_throw",
+      "description": "withTransaction rolls back when callback throws and returns TRANSACTION_ERROR",
+      "function": "withTransaction",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with call tracking"
+      },
+      "input_values": {
+        "callback": "async function that raises exception"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TRANSACTION_ERROR",
+      "assertions": [
+        "BEGIN was called",
+        "ROLLBACK was called",
+        "COMMIT was not called",
+        "result is PricingError with kind TRANSACTION_ERROR"
+      ]
+    },
+    {
+      "id": "hp_run_migration",
+      "description": "runMigration succeeds and returns true when pool has sufficient privileges",
+      "function": "runMigration",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool accepting DDL statements"
+      },
+      "input_values": {
+        "pool": "connected pool with CREATE privileges"
+      },
+      "input_description": "",
+      "expected_output_description": "True indicating migration success",
+      "expected_error": "",
+      "assertions": [
+        "result is True"
+      ]
+    },
+    {
+      "id": "err_run_migration_insufficient_privileges",
+      "description": "runMigration fails with DATABASE_ERROR when pool lacks CREATE privileges",
+      "function": "runMigration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool raising permission denied"
+      },
+      "input_values": {
+        "pool": "pool without CREATE privileges"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATABASE_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATABASE_ERROR'"
+      ]
+    },
+    {
+      "id": "hp_create_repository",
+      "description": "createPricingRepository with valid connected pool returns repository with all methods",
+      "function": "createPricingRepository",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock connected pool"
+      },
+      "input_values": {
+        "pool": "valid connected pool"
+      },
+      "input_description": "",
+      "expected_output_description": "PricingRepository object with all CRUD methods and resolveRatesForDateRange",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result has create_rate_plan method",
+        "result has resolve_rates_for_date_range method",
+        "result has with_transaction method"
+      ]
+    },
+    {
+      "id": "err_create_repository_disconnected_pool",
+      "description": "createPricingRepository with disconnected pool returns DATABASE_ERROR",
+      "function": "createPricingRepository",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool that is not connected"
+      },
+      "input_values": {
+        "pool": "disconnected pool"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "DATABASE_ERROR",
+      "assertions": [
+        "result is a PricingError",
+        "result.kind == 'DATABASE_ERROR'"
+      ]
+    },
+    {
+      "id": "inv_monetary_values_non_negative",
+      "description": "All monetary values in ResolvedRate are non-negative integers",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with full pricing data"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-08"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.nightlySubtotal >= 0",
+        "result.discountedSubtotal >= 0",
+        "result.feesTotal >= 0",
+        "result.taxesTotal >= 0",
+        "result.grandTotal >= 0",
+        "all nightlyBreakdown rates >= 0",
+        "all fee resolvedAmounts >= 0",
+        "all tax taxAmounts >= 0",
+        "isinstance(result.grandTotal, int)"
+      ]
+    },
+    {
+      "id": "inv_grand_total_formula",
+      "description": "grandTotal always equals discountedSubtotal + feesTotal + taxesTotal",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with full pricing data"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-08"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.grandTotal == result.discountedSubtotal + result.feesTotal + result.taxesTotal"
+      ]
+    },
+    {
+      "id": "inv_nightly_subtotal_is_sum",
+      "description": "nightlySubtotal equals the sum of all nightly breakdown rates",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with rate plan and overrides"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.nightlySubtotal == sum(entry.rate for entry in result.nightlyBreakdown)"
+      ]
+    },
+    {
+      "id": "inv_breakdown_length_equals_num_nights",
+      "description": "nightlyBreakdown has exactly numNights entries",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with rate plan"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "len(result.nightlyBreakdown) == result.numNights",
+        "result.numNights == 3"
+      ]
+    },
+    {
+      "id": "inv_discounted_subtotal_formula",
+      "description": "discountedSubtotal equals nightlySubtotal minus LOS discount amount (or nightlySubtotal if no discount)",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with rate plan and LOS discount"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-08"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "if result.losDiscount: result.discountedSubtotal == result.nightlySubtotal - result.losDiscount.discountAmount",
+        "if not result.losDiscount: result.discountedSubtotal == result.nightlySubtotal"
+      ]
+    },
+    {
+      "id": "inv_fees_total_is_sum",
+      "description": "feesTotal equals the sum of all resolved fee amounts",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with rate plan and fees"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.feesTotal == sum(fee.resolvedAmount for fee in result.fees)"
+      ]
+    },
+    {
+      "id": "inv_taxes_total_is_sum",
+      "description": "taxesTotal equals the sum of all resolved tax amounts",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with rate plan and taxes"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.taxesTotal == sum(tax.taxAmount for tax in result.taxes)"
+      ]
+    },
+    {
+      "id": "inv_currency_consistent",
+      "description": "ResolvedRate currency matches the rate plan's currency",
+      "function": "resolveRatesForDateRange",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with rate plan currency=USD"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "checkIn": "2025-08-01",
+        "checkOut": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.currency == rate_plan.currency",
+        "result.currency matches ^[A-Z]{3}$"
+      ]
+    },
+    {
+      "id": "edge_list_rate_plans_empty",
+      "description": "listRatePlansByUnit for unit with no rate plans returns empty list",
+      "function": "listRatePlansByUnit",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning no rows"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Empty list",
+      "expected_error": "",
+      "assertions": [
+        "result is a list",
+        "len(result) == 0"
+      ]
+    },
+    {
+      "id": "edge_list_rate_plans_include_inactive",
+      "description": "listRatePlansByUnit with activeOnly=false returns both active and inactive plans",
+      "function": "listRatePlansByUnit",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning active and inactive plans"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "activeOnly": "false"
+      },
+      "input_description": "",
+      "expected_output_description": "List containing both active and inactive rate plans",
+      "expected_error": "",
+      "assertions": [
+        "result contains items with isActive=True and isActive=False"
+      ]
+    },
+    {
+      "id": "edge_rate_override_adjacent_no_overlap",
+      "description": "createRateOverride with adjacent but non-overlapping ranges succeeds (half-open intervals)",
+      "function": "createRateOverride",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool inserting successfully (existing override ends on 2025-07-15 exclusive)"
+      },
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateStart": "2025-07-15",
+        "dateEnd": "2025-07-20",
+        "nightlyRate": "20000"
+      },
+      "input_description": "",
+      "expected_output_description": "Inserted RateOverride (adjacent to existing [2025-07-01, 2025-07-15) without overlap)",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.dateStart == '2025-07-15'"
+      ]
+    },
+    {
+      "id": "edge_create_rate_plan_zero_base_rate",
+      "description": "createRatePlan with baseRate=0 (free) succeeds",
+      "function": "createRatePlan",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row with baseRate=0"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Free Promo",
+        "baseRate": "0",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "RatePlan with baseRate=0",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.baseRate == 0"
+      ]
+    },
+    {
+      "id": "edge_create_rate_plan_max_name_length",
+      "description": "createRatePlan with name at exactly 255 characters succeeds",
+      "function": "createRatePlan",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "A_repeated_255_times",
+        "baseRate": "15000",
+        "currency": "USD"
+      },
+      "input_description": "",
+      "expected_output_description": "RatePlan with 255-char name",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "len(result.name) == 255"
+      ]
+    },
+    {
+      "id": "edge_tax_boundary_rate_zero",
+      "description": "createTax with rate=0 (zero tax) succeeds",
+      "function": "createTax",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "taxType": "CUSTOM",
+        "name": "Zero Tax",
+        "rate": "0"
+      },
+      "input_description": "",
+      "expected_output_description": "Tax with rate=0",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.rate == 0"
+      ]
+    },
+    {
+      "id": "edge_tax_boundary_rate_10000",
+      "description": "createTax with rate=10000 (100%) succeeds",
+      "function": "createTax",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool returning inserted row"
+      },
+      "input_values": {
+        "unitId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "taxType": "CUSTOM",
+        "name": "Full Tax",
+        "rate": "10000"
+      },
+      "input_description": "",
+      "expected_output_description": "Tax with rate=10000",
+      "expected_error": "",
+      "assertions": [
+        "result is not a PricingError",
+        "result.rate == 10000"
+      ]
+    },
+    {
+      "id": "inv_no_overlapping_overrides",
+      "description": "EXCLUDE constraint prevents overlapping rate overrides for the same rate plan",
+      "function": "createRateOverride",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pool": "mock pool with existing override [2025-07-01, 2025-07-10)"
+      },
+      "input_values": {
+        "ratePlanId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "dateStart": "2025-07-05",
+        "dateEnd": "2025-07-12",
+        "nightlyRate": "25000"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "inserting overlapping override returns OVERLAP_CONFLICT error",
+        "non-overlapping inserts succeed"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": ""
+}

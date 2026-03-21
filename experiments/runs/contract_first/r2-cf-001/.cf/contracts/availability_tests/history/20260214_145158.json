@@ -1,0 +1,1231 @@
+{
+  "component_id": "availability_tests",
+  "name": "Availability Service Tests",
+  "description": "Unit tests for bitmask operations (edge cases: single day, full year, boundary dates, leap years). Integration tests for cache layer (cache miss → DB query → cache fill → cache hit path, invalidation). API contract tests validating all endpoint request/response shapes. Tests run with mocked DB and Redis (no external services required). Minimum: 1 test per public function, contract tests for every endpoint. Organized as three test modules (bitmask_test.ts, cache_test.ts, api_contract_test.ts) plus shared test_helpers.ts under services/availability/tests/.",
+  "version": 1,
+  "types": [
+    {
+      "name": "IsoDateString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 8601 date string in 'YYYY-MM-DD' format, UTC. Must match regex ^\\d{4}-\\d{2}-\\d{2}$ and represent a valid calendar date."
+    },
+    {
+      "name": "UuidString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "UUID v4 string identifier for a unit. Must match regex ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$."
+    },
+    {
+      "name": "HexBitmaskString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "BigInt bitmask serialized as a lowercase hex string prefixed with '0x'. E.g. '0x1a2b3c'. Used for Redis cache storage."
+    },
+    {
+      "name": "Year",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "4-digit integer representing a calendar year (e.g. 2024)."
+    },
+    {
+      "name": "BitIndex",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Non-negative integer representing a 0-based day-of-year index in a bitmask. Range: 0..365 (0..364 for non-leap years, 0..365 for leap years)."
+    },
+    {
+      "name": "DateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "start",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "start must be ISO 8601 YYYY-MM-DD"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive end date of the range.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "end must be ISO 8601 YYYY-MM-DD"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A contiguous date range defined by inclusive start and end dates."
+    },
+    {
+      "name": "AvailabilityRecord",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UuidString",
+          "required": true,
+          "default": "",
+          "description": "The unit this record belongs to.",
+          "validators": []
+        },
+        {
+          "name": "year",
+          "type_ref": "Year",
+          "required": true,
+          "default": "",
+          "description": "The calendar year this bitmask covers.",
+          "validators": []
+        },
+        {
+          "name": "bitmask",
+          "type_ref": "HexBitmaskString",
+          "required": true,
+          "default": "",
+          "description": "The availability bitmask for the year, serialized as hex.",
+          "validators": []
+        },
+        {
+          "name": "updated_at",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "Timestamp of last update (date portion).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single availability record as stored in PostgreSQL. Represents one unit's availability bitmask for one year."
+    },
+    {
+      "name": "AvailabilityStatus",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "AVAILABLE",
+        "BLOCKED",
+        "PARTIAL"
+      ],
+      "inner_types": [],
+      "description": "Whether a given date or range is available or blocked."
+    },
+    {
+      "name": "AvailabilityCheckResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UuidString",
+          "required": true,
+          "default": "",
+          "description": "The unit checked.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "Start date queried.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "End date queried.",
+          "validators": []
+        },
+        {
+          "name": "status",
+          "type_ref": "AvailabilityStatus",
+          "required": true,
+          "default": "",
+          "description": "Overall availability status for the range.",
+          "validators": []
+        },
+        {
+          "name": "available_dates",
+          "type_ref": "IsoDateStringList",
+          "required": true,
+          "default": "",
+          "description": "List of available dates within the range.",
+          "validators": []
+        },
+        {
+          "name": "blocked_dates",
+          "type_ref": "IsoDateStringList",
+          "required": true,
+          "default": "",
+          "description": "List of blocked dates within the range.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of checking availability for a unit over a date range."
+    },
+    {
+      "name": "IsoDateStringList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "IsoDateString",
+      "variants": [],
+      "inner_types": [],
+      "description": "A list of ISO 8601 date strings."
+    },
+    {
+      "name": "BulkAvailabilityResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "results",
+          "type_ref": "AvailabilityCheckResultList",
+          "required": true,
+          "default": "",
+          "description": "List of per-unit availability check results.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of a bulk availability check for multiple units."
+    },
+    {
+      "name": "AvailabilityCheckResultList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "AvailabilityCheckResult",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of availability check results, one per unit."
+    },
+    {
+      "name": "UuidStringList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "UuidString",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of unit UUID strings."
+    },
+    {
+      "name": "UpdateAvailabilityRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "dates",
+          "type_ref": "IsoDateStringList",
+          "required": true,
+          "default": "",
+          "description": "List of dates to update.",
+          "validators": []
+        },
+        {
+          "name": "status",
+          "type_ref": "AvailabilityStatus",
+          "required": true,
+          "default": "",
+          "description": "The status to set for the given dates. Must be AVAILABLE or BLOCKED (not PARTIAL).",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "status in ['AVAILABLE', 'BLOCKED']",
+              "error_message": "status must be AVAILABLE or BLOCKED, not PARTIAL"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Request body for PUT /availability/:unit_id. Sets specified dates as available or blocked."
+    },
+    {
+      "name": "UpdateAvailabilityResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UuidString",
+          "required": true,
+          "default": "",
+          "description": "The unit that was updated.",
+          "validators": []
+        },
+        {
+          "name": "updated_dates",
+          "type_ref": "IsoDateStringList",
+          "required": true,
+          "default": "",
+          "description": "The dates that were modified.",
+          "validators": []
+        },
+        {
+          "name": "new_status",
+          "type_ref": "AvailabilityStatus",
+          "required": true,
+          "default": "",
+          "description": "The status that was applied.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for a successful PUT /availability/:unit_id."
+    },
+    {
+      "name": "ErrorResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Machine-readable error code (e.g. 'NOT_FOUND', 'INVALID_REQUEST', 'VALIDATION_ERROR').",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Standard error response shape returned by all API endpoints on failure."
+    },
+    {
+      "name": "HttpStatusCode",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "200",
+        "400",
+        "404",
+        "422",
+        "500"
+      ],
+      "inner_types": [],
+      "description": "HTTP status codes used by the availability API endpoints."
+    },
+    {
+      "name": "CacheKey",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Cache key string in format 'availability:{unit_id}:{year}'."
+    },
+    {
+      "name": "DbClient",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "getAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Function signature: (unit_id: UuidString, year: Year) => Promise<AvailabilityRecord | null>",
+          "validators": []
+        },
+        {
+          "name": "setAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Function signature: (unit_id: UuidString, year: Year, bitmask: HexBitmaskString) => Promise<AvailabilityRecord>",
+          "validators": []
+        },
+        {
+          "name": "getMultipleAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Function signature: (unit_ids: UuidString[], year: Year) => Promise<AvailabilityRecord[]>",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Interface for database operations. Production uses PostgreSQL; tests use InMemoryDb mock."
+    },
+    {
+      "name": "CacheClient",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "get",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Function signature: (key: CacheKey) => Promise<HexBitmaskString | null>",
+          "validators": []
+        },
+        {
+          "name": "set",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Function signature: (key: CacheKey, value: HexBitmaskString, ttl?: number) => Promise<void>",
+          "validators": []
+        },
+        {
+          "name": "del",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Function signature: (key: CacheKey) => Promise<void>",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Interface for cache operations. Production uses Redis; tests use InMemoryCache (Map-based) mock."
+    },
+    {
+      "name": "InMemoryDb",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "records",
+          "type_ref": "AvailabilityRecordList",
+          "required": true,
+          "default": "",
+          "description": "Internal storage array of availability records.",
+          "validators": []
+        },
+        {
+          "name": "queryCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Spy counter tracking number of getAvailability calls.",
+          "validators": []
+        },
+        {
+          "name": "writeCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Spy counter tracking number of setAvailability calls.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "In-memory mock implementation of DbClient backed by an array of AvailabilityRecords. Used in cache_test.ts and api_contract_test.ts."
+    },
+    {
+      "name": "AvailabilityRecordList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "AvailabilityRecord",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of availability records."
+    },
+    {
+      "name": "InMemoryCache",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "store",
+          "type_ref": "dict",
+          "required": true,
+          "default": "",
+          "description": "Internal Map storing CacheKey → HexBitmaskString entries.",
+          "validators": []
+        },
+        {
+          "name": "getCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Spy counter tracking number of get calls.",
+          "validators": []
+        },
+        {
+          "name": "setCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Spy counter tracking number of set calls.",
+          "validators": []
+        },
+        {
+          "name": "delCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "0",
+          "description": "Spy counter tracking number of del calls.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "In-memory mock implementation of CacheClient backed by a Map<string, string>. Used in cache_test.ts and api_contract_test.ts."
+    },
+    {
+      "name": "TestResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "test_name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Fully qualified test name including module prefix.",
+          "validators": []
+        },
+        {
+          "name": "passed",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the test passed.",
+          "validators": []
+        },
+        {
+          "name": "duration_ms",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Execution time in milliseconds.",
+          "validators": []
+        },
+        {
+          "name": "error_message",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Error message if the test failed; empty string if passed.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of executing a single test case."
+    },
+    {
+      "name": "TestResultList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "TestResult",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of test results."
+    },
+    {
+      "name": "TestSuiteReport",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "suite_name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Name of the test suite (e.g. 'bitmask_test', 'cache_test', 'api_contract_test').",
+          "validators": []
+        },
+        {
+          "name": "total",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total number of tests executed.",
+          "validators": []
+        },
+        {
+          "name": "passed",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of tests that passed.",
+          "validators": []
+        },
+        {
+          "name": "failed",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of tests that failed.",
+          "validators": []
+        },
+        {
+          "name": "duration_ms",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Total execution time in milliseconds.",
+          "validators": []
+        },
+        {
+          "name": "results",
+          "type_ref": "TestResultList",
+          "required": true,
+          "default": "",
+          "description": "Individual test results.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Aggregate report for an entire test suite run."
+    },
+    {
+      "name": "BitmaskOperationName",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "setBit",
+        "clearBit",
+        "getBit",
+        "setBitRange",
+        "clearBitRange",
+        "checkBitRange",
+        "createYearMask",
+        "createLeapYearMask",
+        "dateToBitIndex",
+        "bitIndexToDate",
+        "serializeBitmask",
+        "deserializeBitmask",
+        "stitchCrossYearRange"
+      ],
+      "inner_types": [],
+      "description": "Names of public bitmask operations that must each have at least one test."
+    },
+    {
+      "name": "EndpointName",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "GET /availability/:unit_id",
+        "PUT /availability/:unit_id",
+        "GET /availability/bulk"
+      ],
+      "inner_types": [],
+      "description": "REST endpoint identifiers that must each have contract tests."
+    },
+    {
+      "name": "TestFixtures",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "sampleUnitId",
+          "type_ref": "UuidString",
+          "required": true,
+          "default": "",
+          "description": "A valid UUID v4 for use in tests.",
+          "validators": []
+        },
+        {
+          "name": "sampleUnitId2",
+          "type_ref": "UuidString",
+          "required": true,
+          "default": "",
+          "description": "A second valid UUID v4 for bulk tests.",
+          "validators": []
+        },
+        {
+          "name": "sampleYear",
+          "type_ref": "Year",
+          "required": true,
+          "default": "",
+          "description": "A non-leap year for standard tests (e.g. 2025).",
+          "validators": []
+        },
+        {
+          "name": "leapYear",
+          "type_ref": "Year",
+          "required": true,
+          "default": "",
+          "description": "A leap year for leap-year-specific tests (e.g. 2024).",
+          "validators": []
+        },
+        {
+          "name": "sampleBitmaskHex",
+          "type_ref": "HexBitmaskString",
+          "required": true,
+          "default": "",
+          "description": "A known bitmask hex string for round-trip tests.",
+          "validators": []
+        },
+        {
+          "name": "emptyBitmaskHex",
+          "type_ref": "HexBitmaskString",
+          "required": true,
+          "default": "",
+          "description": "Hex string representing an all-zeros bitmask ('0x0').",
+          "validators": []
+        },
+        {
+          "name": "fullYearBitmaskHex",
+          "type_ref": "HexBitmaskString",
+          "required": true,
+          "default": "",
+          "description": "Hex string representing all 365 bits set (non-leap year).",
+          "validators": []
+        },
+        {
+          "name": "sampleAvailabilityRecord",
+          "type_ref": "AvailabilityRecord",
+          "required": true,
+          "default": "",
+          "description": "A pre-built availability record for mock DB seeding.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Shared fixture data used across test modules, defined in test_helpers.ts."
+    }
+  ],
+  "functions": [
+    {
+      "name": "runBitmaskTests",
+      "description": "Executes the bitmask_test.ts suite: pure unit tests for all BigInt bitmask operations. Covers single-day set/clear, full-year mask, boundary indices (0, 364, 365), leap year bit 59 (Feb 29), cross-year range stitching, and hex string serialization round-trips. Uses factory helpers createBitmask and createDateRange for readability.",
+      "inputs": [],
+      "output_type": "TestSuiteReport",
+      "error_cases": [
+        {
+          "name": "test_setup_failure",
+          "condition": "Factory helpers or test infrastructure fail to initialize",
+          "error_type": "TestSetupError",
+          "error_data": {}
+        },
+        {
+          "name": "unexpected_runtime_error",
+          "condition": "An uncaught exception occurs outside of a test assertion",
+          "error_type": "RuntimeError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "No external services required — all tests are pure functions on BigInt values"
+      ],
+      "postconditions": [
+        "Report suite_name equals 'bitmask_test'",
+        "Report total >= 13 (at least one test per BitmaskOperationName variant)",
+        "Each BitmaskOperationName variant has at least one TestResult with matching test_name prefix",
+        "All tests in report.results have a non-empty test_name",
+        "report.passed + report.failed == report.total"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "runCacheTests",
+      "description": "Executes the cache_test.ts suite: integration tests for the cache-aside lifecycle using InMemoryCache and InMemoryDb mocks with spy-based invocation counting. Tests the full path: cache miss → DB query → cache fill → cache hit → write → cache invalidation → re-fill. Verifies cache key format includes unit_id and year. Verifies BigInt↔hex serialization at the cache boundary.",
+      "inputs": [],
+      "output_type": "TestSuiteReport",
+      "error_cases": [
+        {
+          "name": "mock_initialization_failure",
+          "condition": "InMemoryDb or InMemoryCache fails to initialize",
+          "error_type": "TestSetupError",
+          "error_data": {}
+        },
+        {
+          "name": "spy_count_mismatch",
+          "condition": "Spy counters do not reflect expected invocation counts",
+          "error_type": "AssertionError",
+          "error_data": {}
+        },
+        {
+          "name": "unexpected_runtime_error",
+          "condition": "An uncaught exception occurs outside of a test assertion",
+          "error_type": "RuntimeError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "No external services required — InMemoryDb and InMemoryCache mocks are used",
+        "InMemoryDb implements DbClient interface",
+        "InMemoryCache implements CacheClient interface"
+      ],
+      "postconditions": [
+        "Report suite_name equals 'cache_test'",
+        "Report total >= 7 (miss→query→fill, hit, write→invalidate, re-fill, key format, hex round-trip, multiple years)",
+        "report.passed + report.failed == report.total",
+        "At least one test verifies InMemoryDb.queryCount increments on cache miss",
+        "At least one test verifies InMemoryCache.setCount increments on cache fill",
+        "At least one test verifies InMemoryCache.delCount increments on cache invalidation",
+        "At least one test verifies cache key matches pattern 'availability:{uuid}:{year}'"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "runApiContractTests",
+      "description": "Executes the api_contract_test.ts suite: contract tests for all three REST endpoints using superoak or Oak's app.handle(). Defines Zod schemas for request/response shapes and validates against them. Covers all success and error scenarios for GET /availability/:unit_id, PUT /availability/:unit_id, and GET /availability/bulk. All error responses validated against the standard { error, message } ErrorResponse shape.",
+      "inputs": [],
+      "output_type": "TestSuiteReport",
+      "error_cases": [
+        {
+          "name": "app_initialization_failure",
+          "condition": "Oak app or superoak test client fails to initialize",
+          "error_type": "TestSetupError",
+          "error_data": {}
+        },
+        {
+          "name": "schema_validation_failure",
+          "condition": "A Zod schema parse fails on a response body that was expected to succeed",
+          "error_type": "SchemaValidationError",
+          "error_data": {}
+        },
+        {
+          "name": "unexpected_status_code",
+          "condition": "An endpoint returns an HTTP status code not in the expected set for that test case",
+          "error_type": "AssertionError",
+          "error_data": {}
+        },
+        {
+          "name": "unexpected_runtime_error",
+          "condition": "An uncaught exception occurs outside of a test assertion",
+          "error_type": "RuntimeError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "No external services required — app is configured with InMemoryDb and InMemoryCache",
+        "Zod schemas are defined for: AvailabilityCheckResult, BulkAvailabilityResult, UpdateAvailabilityResponse, ErrorResponse"
+      ],
+      "postconditions": [
+        "Report suite_name equals 'api_contract_test'",
+        "Report total >= 10 (at least: GET single success, GET single 404, GET single 400 bad dates, GET single 422 invalid range, PUT success, PUT 400 bad body, PUT cache invalidation, GET bulk success, GET bulk empty, GET bulk 400 missing params)",
+        "report.passed + report.failed == report.total",
+        "Every EndpointName variant has at least one passing contract test",
+        "All error response tests validate against the ErrorResponse Zod schema",
+        "All success response tests validate against their respective Zod schemas"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "runAllTests",
+      "description": "Runs all three test suites (bitmask_test, cache_test, api_contract_test) sequentially and aggregates results into a combined report. Returns failure if any suite has failing tests.",
+      "inputs": [],
+      "output_type": "TestSuiteReport",
+      "error_cases": [
+        {
+          "name": "suite_execution_failure",
+          "condition": "One of the sub-suites throws an unrecoverable error preventing further execution",
+          "error_type": "TestSuiteError",
+          "error_data": {}
+        },
+        {
+          "name": "unexpected_runtime_error",
+          "condition": "An uncaught exception occurs in the orchestration layer",
+          "error_type": "RuntimeError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "No external services required"
+      ],
+      "postconditions": [
+        "Report suite_name equals 'availability_tests'",
+        "Report total equals sum of totals from bitmask_test + cache_test + api_contract_test",
+        "Report passed equals sum of passed from all three suites",
+        "Report failed equals sum of failed from all three suites",
+        "report.passed + report.failed == report.total",
+        "report.results contains all individual TestResult entries from all three suites"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createBitmask",
+      "description": "Factory helper (test_helpers.ts) that creates a BigInt bitmask with specified bit indices set. Used in bitmask_test.ts for readable test setup.",
+      "inputs": [
+        {
+          "name": "bitIndices",
+          "type_ref": "BitIndexList",
+          "required": true,
+          "default": "",
+          "description": "List of 0-based day-of-year indices to set in the bitmask.",
+          "validators": []
+        },
+        {
+          "name": "year",
+          "type_ref": "Year",
+          "required": false,
+          "default": "2025",
+          "description": "The year context for the bitmask (determines max valid index: 365 for leap, 364 otherwise).",
+          "validators": []
+        }
+      ],
+      "output_type": "HexBitmaskString",
+      "error_cases": [
+        {
+          "name": "index_out_of_range",
+          "condition": "A bit index exceeds the maximum for the given year (364 for non-leap, 365 for leap)",
+          "error_type": "RangeError",
+          "error_data": {}
+        },
+        {
+          "name": "negative_index",
+          "condition": "A bit index is negative",
+          "error_type": "RangeError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "All bit indices are non-negative integers",
+        "All bit indices are <= 365 for leap years, <= 364 for non-leap years",
+        "year is a valid 4-digit year"
+      ],
+      "postconditions": [
+        "Returned hex string starts with '0x'",
+        "Deserializing the returned hex string yields a BigInt with exactly the specified bits set",
+        "No bits outside the specified indices are set"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createDateRange",
+      "description": "Factory helper (test_helpers.ts) that creates a DateRange from two ISO date strings with validation. Used across all test modules for readable test setup.",
+      "inputs": [
+        {
+          "name": "start",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "IsoDateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive end date.",
+          "validators": []
+        }
+      ],
+      "output_type": "DateRange",
+      "error_cases": [
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end does not match YYYY-MM-DD regex",
+          "error_type": "ValidationError",
+          "error_data": {}
+        },
+        {
+          "name": "invalid_calendar_date",
+          "condition": "start or end represents a non-existent date (e.g. 2025-02-29, 2025-13-01)",
+          "error_type": "ValidationError",
+          "error_data": {}
+        },
+        {
+          "name": "inverted_range",
+          "condition": "start is chronologically after end",
+          "error_type": "ValidationError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "start matches YYYY-MM-DD format",
+        "end matches YYYY-MM-DD format",
+        "start represents a valid calendar date",
+        "end represents a valid calendar date"
+      ],
+      "postconditions": [
+        "Returned DateRange has start and end fields matching the inputs",
+        "start <= end (chronologically)"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createInMemoryDb",
+      "description": "Factory helper (test_helpers.ts) that creates a fresh InMemoryDb mock pre-seeded with optional availability records. Implements the DbClient interface. Spy counters initialized to zero.",
+      "inputs": [
+        {
+          "name": "seedRecords",
+          "type_ref": "AvailabilityRecordList",
+          "required": false,
+          "default": "[]",
+          "description": "Initial availability records to seed the mock database with.",
+          "validators": []
+        }
+      ],
+      "output_type": "InMemoryDb",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "Returned InMemoryDb.queryCount == 0",
+        "Returned InMemoryDb.writeCount == 0",
+        "Returned InMemoryDb.records contains exactly the seedRecords entries",
+        "Returned object satisfies the DbClient interface"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createInMemoryCache",
+      "description": "Factory helper (test_helpers.ts) that creates a fresh InMemoryCache mock with an empty store. Implements the CacheClient interface. Spy counters initialized to zero.",
+      "inputs": [],
+      "output_type": "InMemoryCache",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "Returned InMemoryCache.store is empty",
+        "Returned InMemoryCache.getCount == 0",
+        "Returned InMemoryCache.setCount == 0",
+        "Returned InMemoryCache.delCount == 0",
+        "Returned object satisfies the CacheClient interface"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createTestFixtures",
+      "description": "Factory helper (test_helpers.ts) that creates a complete TestFixtures instance with deterministic sample data for use across all test modules.",
+      "inputs": [],
+      "output_type": "TestFixtures",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "sampleUnitId is a valid UUID v4",
+        "sampleUnitId2 is a valid UUID v4 different from sampleUnitId",
+        "sampleYear is a non-leap year",
+        "leapYear is a leap year",
+        "emptyBitmaskHex equals '0x0'",
+        "fullYearBitmaskHex represents 365 bits set",
+        "sampleAvailabilityRecord.unit_id equals sampleUnitId",
+        "sampleAvailabilityRecord.year equals sampleYear",
+        "All values are deterministic across invocations"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "assertSchemaValid",
+      "description": "Helper (test_helpers.ts) that validates a value against a Zod schema and throws an AssertionError with details if validation fails. Used in api_contract_test.ts to validate response shapes.",
+      "inputs": [
+        {
+          "name": "schema",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "A Zod schema object (z.ZodType) to validate against.",
+          "validators": []
+        },
+        {
+          "name": "value",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The value to validate (typically a parsed JSON response body).",
+          "validators": []
+        },
+        {
+          "name": "context",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable context string for error messages (e.g. 'GET /availability/:unit_id 200 response').",
+          "validators": []
+        }
+      ],
+      "output_type": "None",
+      "error_cases": [
+        {
+          "name": "schema_mismatch",
+          "condition": "The value does not conform to the Zod schema",
+          "error_type": "AssertionError",
+          "error_data": {
+            "includes": "Zod validation errors and context string"
+          }
+        }
+      ],
+      "preconditions": [
+        "schema is a valid Zod schema object",
+        "context is a non-empty string"
+      ],
+      "postconditions": [
+        "If the function returns without throwing, value conforms to schema",
+        "If validation fails, an AssertionError is thrown with context and Zod error details"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "assertCacheKeyFormat",
+      "description": "Helper (test_helpers.ts) that asserts a cache key string matches the expected format 'availability:{uuid}:{year}'. Used in cache_test.ts.",
+      "inputs": [
+        {
+          "name": "key",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The cache key string to validate.",
+          "validators": []
+        },
+        {
+          "name": "expectedUnitId",
+          "type_ref": "UuidString",
+          "required": true,
+          "default": "",
+          "description": "The expected unit_id component of the key.",
+          "validators": []
+        },
+        {
+          "name": "expectedYear",
+          "type_ref": "Year",
+          "required": true,
+          "default": "",
+          "description": "The expected year component of the key.",
+          "validators": []
+        }
+      ],
+      "output_type": "None",
+      "error_cases": [
+        {
+          "name": "key_format_mismatch",
+          "condition": "The key does not match the expected format or contains wrong unit_id/year",
+          "error_type": "AssertionError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "If the function returns without throwing, key equals 'availability:{expectedUnitId}:{expectedYear}'"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "assertErrorResponse",
+      "description": "Helper (test_helpers.ts) that validates an HTTP response body conforms to the ErrorResponse schema ({ error: string, message: string }) and optionally checks the error code. Used in api_contract_test.ts for all error path tests.",
+      "inputs": [
+        {
+          "name": "responseBody",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The parsed JSON response body to validate.",
+          "validators": []
+        },
+        {
+          "name": "expectedHttpStatus",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "The expected HTTP status code (for error message context).",
+          "validators": []
+        },
+        {
+          "name": "expectedErrorCode",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "If provided, asserts the error field matches this value.",
+          "validators": []
+        }
+      ],
+      "output_type": "None",
+      "error_cases": [
+        {
+          "name": "missing_error_field",
+          "condition": "responseBody does not have an 'error' string field",
+          "error_type": "AssertionError",
+          "error_data": {}
+        },
+        {
+          "name": "missing_message_field",
+          "condition": "responseBody does not have a 'message' string field",
+          "error_type": "AssertionError",
+          "error_data": {}
+        },
+        {
+          "name": "wrong_error_code",
+          "condition": "expectedErrorCode is specified but responseBody.error does not match",
+          "error_type": "AssertionError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "responseBody has 'error' field of type string",
+        "responseBody has 'message' field of type string",
+        "If expectedErrorCode is non-empty, responseBody.error equals expectedErrorCode"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    }
+  ],
+  "dependencies": [],
+  "dependency_contracts": {},
+  "invariants": [
+    "All dates are represented as ISO 8601 'YYYY-MM-DD' strings in UTC",
+    "unit_id values are always UUID v4 strings matching regex ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    "BigInt bitmasks are serialized as lowercase hex strings prefixed with '0x' for Redis/cache storage",
+    "Bitmask bit index 0 corresponds to January 1 of the given year, index 364 to December 31 (non-leap), index 365 to December 31 (leap year)",
+    "Leap year Feb 29 is always bit index 59 (0-indexed day-of-year)",
+    "Cache keys follow the format 'availability:{unit_id}:{year}' where year is a 4-digit integer",
+    "All error responses from API endpoints conform to the ErrorResponse shape: { error: string, message: string }",
+    "InMemoryDb and InMemoryCache mocks are behaviorally equivalent to production DbClient and CacheClient interfaces for the subset of operations used by the availability service",
+    "Every public function in the availability service has at least one corresponding test",
+    "Every REST endpoint has contract tests covering success and all documented error codes",
+    "No test requires external services (PostgreSQL, Redis) — all I/O is mocked via InMemoryDb and InMemoryCache",
+    "Hex serialization round-trip: for any bitmask B, deserializeBitmask(serializeBitmask(B)) === B"
+  ],
+  "requires": []
+}

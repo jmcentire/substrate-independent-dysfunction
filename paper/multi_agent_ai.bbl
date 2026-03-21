@@ -1,0 +1,172 @@
+\begin{thebibliography}{26}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Akerlof(1970)]{akerlof1970}
+George~A. Akerlof.
+\newblock The market for ``lemons'': Quality uncertainty and the market
+  mechanism.
+\newblock \emph{The Quarterly Journal of Economics}, 84\penalty0 (3):\penalty0
+  488--500, 1970.
+\newblock \doi{10.2307/1879431}.
+
+\bibitem[Boyd and Richerson(1985)]{boyd1985}
+Robert Boyd and Peter~J. Richerson.
+\newblock \emph{Culture and the Evolutionary Process}.
+\newblock University of Chicago Press, 1985.
+
+\bibitem[Cemri et~al.(2025)Cemri, Pan, Yang, et~al.]{cemri2025}
+Mert Cemri, Melissa~Z. Pan, Shuyi Yang, et~al.
+\newblock Why do multi-agent {LLM} systems fail?
+\newblock In \emph{NeurIPS 2025 Datasets and Benchmarks Track}, 2025.
+\newblock Also presented at Building Trust Workshop, ICLR 2025.
+  arXiv:2503.13657.
+
+\bibitem[Chang(2025)]{chang2025}
+Edward Chang.
+\newblock The missing layer of {AGI}: From pattern alchemy to coordination
+  physics.
+\newblock \emph{arXiv preprint arXiv:2512.05765}, 2025.
+\newblock Stanford University.
+
+\bibitem[Chen et~al.(2025)]{chen2025scaling}
+Lingjiao Chen et~al.
+\newblock Towards a science of scaling agent systems.
+\newblock \emph{arXiv preprint arXiv:2512.08296}, 2025.
+\newblock Google Research.
+
+\bibitem[Cover and Thomas(2006)]{cover2006}
+Thomas~M. Cover and Joy~A. Thomas.
+\newblock \emph{Elements of Information Theory}.
+\newblock Wiley-Interscience, 2nd edition, 2006.
+
+\bibitem[Crawford and Sobel(1982)]{crawford1982}
+Vincent~P. Crawford and Joel Sobel.
+\newblock Strategic information transmission.
+\newblock \emph{Econometrica}, 50\penalty0 (6):\penalty0 1431--1451, 1982.
+\newblock \doi{10.2307/1913390}.
+
+\bibitem[Elliott(2007)]{elliott2007}
+Mark Elliott.
+\newblock Stigmergic collaboration: A theoretical framework for mass
+  collaboration.
+\newblock \emph{PhD Thesis, University of Melbourne}, 2007.
+
+\bibitem[Goodhart(1975)]{goodhart1975}
+Charles A.~E. Goodhart.
+\newblock Problems of monetary management: The {U.K.} experience.
+\newblock \emph{Papers in Monetary Economics}, 1, 1975.
+
+\bibitem[Karwowski et~al.(2024)Karwowski, Skalse, et~al.]{karwowski2024}
+Jacek Karwowski, Joar Skalse, et~al.
+\newblock Goodhart's law in reinforcement learning.
+\newblock In \emph{ICLR 2024}, 2024.
+\newblock arXiv:2310.09144.
+
+\bibitem[La~Malfa et~al.(2025)]{lamalfa2025}
+Emanuele La~Malfa et~al.
+\newblock Large language models miss the multi-agent mark.
+\newblock \emph{arXiv preprint arXiv:2505.21298}, 2025.
+\newblock NeurIPS 2025 poster.
+
+\bibitem[Lawvere(1969)]{lawvere1969}
+F.~William Lawvere.
+\newblock Diagonal arguments and cartesian closed categories.
+\newblock \emph{Lecture Notes in Mathematics}, 92:\penalty0 134--145, 1969.
+
+\bibitem[Liberti and Mian(2009)]{liberti2009}
+Jos\'{e}~M. Liberti and Atif~R. Mian.
+\newblock Estimating the effect of hierarchies on information use.
+\newblock \emph{The Review of Financial Studies}, 22\penalty0 (10):\penalty0
+  4057--4090, 2009.
+\newblock \doi{10.1093/rfs/hhn118}.
+
+\bibitem[McEntire(2025{\natexlab{a}})]{mcentire2025a}
+Jeremy McEntire.
+\newblock Dysmemic pressure: Selection dynamics in organizational information
+  environments.
+\newblock \emph{arXiv preprint arXiv:2512.14716}, 2025{\natexlab{a}}.
+\newblock Also available at SSRN: \url{https://ssrn.com/abstract=6015814}.
+
+\bibitem[McEntire(2025{\natexlab{b}})]{mcentire2025cage}
+Jeremy McEntire.
+\newblock The cage: How fiduciary duty creates organizational incompleteness.
+\newblock Zenodo DOI: 10.5281/zenodo.18828433, 2025{\natexlab{b}}.
+
+\bibitem[McEntire(2025{\natexlab{c}})]{mcentire2025channel}
+Jeremy McEntire.
+\newblock The generative lossy channel: Five sufficient conditions for
+  net-beneficial noise.
+\newblock \emph{arXiv preprint}, 2025{\natexlab{c}}.
+
+\bibitem[Panickssery et~al.(2024)Panickssery, Bowman, and
+  Feng]{panickssery2024}
+Arjun Panickssery, Samuel~R. Bowman, and Shi Feng.
+\newblock {LLM} evaluators recognize and favor their own generations.
+\newblock In \emph{NeurIPS 2024 (Oral)}, 2024.
+\newblock arXiv:2404.13076.
+
+\bibitem[Pappu et~al.(2026)]{pappu2026}
+Anikait Pappu et~al.
+\newblock Multi-agent teams hold experts back.
+\newblock \emph{arXiv preprint arXiv:2602.01011}, 2026.
+
+\bibitem[Prendergast(1993)]{prendergast1993}
+Canice Prendergast.
+\newblock A theory of ``yes men''.
+\newblock \emph{The American Economic Review}, 83\penalty0 (4):\penalty0
+  757--770, 1993.
+
+\bibitem[Skalse et~al.(2022)Skalse, Howe, Krasheninnikov, and
+  Krueger]{skalse2022}
+Joar Skalse, Nikolaus H.~R. Howe, Dmitrii Krasheninnikov, and David Krueger.
+\newblock Defining and characterizing reward hacking.
+\newblock \emph{Advances in Neural Information Processing Systems}, 35, 2022.
+
+\bibitem[Wynn et~al.(2025)Wynn, Satija, and Hadfield]{wynn2025}
+Andrea Wynn, Harsh Satija, and Gillian~K. Hadfield.
+\newblock Talk isn't always cheap: Understanding failure modes in multi-agent
+  debate.
+\newblock In \emph{ICML 2025}, 2025.
+\newblock PMLR 267. arXiv:2509.05396.
+
+\bibitem[Xu et~al.(2026)]{xu2026}
+Zhiyu Xu et~al.
+\newblock Rethinking the value of multi-agent workflow: A strong single agent
+  baseline.
+\newblock \emph{arXiv preprint arXiv:2601.12307}, 2026.
+
+\bibitem[Yanofsky(2003)]{yanofsky2003}
+Noam~S. Yanofsky.
+\newblock A universal approach to self-referential paradoxes, incompleteness
+  and fixed points.
+\newblock \emph{Bulletin of Symbolic Logic}, 9\penalty0 (3):\penalty0 362--386,
+  2003.
+\newblock \doi{10.2178/bsl/1058448677}.
+
+\bibitem[Zhang et~al.(2025{\natexlab{a}})Zhang, Yin, Zhang, Liu, Han, Zhang,
+  Li, Wang, Wang, Chen, and Wu]{zhang2025}
+Shaokun Zhang, Ming Yin, Jieyu Zhang, Jiale Liu, Zhiguang Han, Jingyang Zhang,
+  Beibin Li, Chi Wang, Huazheng Wang, Yiran Chen, and Qingyun Wu.
+\newblock Which agent causes task failures and when? on automated failure
+  attribution of {LLM} multi-agent systems.
+\newblock In \emph{ICML 2025 Spotlight}, 2025{\natexlab{a}}.
+\newblock arXiv:2505.00212.
+
+\bibitem[Zhang et~al.(2025{\natexlab{b}})]{zhang2025resilience}
+Tianyu Zhang et~al.
+\newblock On the resilience of {LLM}-based multi-agent collaboration with
+  faulty agents.
+\newblock In \emph{ICML 2025}, 2025{\natexlab{b}}.
+\newblock arXiv:2408.00989.
+
+\bibitem[Zheng and Meister(2025)]{zheng2025}
+Jieyu Zheng and Markus Meister.
+\newblock The unbearable slowness of being: Why do we live at 10 bits/s?
+\newblock \emph{Neuron}, 113\penalty0 (2):\penalty0 192--204, 2025.
+\newblock \doi{10.1016/j.neuron.2024.11.008}.
+
+\end{thebibliography}

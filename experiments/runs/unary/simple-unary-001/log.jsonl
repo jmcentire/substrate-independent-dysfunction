@@ -1,0 +1,18 @@
+{"ts": "2026-02-14T01:10:11.907705+00:00", "wall_s": 0.024, "agent": "system", "event": "run_started", "summary": "Unary (single agent) | budget=$10.0", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T01:10:11.907874+00:00", "wall_s": 0.025, "agent": "agent", "event": "task_received", "summary": "Build the Anonymous Identity system for a privacy-preserving internet architecture.\n\nA user authenticates once to an SSO. The SSO never learns which sites the user visits. Sites never learn the user's", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T01:10:15.414927+00:00", "wall_s": 3.532, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 1572, "tokens_out": 156}
+{"ts": "2026-02-14T01:10:17.723009+00:00", "wall_s": 5.84, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 1857, "tokens_out": 75}
+{"ts": "2026-02-14T01:10:26.992977+00:00", "wall_s": 15.11, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 1990, "tokens_out": 377}
+{"ts": "2026-02-14T01:10:46.038126+00:00", "wall_s": 34.155, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 2394, "tokens_out": 1429}
+{"ts": "2026-02-14T01:11:08.419331+00:00", "wall_s": 56.536, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 3850, "tokens_out": 1595}
+{"ts": "2026-02-14T01:11:26.736732+00:00", "wall_s": 74.853, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 5473, "tokens_out": 1255}
+{"ts": "2026-02-14T01:11:36.317729+00:00", "wall_s": 84.434, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 6755, "tokens_out": 620}
+{"ts": "2026-02-14T01:11:38.824447+00:00", "wall_s": 86.941, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 7402, "tokens_out": 82}
+{"ts": "2026-02-14T01:13:04.389947+00:00", "wall_s": 172.506, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 7508, "tokens_out": 6915}
+{"ts": "2026-02-14T01:13:07.408914+00:00", "wall_s": 175.525, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 14452, "tokens_out": 87}
+{"ts": "2026-02-14T01:13:09.829732+00:00", "wall_s": 177.946, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 14579, "tokens_out": 73}
+{"ts": "2026-02-14T01:13:39.433449+00:00", "wall_s": 207.55, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 16644, "tokens_out": 1601}
+{"ts": "2026-02-14T01:13:43.050191+00:00", "wall_s": 211.166, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 18268, "tokens_out": 133}
+{"ts": "2026-02-14T01:13:58.503423+00:00", "wall_s": 226.619, "agent": "agent", "event": "api_call", "summary": "tool loop turn (end_turn)", "tokens_in": 22741, "tokens_out": 636}
+{"ts": "2026-02-14T01:13:58.504209+00:00", "wall_s": 226.62, "agent": "agent", "event": "work_produced", "summary": "All **51 tests pass** in 0.07s. Here's a summary of the complete system:\n\n---\n\n## System Architecture\n\n### Files\n\n| File | Purpose |\n|------|---------|\n| `anonymous_identity/crypto.py` | All cryptogra", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T01:13:58.511253+00:00", "wall_s": 226.627, "agent": "system", "event": "run_completed", "summary": "$3.01 spent, 37 files, 227s", "tokens_in": 0, "tokens_out": 0}

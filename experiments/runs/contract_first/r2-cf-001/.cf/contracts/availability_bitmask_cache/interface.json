@@ -1,0 +1,1110 @@
+{
+  "component_id": "availability_bitmask_cache",
+  "name": "Availability Bitmask Cache Layer",
+  "description": "Builds and maintains Redis-cached bitmasks from PostgreSQL availability_blocks data. On cache miss: queries all availability blocks for a unit within a 366-day window (to handle leap years), constructs a bitmask (1=available, 0=blocked), stores in Redis with configurable TTL. On availability update: invalidates the cached bitmask (lazy rebuild on next read). Key format: avail:{CRC32C(unit_id) % 64}:{unit_id}. Internal bitmask is a raw Redis bit string of 366 bits anchored to today's UTC date (bit 0 = today, bit 365 = today + 365 days). Anchor date staleness is detected on reads: if the cached bitmask's anchor date differs from today's UTC date, the cache entry is treated as a miss and rebuilt. Singleflight pattern prevents thundering herd on concurrent cache misses for the same unit. Redis unavailability triggers graceful degradation to direct PostgreSQL queries (logged as warning). Exposes checkAvailability, checkBulkAvailability, and invalidateCache.",
+  "version": 2,
+  "types": [
+    {
+      "name": "UnitId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a bookable unit. Must conform to lowercase UUID v4 format (8-4-4-4-12 hex digits with hyphens). Acts as a nominal/branded type to prevent accidental interchange with other string identifiers."
+    },
+    {
+      "name": "DateString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded ISO 8601 date string in YYYY-MM-DD format, UTC-anchored. No time component. Must represent a valid calendar date. Acts as a nominal/branded type to prevent accidental interchange with other strings."
+    },
+    {
+      "name": "ShardKey",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer in the range [0, 63] inclusive, derived from CRC32C(unit_id) % shardCount. Used as the hash slot in the Redis key format: avail:{shard}:{unit_id}. Constrains key distribution to a fixed number of Redis hash slots for predictable cluster behavior."
+    },
+    {
+      "name": "HashAlgorithm",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "CRC32C"
+      ],
+      "inner_types": [],
+      "description": "Supported hash algorithms for shard key derivation."
+    },
+    {
+      "name": "CacheConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ttl_seconds",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Time-to-live in seconds for cached bitmask entries in Redis. After expiry, next read triggers a lazy rebuild from PostgreSQL.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 86400",
+              "error_message": "TTL must be between 1 second and 86400 seconds (24 hours)."
+            }
+          ]
+        },
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": false,
+          "default": "64",
+          "description": "Number of shard buckets for key distribution. CRC32C(unit_id) % shard_count produces the ShardKey. Must be a power of 2 for uniform distribution.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 1024",
+              "error_message": "Shard count must be between 1 and 1024."
+            },
+            {
+              "kind": "custom",
+              "expression": "(value & (value - 1)) == 0",
+              "error_message": "Shard count must be a power of 2."
+            }
+          ]
+        },
+        {
+          "name": "window_days",
+          "type_ref": "int",
+          "required": false,
+          "default": "366",
+          "description": "Total number of bits in the bitmask representing the availability window starting from today's UTC date. Default 366 to handle leap years (bit 0 = today, bit 365 = today + 365 days).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 731",
+              "error_message": "Window days must be between 1 and 731."
+            }
+          ]
+        },
+        {
+          "name": "hash_algorithm",
+          "type_ref": "HashAlgorithm",
+          "required": false,
+          "default": "CRC32C",
+          "description": "Hash algorithm used to derive the shard key from unit_id. Currently only CRC32C is supported.",
+          "validators": []
+        },
+        {
+          "name": "key_prefix",
+          "type_ref": "str",
+          "required": false,
+          "default": "avail",
+          "description": "Prefix for all Redis keys produced by this cache layer. Key format: {key_prefix}:{shard}:{unit_id}.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[a-z][a-z0-9_]{0,15}$",
+              "error_message": "Key prefix must be 1-16 lowercase alphanumeric characters starting with a letter."
+            }
+          ]
+        },
+        {
+          "name": "singleflight_enabled",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "When true, concurrent cache misses for the same unit_id are coalesced into a single PostgreSQL query (singleflight/request-collapsing pattern) to prevent thundering herd.",
+          "validators": []
+        },
+        {
+          "name": "fallback_to_pg_on_redis_failure",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "When true, Redis unavailability triggers graceful degradation to direct PostgreSQL queries. A warning-level log is emitted. When false, CacheUnavailable error is returned.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Configuration for the Availability Bitmask Cache Layer. Immutable after construction."
+    },
+    {
+      "name": "ErrorCode",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "INVALID_DATE_RANGE",
+        "UNIT_NOT_FOUND",
+        "CACHE_UNAVAILABLE",
+        "INTERNAL_ERROR"
+      ],
+      "inner_types": [],
+      "description": "Exhaustive enumeration of error codes produced by the Availability Bitmask Cache Layer."
+    },
+    {
+      "name": "InvalidDateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error_code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "INVALID_DATE_RANGE",
+          "description": "Always INVALID_DATE_RANGE.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable description of the date range violation.",
+          "validators": []
+        },
+        {
+          "name": "start_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "The start date that was requested.",
+          "validators": []
+        },
+        {
+          "name": "end_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "The end date that was requested.",
+          "validators": []
+        },
+        {
+          "name": "reason",
+          "type_ref": "DateRangeViolation",
+          "required": true,
+          "default": "",
+          "description": "Specific reason the date range is invalid.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Error returned when the requested date range violates constraints: start > end, range exceeds window_days, or dates are in the past (before today UTC)."
+    },
+    {
+      "name": "DateRangeViolation",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "START_AFTER_END",
+        "RANGE_EXCEEDS_WINDOW",
+        "DATES_IN_PAST",
+        "INVALID_DATE_FORMAT"
+      ],
+      "inner_types": [],
+      "description": "Specific reasons a date range can be invalid."
+    },
+    {
+      "name": "UnitNotFound",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error_code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "UNIT_NOT_FOUND",
+          "description": "Always UNIT_NOT_FOUND.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable message.",
+          "validators": []
+        },
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit_id that was not found.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Error returned when the unit_id does not exist in the PostgreSQL availability_blocks table. Only raised during cache rebuild (not on cache hit)."
+    },
+    {
+      "name": "CacheUnavailable",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error_code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "CACHE_UNAVAILABLE",
+          "description": "Always CACHE_UNAVAILABLE.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable message including Redis connection details (sanitized).",
+          "validators": []
+        },
+        {
+          "name": "redis_error",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Underlying Redis client error message.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Error returned when Redis is unavailable AND fallback_to_pg_on_redis_failure is false. If fallback is enabled, this error is never surfaced to callers (the system degrades gracefully)."
+    },
+    {
+      "name": "InternalError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error_code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "INTERNAL_ERROR",
+          "description": "Always INTERNAL_ERROR.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable message.",
+          "validators": []
+        },
+        {
+          "name": "cause",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Stringified root cause for logging. Never exposed to external callers.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Catch-all error for unexpected failures (e.g., corrupt bitmask, PostgreSQL query timeout, singleflight panic)."
+    },
+    {
+      "name": "AvailabilityError",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "InvalidDateRange",
+        "UnitNotFound",
+        "CacheUnavailable",
+        "InternalError"
+      ],
+      "description": "Discriminated union of all error types produced by the Availability Bitmask Cache Layer. Discriminant field is error_code."
+    },
+    {
+      "name": "AvailabilityResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the operation succeeded, false if an error occurred.",
+          "validators": []
+        },
+        {
+          "name": "value",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "True if the entire date range [startDate, endDate] is available (all bits = 1). Only meaningful when ok=true.",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "AvailabilityError",
+          "required": false,
+          "default": "",
+          "description": "The error that occurred. Only present when ok=false.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result wrapper for checkAvailability. Discriminated on 'ok' field: if ok=true, value contains the boolean availability; if ok=false, error contains the AvailabilityError."
+    },
+    {
+      "name": "BulkUnitResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit this result pertains to.",
+          "validators": []
+        },
+        {
+          "name": "available",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "True if the entire date range is available for this unit. Null/false if an error occurred for this specific unit.",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "AvailabilityError",
+          "required": false,
+          "default": "",
+          "description": "Per-unit error if this unit's lookup failed (e.g., UnitNotFound). Null if lookup succeeded.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Per-unit result within a bulk availability check. Supports per-unit error granularity: a unit may be available (true), unavailable (false), or errored (null with error populated)."
+    },
+    {
+      "name": "BulkUnitResultList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "BulkUnitResult",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of per-unit results from a bulk availability check."
+    },
+    {
+      "name": "BulkAvailabilityResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the bulk operation completed (individual units may still have errors). False only on systemic failure.",
+          "validators": []
+        },
+        {
+          "name": "results",
+          "type_ref": "BulkUnitResultList",
+          "required": false,
+          "default": "",
+          "description": "Per-unit availability results. One entry per requested unit_id, in the same order as the input. Only present when ok=true.",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "AvailabilityError",
+          "required": false,
+          "default": "",
+          "description": "Systemic error affecting all units. Only present when ok=false.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result wrapper for checkBulkAvailability. On success, results contains a list of per-unit availability outcomes (including per-unit errors). A top-level error indicates a systemic failure affecting all units (e.g., both Redis and PostgreSQL down)."
+    },
+    {
+      "name": "InvalidationResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the invalidation succeeded (or key did not exist). False if an error occurred.",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "AvailabilityError",
+          "required": false,
+          "default": "",
+          "description": "The error that occurred. Only present when ok=false.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result wrapper for invalidateCache. On success, value is None (void). On failure, error describes what went wrong."
+    },
+    {
+      "name": "UnitIdList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "UnitId",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of UnitId values for bulk operations."
+    },
+    {
+      "name": "RedisClient",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "get_bit",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (key: str, offset: int) → int. Returns the bit value (0 or 1) at the given offset in the string stored at key.",
+          "validators": []
+        },
+        {
+          "name": "get_bit_range",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (key: str, start_offset: int, end_offset: int) → bytes. Returns the raw bytes covering bits [start_offset, end_offset]. Caller must mask boundary bits.",
+          "validators": []
+        },
+        {
+          "name": "set_bits",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (key: str, bit_map: dict[int, int], ttl_seconds: int) → None. Sets multiple bits atomically via MULTI/EXEC pipeline, then sets TTL.",
+          "validators": []
+        },
+        {
+          "name": "delete_key",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (key: str) → bool. Deletes the key. Returns true if key existed, false otherwise.",
+          "validators": []
+        },
+        {
+          "name": "pipeline_get_bit_ranges",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (commands: list[tuple[str, int, int]]) → list[bytes]. Executes multiple GETRANGE commands in a single Redis pipeline for bulk operations.",
+          "validators": []
+        },
+        {
+          "name": "exists",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (key: str) → bool. Returns true if key exists in Redis.",
+          "validators": []
+        },
+        {
+          "name": "get_key_metadata",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (key: str) → dict. Returns metadata including TTL remaining and anchor_date stored alongside the bitmask.",
+          "validators": []
+        },
+        {
+          "name": "ping",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: () → bool. Health check. Returns true if Redis is reachable.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Dependency injection abstraction for the Redis client. Consumers inject an implementation conforming to this interface. Supports single-key and pipelined bit operations. All methods are async. Implementations must be safe for concurrent use."
+    },
+    {
+      "name": "AvailabilityBlock",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit this block belongs to.",
+          "validators": []
+        },
+        {
+          "name": "start_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the block.",
+          "validators": []
+        },
+        {
+          "name": "end_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive end date of the block.",
+          "validators": []
+        },
+        {
+          "name": "is_available",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the unit is available during this block, false if blocked.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single availability block record from PostgreSQL. Represents a contiguous date range during which a unit is either available or blocked."
+    },
+    {
+      "name": "AvailabilityBlockList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "AvailabilityBlock",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of availability blocks returned from PostgreSQL queries."
+    },
+    {
+      "name": "PgClient",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "get_availability_blocks",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unit_id: UnitId, range_start: DateString, range_end: DateString) → AvailabilityBlockList. Returns all availability_blocks rows overlapping the given date range for the specified unit. Returns empty list if unit_id has no blocks (caller must distinguish from unit-not-found via unit_exists).",
+          "validators": []
+        },
+        {
+          "name": "unit_exists",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unit_id: UnitId) → bool. Returns true if the unit_id exists in the units table.",
+          "validators": []
+        },
+        {
+          "name": "get_availability_blocks_bulk",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unit_ids: list[UnitId], range_start: DateString, range_end: DateString) → dict[UnitId, AvailabilityBlockList]. Batch query returning availability blocks grouped by unit_id.",
+          "validators": []
+        },
+        {
+          "name": "ping",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: () → bool. Health check. Returns true if PostgreSQL is reachable.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Dependency injection abstraction for the PostgreSQL client. Consumers inject an implementation conforming to this interface. All methods are async. Used as the source of truth for availability data."
+    },
+    {
+      "name": "BitmaskMetadata",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "anchor_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "The UTC date representing bit 0 of the bitmask. If this differs from today's UTC date on a read, the cache entry is stale and treated as a miss.",
+          "validators": []
+        },
+        {
+          "name": "built_at_epoch_ms",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Unix epoch milliseconds when the bitmask was constructed. Used for observability and debugging.",
+          "validators": []
+        },
+        {
+          "name": "window_days",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of bits in the bitmask. Must match CacheConfig.window_days.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Internal metadata stored alongside each cached bitmask in Redis (as a separate hash field or encoded prefix). Used for anchor date staleness detection."
+    }
+  ],
+  "functions": [
+    {
+      "name": "checkAvailability",
+      "description": "Checks whether a single unit is fully available for an inclusive date range [startDate, endDate]. On cache hit with a valid (non-stale) bitmask: performs O(1) bitwise AND check across the relevant bit range. On cache miss or stale anchor date: queries PostgreSQL for all availability_blocks within the 366-day window, constructs the bitmask, stores in Redis with TTL, then checks the requested range. Singleflight pattern coalesces concurrent misses for the same unit_id. If Redis is unavailable and fallback_to_pg_on_redis_failure is true, queries PostgreSQL directly (logged as warning). Single-day queries (startDate == endDate) are supported.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The UUID of the bookable unit to check availability for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid lowercase UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "start_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check. Must be today (UTC) or in the future.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start_date must be in YYYY-MM-DD format."
+            }
+          ]
+        },
+        {
+          "name": "end_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive end date of the range to check. Must be >= start_date and within the window_days from today.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end_date must be in YYYY-MM-DD format."
+            }
+          ]
+        }
+      ],
+      "output_type": "AvailabilityResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range_start_after_end",
+          "condition": "start_date > end_date",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "START_AFTER_END"
+          }
+        },
+        {
+          "name": "invalid_date_range_past_dates",
+          "condition": "start_date < today (UTC)",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "DATES_IN_PAST"
+          }
+        },
+        {
+          "name": "invalid_date_range_exceeds_window",
+          "condition": "end_date > today + (window_days - 1) days",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "RANGE_EXCEEDS_WINDOW"
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start_date or end_date does not parse to a valid calendar date (e.g., 2024-02-30)",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "unit_id does not exist in PostgreSQL units table (checked during cache rebuild only)",
+          "error_type": "UnitNotFound",
+          "error_data": {}
+        },
+        {
+          "name": "cache_unavailable",
+          "condition": "Redis is unreachable AND fallback_to_pg_on_redis_failure is false",
+          "error_type": "CacheUnavailable",
+          "error_data": {}
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected failure: corrupt bitmask, PostgreSQL timeout, singleflight panic, or both Redis and PostgreSQL are unreachable",
+          "error_type": "InternalError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string.",
+        "start_date and end_date are valid ISO 8601 YYYY-MM-DD date strings representing real calendar dates.",
+        "start_date <= end_date.",
+        "start_date >= today (UTC). 'Today' is defined as the current date at UTC midnight.",
+        "end_date <= today + (window_days - 1) days.",
+        "At least one of RedisClient or PgClient is reachable."
+      ],
+      "postconditions": [
+        "If ok=true, value is true if and only if every date in [start_date, end_date] inclusive has bit=1 in the bitmask (or equivalent PostgreSQL check on fallback).",
+        "If ok=true, value is false if any date in [start_date, end_date] has bit=0.",
+        "If the bitmask was rebuilt from PostgreSQL, it is now cached in Redis with the configured TTL (unless Redis is unavailable).",
+        "If the cached bitmask had a stale anchor_date (not equal to today UTC), it was treated as a miss and rebuilt.",
+        "If singleflight was active, only one PostgreSQL query was issued for concurrent callers requesting the same unit_id."
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "On cache miss: issues a SELECT query to PostgreSQL availability_blocks table.",
+        "On cache miss: writes the rebuilt bitmask and metadata to Redis with configured TTL.",
+        "On stale anchor date detection: deletes stale key and rebuilds (equivalent to miss).",
+        "On Redis failure with fallback enabled: emits a warning-level log.",
+        "Singleflight: may block concurrent callers for the same unit_id until the first caller's rebuild completes."
+      ]
+    },
+    {
+      "name": "checkBulkAvailability",
+      "description": "Checks availability for multiple units across the same inclusive date range [startDate, endDate]. Uses a Redis pipeline to fetch bitmasks for all requested units in a single round-trip. Units with cache misses are batch-queried from PostgreSQL. Returns per-unit results with per-unit error granularity: individual units may fail (e.g., UnitNotFound) without failing the entire batch. A top-level error (ok=false) indicates systemic failure affecting all units.",
+      "inputs": [
+        {
+          "name": "unit_ids",
+          "type_ref": "UnitIdList",
+          "required": true,
+          "default": "",
+          "description": "List of unit UUIDs to check. Must contain at least 1 and at most 100 unit_ids. Duplicates are deduplicated internally.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1 <= len <= 100",
+              "error_message": "unit_ids must contain between 1 and 100 entries."
+            }
+          ]
+        },
+        {
+          "name": "start_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check. Must be today (UTC) or in the future.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start_date must be in YYYY-MM-DD format."
+            }
+          ]
+        },
+        {
+          "name": "end_date",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive end date of the range to check. Must be >= start_date and within window_days from today.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end_date must be in YYYY-MM-DD format."
+            }
+          ]
+        }
+      ],
+      "output_type": "BulkAvailabilityResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range_start_after_end",
+          "condition": "start_date > end_date",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "START_AFTER_END"
+          }
+        },
+        {
+          "name": "invalid_date_range_past_dates",
+          "condition": "start_date < today (UTC)",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "DATES_IN_PAST"
+          }
+        },
+        {
+          "name": "invalid_date_range_exceeds_window",
+          "condition": "end_date > today + (window_days - 1) days",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "RANGE_EXCEEDS_WINDOW"
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start_date or end_date does not parse to a valid calendar date",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "empty_unit_ids",
+          "condition": "unit_ids list is empty",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "too_many_unit_ids",
+          "condition": "unit_ids list contains more than 100 entries",
+          "error_type": "InvalidDateRange",
+          "error_data": {
+            "reason": "RANGE_EXCEEDS_WINDOW"
+          }
+        },
+        {
+          "name": "systemic_cache_unavailable",
+          "condition": "Redis is unreachable AND PostgreSQL is unreachable",
+          "error_type": "CacheUnavailable",
+          "error_data": {}
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected systemic failure affecting all units",
+          "error_type": "InternalError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "All unit_ids are valid UUID v4 strings.",
+        "start_date and end_date are valid ISO 8601 YYYY-MM-DD date strings representing real calendar dates.",
+        "start_date <= end_date.",
+        "start_date >= today (UTC).",
+        "end_date <= today + (window_days - 1) days.",
+        "unit_ids list is non-empty and contains at most 100 entries.",
+        "At least one of RedisClient or PgClient is reachable."
+      ],
+      "postconditions": [
+        "If ok=true, results contains exactly one BulkUnitResult per unique unit_id from the input, in input order (deduped).",
+        "For each BulkUnitResult where error is absent: available=true iff every date in [start_date, end_date] is available for that unit.",
+        "For each BulkUnitResult where error is present: the error describes why that specific unit's lookup failed.",
+        "All cache misses triggered by this call have been rebuilt and stored in Redis (unless Redis is unavailable).",
+        "Stale bitmasks (anchor_date != today UTC) are rebuilt during this operation."
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "On cache misses: issues batch SELECT queries to PostgreSQL availability_blocks table.",
+        "On cache misses: writes rebuilt bitmasks and metadata to Redis via pipeline with configured TTL.",
+        "On stale anchor date detection for any unit: deletes and rebuilds those entries.",
+        "On Redis failure with fallback enabled: emits a warning-level log and falls back to PostgreSQL for all units.",
+        "Singleflight: concurrent misses for the same unit_id within this batch (and across concurrent calls) are coalesced."
+      ]
+    },
+    {
+      "name": "invalidateCache",
+      "description": "Deletes the cached bitmask and metadata for a single unit from Redis. The next read for this unit will trigger a lazy rebuild from PostgreSQL. This method is called when availability data is updated (PUT /availability/:unit_id). Invalidation is idempotent: deleting a non-existent key is a successful no-op.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The UUID of the unit whose cached bitmask should be invalidated.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid lowercase UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "InvalidationResult",
+      "error_cases": [
+        {
+          "name": "cache_unavailable",
+          "condition": "Redis is unreachable (no fallback for invalidation — must reach Redis to delete the key)",
+          "error_type": "CacheUnavailable",
+          "error_data": {}
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected failure during key deletion (e.g., Redis protocol error)",
+          "error_type": "InternalError",
+          "error_data": {}
+        }
+      ],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string."
+      ],
+      "postconditions": [
+        "If ok=true, no Redis key exists for this unit_id in the cache (key avail:{CRC32C(unit_id) % shard_count}:{unit_id} has been deleted or did not exist).",
+        "If ok=true, the next call to checkAvailability or checkBulkAvailability for this unit_id will trigger a full rebuild from PostgreSQL.",
+        "If ok=false with CacheUnavailable, the Redis key may still exist (invalidation failed). Caller should retry or rely on TTL expiry."
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes the Redis key avail:{CRC32C(unit_id) % shard_count}:{unit_id} if it exists.",
+        "May cancel any in-flight singleflight rebuild for this unit_id (implementation-defined)."
+      ]
+    },
+    {
+      "name": "computeShardKey",
+      "description": "Pure function that computes the ShardKey for a given unit_id. Applies the configured hash algorithm (CRC32C) to the unit_id string and returns the result modulo shard_count. Exposed for testing and observability; not part of the public API.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The UUID of the unit.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid lowercase UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "shard_count",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of shard buckets. Must match CacheConfig.shard_count.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 1024",
+              "error_message": "Shard count must be between 1 and 1024."
+            },
+            {
+              "kind": "custom",
+              "expression": "(value & (value - 1)) == 0",
+              "error_message": "Shard count must be a power of 2."
+            }
+          ]
+        }
+      ],
+      "output_type": "ShardKey",
+      "error_cases": [],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string.",
+        "shard_count is a positive power of 2."
+      ],
+      "postconditions": [
+        "Returned ShardKey is in the range [0, shard_count - 1].",
+        "The function is pure: same inputs always produce the same output.",
+        "Distribution across shard keys is approximately uniform for random UUID v4 inputs."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "buildRedisKey",
+      "description": "Pure function that constructs the full Redis key for a given unit_id. Format: {key_prefix}:{shard_key}:{unit_id}. Exposed for testing and observability; not part of the public API.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The UUID of the unit.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid lowercase UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "config",
+          "type_ref": "CacheConfig",
+          "required": true,
+          "default": "",
+          "description": "Cache configuration providing key_prefix and shard_count.",
+          "validators": []
+        }
+      ],
+      "output_type": "str",
+      "error_cases": [],
+      "preconditions": [
+        "unit_id is a valid UUID v4 string.",
+        "config is a valid CacheConfig."
+      ],
+      "postconditions": [
+        "Returned string matches pattern: {config.key_prefix}:{N}:{unit_id} where N is an integer in [0, config.shard_count - 1].",
+        "The function is pure: same inputs always produce the same output."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    }
+  ],
+  "dependencies": [],
+  "dependency_contracts": {},
+  "invariants": [
+    "The bitmask for a unit is always exactly window_days bits long (default 366 bits). Bit 0 corresponds to today's UTC date; bit N corresponds to today + N days.",
+    "A bit value of 1 means the unit is available on that date; a bit value of 0 means the unit is blocked on that date.",
+    "'Today' is always defined as the current date at UTC midnight (00:00:00Z). All date arithmetic uses UTC.",
+    "The anchor_date stored in BitmaskMetadata must equal today's UTC date for the cached bitmask to be considered valid. If anchor_date != today UTC on a read, the entry is stale and treated as a cache miss.",
+    "The Redis key for a unit is always: {key_prefix}:{CRC32C(unit_id) % shard_count}:{unit_id}. This format is immutable for a given CacheConfig.",
+    "CRC32C (Castagnoli) is the only supported hash algorithm. The hash is computed over the raw UTF-8 bytes of the unit_id string including hyphens.",
+    "Shard count must be a power of 2 to ensure uniform distribution via modulo operation on CRC32C output.",
+    "PostgreSQL availability_blocks table is the source of truth. Redis is a derived, read-optimized cache. Any conflict is resolved by rebuilding from PostgreSQL.",
+    "All dates in input/output are inclusive on both ends. The range [2024-06-01, 2024-06-03] includes June 1, 2, and 3.",
+    "Invalidation is always safe and idempotent. Deleting a non-existent key is a successful no-op.",
+    "The singleflight pattern ensures that at most one PostgreSQL query is in-flight at any time for a given unit_id, regardless of concurrent callers.",
+    "When Redis is unavailable and fallback_to_pg_on_redis_failure is true, the system operates in degraded mode: all reads go directly to PostgreSQL and no caching occurs. A warning-level log is emitted per request.",
+    "Bulk operations preserve input order in results and deduplicate unit_ids. Each unique unit_id appears exactly once in the results.",
+    "No method in this component writes to or mutates the PostgreSQL availability_blocks table. This component is read-only with respect to PostgreSQL."
+  ],
+  "requires": [
+    "RedisClient implementation must be injected at construction time.",
+    "PgClient implementation must be injected at construction time.",
+    "CacheConfig must be provided at construction time and is immutable thereafter.",
+    "The PostgreSQL availability_blocks table must exist with columns: unit_id (UUID), start_date (DATE), end_date (DATE), is_available (BOOLEAN).",
+    "The PostgreSQL units table must exist with a unit_id (UUID) primary key for existence checks.",
+    "Redis server must support GETBIT, SETBIT, GETRANGE, DEL, TTL, MULTI/EXEC, and PIPELINE commands.",
+    "System clock must be synchronized via NTP for accurate UTC date determination (anchor date correctness depends on this)."
+  ]
+}

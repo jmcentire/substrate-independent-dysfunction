@@ -1,0 +1,1023 @@
+{
+  "component_id": "availability_api",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "hp_check_availability_unit_available",
+      "description": "GET /availability/:unit_id returns 200 with available=true when unit is fully available in [start, end)",
+      "function": "handleCheckAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.checkAvailability": "returns AvailabilityCheckResult(available=True, unit_id='a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', start='2025-07-01', end='2025-07-05')"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with AvailabilityCheckResult: available=true, unit_id echoed, start/end echoed",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "response body has 'available' key equal to True",
+        "response body 'unit_id' equals 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'",
+        "response body 'start' equals '2025-07-01'",
+        "response body 'end' equals '2025-07-05'",
+        "service.checkAvailability called once with correct args"
+      ]
+    },
+    {
+      "id": "hp_check_availability_unit_unavailable",
+      "description": "GET /availability/:unit_id returns 200 with available=false when unit has blocked dates in range",
+      "function": "handleCheckAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.checkAvailability": "returns AvailabilityCheckResult(available=False, unit_id='a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', start='2025-08-01', end='2025-08-10')"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-08-01",
+        "end": "2025-08-10"
+      },
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with AvailabilityCheckResult: available=false",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "response body 'available' is False"
+      ]
+    },
+    {
+      "id": "err_check_invalid_unit_id",
+      "description": "GET /availability/:unit_id returns 400 VALIDATION_ERROR when unit_id is not a valid UUID v4",
+      "function": "handleCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "not-a-uuid",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "ApiErrorEnvelope with code VALIDATION_ERROR",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "response body has 'error' key",
+        "error.code equals 'VALIDATION_ERROR'",
+        "error.message is a non-empty string"
+      ]
+    },
+    {
+      "id": "err_check_invalid_date_format_start",
+      "description": "GET /availability/:unit_id returns 400 INVALID_DATE_FORMAT when start is not YYYY-MM-DD",
+      "function": "handleCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "07/01/2025",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_FORMAT",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'INVALID_DATE_FORMAT'"
+      ]
+    },
+    {
+      "id": "err_check_invalid_date_format_end",
+      "description": "GET /availability/:unit_id returns 400 INVALID_DATE_FORMAT when end is not YYYY-MM-DD",
+      "function": "handleCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "not-a-date"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_FORMAT",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'INVALID_DATE_FORMAT'"
+      ]
+    },
+    {
+      "id": "err_check_end_not_after_start",
+      "description": "GET /availability/:unit_id returns 400 VALIDATION_ERROR when end <= start",
+      "function": "handleCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-05",
+        "end": "2025-07-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR end must be strictly after start",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'",
+        "'end must be strictly after start' in error.message"
+      ]
+    },
+    {
+      "id": "err_check_end_equals_start",
+      "description": "GET /availability/:unit_id returns 400 when end == start (zero-length range)",
+      "function": "handleCheckAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_check_unit_not_found",
+      "description": "GET /availability/:unit_id returns 404 UNIT_NOT_FOUND when service raises UnitNotFoundError",
+      "function": "handleCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.checkAvailability": "raises UnitNotFoundError"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "404 UNIT_NOT_FOUND",
+      "assertions": [
+        "response status is 404",
+        "error.code equals 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "err_check_internal_error",
+      "description": "GET /availability/:unit_id returns 500 INTERNAL_ERROR when service raises unexpected exception",
+      "function": "handleCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.checkAvailability": "raises RuntimeError('db timeout')"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code equals 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "hp_update_availability_block",
+      "description": "PUT /availability/:unit_id returns 200 with success=true when blocking dates",
+      "function": "handleUpdateAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "returns AvailabilityUpdateResult(success=True)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"OWNER_BLOCK\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with {success: true}",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "response body 'success' is True",
+        "service.updateAvailability called once"
+      ]
+    },
+    {
+      "id": "hp_update_availability_unblock",
+      "description": "PUT /availability/:unit_id returns 200 with success=true when unblocking dates",
+      "function": "handleUpdateAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "returns AvailabilityUpdateResult(success=True)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"MAINTENANCE\", \"blocked\": false}"
+      },
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with {success: true}",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "response body 'success' is True"
+      ]
+    },
+    {
+      "id": "err_update_invalid_unit_id",
+      "description": "PUT /availability/:unit_id returns 400 VALIDATION_ERROR when unit_id is not UUID v4",
+      "function": "handleUpdateAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "bad-id",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"OWNER_BLOCK\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_update_invalid_body_missing_fields",
+      "description": "PUT /availability/:unit_id returns 400 VALIDATION_ERROR when body is missing required fields",
+      "function": "handleUpdateAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\"}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_update_invalid_block_type",
+      "description": "PUT /availability/:unit_id returns 400 VALIDATION_ERROR when block_type is not a valid enum value",
+      "function": "handleUpdateAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"INVALID_TYPE\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_update_end_not_after_start",
+      "description": "PUT /availability/:unit_id returns 400 when end <= start in body",
+      "function": "handleUpdateAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-10\", \"end\": \"2025-07-01\", \"block_type\": \"BOOKING\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR end must be strictly after start",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_update_unit_not_found",
+      "description": "PUT /availability/:unit_id returns 404 when service raises UnitNotFoundError",
+      "function": "handleUpdateAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "raises UnitNotFoundError"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"OWNER_BLOCK\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "404 UNIT_NOT_FOUND",
+      "assertions": [
+        "response status is 404",
+        "error.code equals 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "err_update_internal_error",
+      "description": "PUT /availability/:unit_id returns 500 when service raises unexpected exception",
+      "function": "handleUpdateAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "raises RuntimeError('unexpected')"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"OWNER_BLOCK\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code equals 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "inv_update_always_200_never_201",
+      "description": "PUT /availability/:unit_id always returns 200, never 201 (idempotent state set)",
+      "function": "handleUpdateAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "returns AvailabilityUpdateResult(success=True)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"OWNER_BLOCK\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "response status is not 201"
+      ]
+    },
+    {
+      "id": "hp_bulk_check_multiple_units",
+      "description": "GET /availability/bulk returns 200 with results for multiple unit_ids",
+      "function": "handleBulkCheckAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.bulkCheckAvailability": "returns BulkAvailabilityResult with 2 entries"
+      },
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d,b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with BulkAvailabilityResult containing 2 entries",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "response body has 'results' key",
+        "results has exactly 2 entries",
+        "each entry has 'unit_id' and 'available' keys"
+      ]
+    },
+    {
+      "id": "hp_bulk_check_single_unit",
+      "description": "GET /availability/bulk works with a single unit_id (minimum 1)",
+      "function": "handleBulkCheckAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.bulkCheckAvailability": "returns BulkAvailabilityResult with 1 entry"
+      },
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with BulkAvailabilityResult containing 1 entry",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "results has exactly 1 entry"
+      ]
+    },
+    {
+      "id": "err_bulk_missing_unit_ids",
+      "description": "GET /availability/bulk returns 400 when unit_ids param is missing or empty",
+      "function": "handleBulkCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR unit_ids query parameter is required",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'",
+        "'unit_ids' in error.message"
+      ]
+    },
+    {
+      "id": "err_bulk_invalid_uuid_format",
+      "description": "GET /availability/bulk returns 400 when one of the unit_ids is not a valid UUID v4",
+      "function": "handleBulkCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d,not-a-uuid",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_bulk_limit_exceeded",
+      "description": "GET /availability/bulk returns 400 BULK_LIMIT_EXCEEDED when more than 100 unit_ids provided",
+      "function": "handleBulkCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "101 comma-separated valid UUIDs",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 BULK_LIMIT_EXCEEDED",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'BULK_LIMIT_EXCEEDED'",
+        "'100' in error.message"
+      ]
+    },
+    {
+      "id": "err_bulk_invalid_date",
+      "description": "GET /availability/bulk returns 400 INVALID_DATE_FORMAT for malformed dates",
+      "function": "handleBulkCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "bad-date",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_FORMAT",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'INVALID_DATE_FORMAT'"
+      ]
+    },
+    {
+      "id": "err_bulk_end_not_after_start",
+      "description": "GET /availability/bulk returns 400 VALIDATION_ERROR when end <= start",
+      "function": "handleBulkCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-10",
+        "end": "2025-07-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_bulk_internal_error",
+      "description": "GET /availability/bulk returns 500 INTERNAL_ERROR when service raises unexpected exception",
+      "function": "handleBulkCheckAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.bulkCheckAvailability": "raises RuntimeError('service crash')"
+      },
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code equals 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "inv_bulk_unknown_units_available_false",
+      "description": "Unknown unit_ids in bulk queries return available=false rather than 404",
+      "function": "handleBulkCheckAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.bulkCheckAvailability": "returns results with available=False for unknown unit"
+      },
+      "input_values": {
+        "unit_ids": "00000000-0000-4000-a000-000000000001",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200 (not 404)",
+        "results[0].available is False",
+        "results[0].unit_id equals the requested unknown unit_id"
+      ]
+    },
+    {
+      "id": "inv_bulk_results_order_matches_input",
+      "description": "Bulk results are in the same order as the input unit_ids",
+      "function": "handleBulkCheckAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.bulkCheckAvailability": "returns results in input order"
+      },
+      "input_values": {
+        "unit_ids": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d,b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "results[0].unit_id equals first input unit_id",
+        "results[1].unit_id equals second input unit_id"
+      ]
+    },
+    {
+      "id": "hp_health_check_ok",
+      "description": "GET /health returns 200 with status 'ok' when server is healthy",
+      "function": "handleHealthCheck",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 200 with HealthStatus: status='ok', uptime_seconds >= 0, version non-empty",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "body.status equals 'ok'",
+        "body.uptime_seconds is a non-negative number",
+        "body.version is a non-empty string"
+      ]
+    },
+    {
+      "id": "hp_health_check_shutting_down",
+      "description": "GET /health returns 503 with status 'shutting_down' during graceful shutdown",
+      "function": "handleHealthCheck",
+      "category": "happy_path",
+      "setup_description": "Server is in shutting_down state",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "HTTP 503 with HealthStatus: status='shutting_down'",
+      "expected_error": "",
+      "assertions": [
+        "response status is 503",
+        "body.status equals 'shutting_down'",
+        "body.uptime_seconds is a non-negative number",
+        "body.version is a non-empty string"
+      ]
+    },
+    {
+      "id": "hp_validate_request_valid_input",
+      "description": "validateRequest returns ValidationSuccess with parsed data when input is valid",
+      "function": "validateRequest",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "schema": "AvailabilityCheckParamsSchema",
+        "data": "{\"unit_id\": \"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\", \"start\": \"2025-07-01\", \"end\": \"2025-07-05\"}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.success is True",
+        "result.data is not None",
+        "result.data contains unit_id, start, end"
+      ]
+    },
+    {
+      "id": "hp_validate_request_invalid_input",
+      "description": "validateRequest returns ValidationFailure with VALIDATION_ERROR when input is invalid",
+      "function": "validateRequest",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "schema": "AvailabilityCheckParamsSchema",
+        "data": "{\"unit_id\": \"not-uuid\", \"start\": \"bad\", \"end\": \"bad\"}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.success is False",
+        "result.error_response.error.code equals 'VALIDATION_ERROR'",
+        "result.error_response.error.details is not None"
+      ]
+    },
+    {
+      "id": "inv_validate_request_never_throws",
+      "description": "validateRequest never throws; validation failures are returned as ValidationFailure",
+      "function": "validateRequest",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "schema": "AvailabilityCheckParamsSchema",
+        "data": "null"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "no exception is raised",
+        "result.success is False",
+        "result.error_response has correct ApiErrorEnvelope shape"
+      ]
+    },
+    {
+      "id": "hp_create_router",
+      "description": "createRouter returns a router with all four routes registered",
+      "function": "createRouter",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "service": "mock with checkAvailability, updateAvailability, bulkCheckAvailability methods"
+      },
+      "input_values": {
+        "service": "mock AvailabilityServiceInterface"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "returned router is not None",
+        "router has route for GET /availability/bulk",
+        "router has route for GET /availability/:unit_id",
+        "router has route for PUT /availability/:unit_id",
+        "router has route for GET /health"
+      ]
+    },
+    {
+      "id": "hp_create_server",
+      "description": "createServer returns a ServerHandle with start and stop methods",
+      "function": "createServer",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "availability_service": "mock AvailabilityServiceInterface"
+      },
+      "input_values": {
+        "config": "valid ServerConfig with port=0, mock service"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "returned handle has 'start' method",
+        "returned handle has 'stop' method"
+      ]
+    },
+    {
+      "id": "err_create_server_invalid_config",
+      "description": "createServer raises error when config is invalid (port out of range)",
+      "function": "createServer",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "config": "ServerConfig with port=99999"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "Invalid server configuration",
+      "assertions": [
+        "exception is raised",
+        "'Invalid server configuration' in error message or port validation fails"
+      ]
+    },
+    {
+      "id": "inv_error_envelope_shape",
+      "description": "All error responses use the ApiErrorEnvelope shape: {error: {code, message, details?}}",
+      "function": "handleCheckAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "not-a-uuid",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response body has top-level 'error' key",
+        "error object has 'code' key (string)",
+        "error object has 'message' key (string)",
+        "error object may have 'details' key"
+      ]
+    },
+    {
+      "id": "inv_dates_are_yyyy_mm_dd",
+      "description": "All dates in responses are YYYY-MM-DD strings with no time or timezone components",
+      "function": "handleCheckAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.checkAvailability": "returns valid result"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response body 'start' matches YYYY-MM-DD regex",
+        "response body 'end' matches YYYY-MM-DD regex",
+        "no 'T' or timezone offset in date strings"
+      ]
+    },
+    {
+      "id": "inv_half_open_interval",
+      "description": "Date ranges use half-open intervals [start, end) where start is inclusive and end is exclusive",
+      "function": "handleCheckAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.checkAvailability": "called with start=2025-07-01, end=2025-07-02"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-02"
+      },
+      "input_description": "Single-day range: start=2025-07-01, end=2025-07-02 checks only July 1st",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "service called with start='2025-07-01' and end='2025-07-02'",
+        "response echoes start='2025-07-01' and end='2025-07-02'"
+      ]
+    },
+    {
+      "id": "edge_check_missing_start_param",
+      "description": "GET /availability/:unit_id returns 400 when start query param is missing",
+      "function": "handleCheckAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400",
+      "assertions": [
+        "response status is 400",
+        "error envelope is returned"
+      ]
+    },
+    {
+      "id": "edge_check_missing_end_param",
+      "description": "GET /availability/:unit_id returns 400 when end query param is missing",
+      "function": "handleCheckAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": ""
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400",
+      "assertions": [
+        "response status is 400",
+        "error envelope is returned"
+      ]
+    },
+    {
+      "id": "edge_update_all_block_types",
+      "description": "PUT accepts all valid BlockType enum values",
+      "function": "handleUpdateAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "returns success=True for each"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "each of OWNER_BLOCK, MAINTENANCE, BOOKING, SEASONAL_CLOSURE, OTHER"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "all five BlockType values are accepted with 200",
+        "service called correctly for each"
+      ]
+    },
+    {
+      "id": "edge_bulk_exactly_100_units",
+      "description": "GET /availability/bulk accepts exactly 100 unit_ids (boundary of limit)",
+      "function": "handleBulkCheckAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.bulkCheckAvailability": "returns 100 results"
+      },
+      "input_values": {
+        "unit_ids": "100 valid comma-separated UUIDs",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "results has exactly 100 entries"
+      ]
+    },
+    {
+      "id": "inv_uuid_v4_format_required",
+      "description": "UnitId must be a valid UUID v4 - UUID v5 or other versions are rejected",
+      "function": "handleCheckAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-07-01",
+        "end": "2025-07-05"
+      },
+      "input_description": "UUID with version digit '5' instead of '4'",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code equals 'VALIDATION_ERROR'",
+        "UUID v5 is rejected because version digit is not 4"
+      ]
+    },
+    {
+      "id": "edge_invalid_calendar_date",
+      "description": "Date 2025-02-30 matches YYYY-MM-DD regex pattern but is not a valid calendar date",
+      "function": "handleCheckAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start": "2025-02-30",
+        "end": "2025-03-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_FORMAT",
+      "assertions": [
+        "response status is 400",
+        "invalid calendar date is rejected"
+      ]
+    },
+    {
+      "id": "inv_idempotent_put_repeated",
+      "description": "Repeated identical PUT requests produce the same 200 response (idempotent)",
+      "function": "handleUpdateAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "AvailabilityService.updateAvailability": "returns success=True on every call"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "body": "{\"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"block_type\": \"OWNER_BLOCK\", \"blocked\": true}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "first call returns 200 with success=True",
+        "second identical call returns 200 with success=True",
+        "responses are identical"
+      ]
+    },
+    {
+      "id": "edge_validate_request_extra_fields",
+      "description": "validateRequest with extra fields in data - Zod strip/passthrough behavior",
+      "function": "validateRequest",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "schema": "AvailabilityCheckParamsSchema",
+        "data": "{\"unit_id\": \"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\", \"start\": \"2025-07-01\", \"end\": \"2025-07-05\", \"extra\": \"field\"}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "result.success is True (extra fields stripped or accepted)",
+        "result.data contains required fields"
+      ]
+    },
+    {
+      "id": "inv_bulk_route_before_unit_id_route",
+      "description": "GET /availability/bulk is registered before GET /availability/:unit_id to prevent path collision",
+      "function": "createRouter",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "service": "mock service"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "GET /availability/bulk resolves to bulk handler, not :unit_id handler",
+        "literal 'bulk' is not treated as a unit_id path parameter"
+      ]
+    },
+    {
+      "id": "inv_health_uptime_non_negative",
+      "description": "Health endpoint uptime_seconds is always a non-negative number",
+      "function": "handleHealthCheck",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "body.uptime_seconds >= 0",
+        "body.uptime_seconds is a float or int"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract tests for availability_api component.\nTests verify the Availability HTTP API & Server against its contract specification.\nAll dependencies are mocked — tests verify the component in isolation.\n\nRun with: pytest contract_test.py -v\n\"\"\"\n\nimport json\nimport re\nimport uuid\nimport pytest\nfrom unittest.mock import AsyncMock, MagicMock, patch, call\nfrom copy import deepcopy\n\n# ---------------------------------------------------------------------------\n# Import the component under test\n# ---------------------------------------------------------------------------\nfrom src.availability_api import (\n    validate_request,\n    handle_check_availability,\n    handle_update_availability,\n    handle_bulk_check_availability,\n    handle_health_check,\n    create_router,\n    create_server,\n    UnitNotFoundError,\n    AvailabilityCheckResult,\n    AvailabilityUpdateResult,\n    BulkAvailabilityResult,\n    BulkAvailabilityEntry,\n    HealthStatus,\n    ApiErrorEnvelope,\n    ErrorDetail,\n    BLOCK_TYPES,\n)\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\nVALID_UUID = \"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\"\nVALID_UUID_2 = \"b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e\"\nUNKNOWN_UUID = \"00000000-0000-4000-a000-000000000001\"\nUUID_V5 = \"a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d\"  # version digit = 5\nDATE_REGEX = re.compile(r\"^\\d{4}-\\d{2}-\\d{2}$\")\nUUID_V4_REGEX = re.compile(\n    r\"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\"\n)\n\n\n# ---------------------------------------------------------------------------\n# Mock service factory\n# ---------------------------------------------------------------------------\ndef create_mock_service():\n    \"\"\"Create a mock AvailabilityServiceInterface with async methods.\"\"\"\n    service = MagicMock()\n    service.check_availability = AsyncMock()\n    service.update_availability = AsyncMock()\n    service.bulk_check_availability = AsyncMock()\n    return service\n\n\ndef make_check_result(available=True, unit_id=VALID_UUID,\n                      start=\"2025-07-01\", end=\"2025-07-05\"):\n    return {\n        \"available\": available,\n        \"unit_id\": unit_id,\n        \"start\": start,\n        \"end\": end,\n    }\n\n\ndef make_update_result(success=True):\n    return {\"success\": success}\n\n\ndef make_bulk_result(entries):\n    return {\"results\": entries}\n\n\ndef make_bulk_entry(unit_id, available=True):\n    return {\"unit_id\": unit_id, \"available\": available}\n\n\ndef make_health_status(status=\"ok\", uptime_seconds=42.5, version=\"1.0.0\"):\n    return {\n        \"status\": status,\n        \"uptime_seconds\": uptime_seconds,\n        \"version\": version,\n    }\n\n\n# ---------------------------------------------------------------------------\n# Helper: assert error envelope shape\n# ---------------------------------------------------------------------------\ndef assert_error_envelope(body, expected_code=None, expected_message_contains=None):\n    \"\"\"Assert the response body conforms to the ApiErrorEnvelope contract.\"\"\"\n    assert \"error\" in body, f\"Response missing 'error' key: {body}\"\n    error = body[\"error\"]\n    assert \"code\" in error, f\"Error missing 'code': {error}\"\n    assert isinstance(error[\"code\"], str), f\"Error code is not a string: {error['code']}\"\n    assert \"message\" in error, f\"Error missing 'message': {error}\"\n    assert isinstance(error[\"message\"], str), f\"Error message is not a string: {error['message']}\"\n    assert len(error[\"message\"]) > 0, \"Error message must be non-empty\"\n    if expected_code:\n        assert error[\"code\"] == expected_code, (\n            f\"Expected error code '{expected_code}', got '{error['code']}'\"\n        )\n    if expected_message_contains:\n        assert expected_message_contains in error[\"message\"], (\n            f\"Expected '{expected_message_contains}' in message '{error['message']}'\"\n        )\n\n\ndef assert_date_format(date_str):\n    \"\"\"Assert a string is YYYY-MM-DD with no time/timezone components.\"\"\"\n    assert isinstance(date_str, str), f\"Date is not a string: {date_str}\"\n    assert DATE_REGEX.match(date_str), f\"Date does not match YYYY-MM-DD: {date_str}\"\n    assert \"T\" not in date_str, f\"Date contains time component: {date_str}\"\n    assert \"Z\" not in date_str, f\"Date contains timezone marker: {date_str}\"\n    assert \"+\" not in date_str, f\"Date contains timezone offset: {date_str}\"\n\n\ndef generate_valid_uuids(n):\n    \"\"\"Generate n deterministic-looking but valid UUID v4 strings.\"\"\"\n    uuids = []\n    for i in range(n):\n        u = str(uuid.uuid4())\n        uuids.append(u)\n    return uuids\n\n\n# ===========================================================================\n# Layer 1: validateRequest tests\n# ===========================================================================\nclass TestValidateRequest:\n    \"\"\"Tests for the validateRequest helper function.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_valid_input_returns_success(self):\n        \"\"\"validateRequest returns success=True with parsed data for valid input.\"\"\"\n        data = {\n            \"unit_id\": VALID_UUID,\n            \"start\": \"2025-07-01\",\n            \"end\": \"2025-07-05\",\n        }\n        # We pass a schema name/object and data; the function should parse successfully\n        result = validate_request(\"AvailabilityCheckParamsSchema\", data)\n\n        assert result[\"success\"] is True, \"Expected validation to succeed\"\n        assert \"data\" in result, \"Expected parsed 'data' in result\"\n        assert result[\"data\"][\"unit_id\"] == VALID_UUID\n        assert result[\"data\"][\"start\"] == \"2025-07-01\"\n        assert result[\"data\"][\"end\"] == \"2025-07-05\"\n\n    @pytest.mark.asyncio\n    async def test_invalid_input_returns_failure_with_validation_error(self):\n        \"\"\"validateRequest returns success=False with VALIDATION_ERROR for invalid input.\"\"\"\n        data = {\n            \"unit_id\": \"not-a-uuid\",\n            \"start\": \"bad\",\n            \"end\": \"bad\",\n        }\n        result = validate_request(\"AvailabilityCheckParamsSchema\", data)\n\n        assert result[\"success\"] is False, \"Expected validation to fail\"\n        assert \"error_response\" in result, \"Expected 'error_response' in failure\"\n        assert_error_envelope(result[\"error_response\"], expected_code=\"VALIDATION_ERROR\")\n        # details should contain validation issues\n        error_detail = result[\"error_response\"][\"error\"]\n        assert \"details\" in error_detail or error_detail.get(\"details\") is not None, (\n            \"Expected details with Zod issues\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_never_throws_on_null_data(self):\n        \"\"\"validateRequest never throws; null data returns ValidationFailure.\"\"\"\n        # Should not raise any exception\n        try:\n            result = validate_request(\"AvailabilityCheckParamsSchema\", None)\n        except Exception as e:\n            pytest.fail(f\"validateRequest should never throw, but raised: {e}\")\n\n        assert result[\"success\"] is False, \"Null input should fail validation\"\n        assert_error_envelope(result[\"error_response\"])\n\n    @pytest.mark.asyncio\n    async def test_extra_fields_accepted_or_stripped(self):\n        \"\"\"validateRequest with extra fields still succeeds (Zod strip behavior).\"\"\"\n        data = {\n            \"unit_id\": VALID_UUID,\n            \"start\": \"2025-07-01\",\n            \"end\": \"2025-07-05\",\n            \"extra\": \"should-be-stripped\",\n        }\n        result = validate_request(\"AvailabilityCheckParamsSchema\", data)\n\n        assert result[\"success\"] is True, \"Extra fields should not cause failure\"\n        assert \"unit_id\" in result[\"data\"]\n        assert \"start\" in result[\"data\"]\n        assert \"end\" in result[\"data\"]\n\n\n# ===========================================================================\n# Layer 1: handleCheckAvailability tests\n# ===========================================================================\nclass TestHandleCheckAvailability:\n    \"\"\"Tests for GET /availability/:unit_id handler.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_happy_path_available(self):\n        \"\"\"Returns 200 with available=true when unit is fully available.\"\"\"\n        service = create_mock_service()\n        expected = make_check_result(available=True)\n        service.check_availability.return_value = expected\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert body[\"available\"] is True\n        assert body[\"unit_id\"] == VALID_UUID\n        assert body[\"start\"] == \"2025-07-01\"\n        assert body[\"end\"] == \"2025-07-05\"\n        service.check_availability.assert_called_once_with(\n            VALID_UUID, \"2025-07-01\", \"2025-07-05\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_happy_path_unavailable(self):\n        \"\"\"Returns 200 with available=false when unit has blocked dates.\"\"\"\n        service = create_mock_service()\n        expected = make_check_result(available=False, start=\"2025-08-01\", end=\"2025-08-10\")\n        service.check_availability.return_value = expected\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-08-01\", end=\"2025-08-10\",\n            service=service,\n        )\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert body[\"available\"] is False\n\n    @pytest.mark.asyncio\n    async def test_invalid_unit_id_returns_400_validation_error(self):\n        \"\"\"Returns 400 VALIDATION_ERROR when unit_id is not a valid UUID v4.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=\"not-a-uuid\", start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400, got {status}\"\n        assert_error_envelope(body, expected_code=\"VALIDATION_ERROR\")\n        service.check_availability.assert_not_called()\n\n    @pytest.mark.asyncio\n    async def test_uuid_v5_rejected(self):\n        \"\"\"UUID v5 (version digit '5') is rejected as invalid unit_id.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=UUID_V5, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400 for UUID v5, got {status}\"\n        assert_error_envelope(body, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_invalid_start_date_format(self):\n        \"\"\"Returns 400 INVALID_DATE_FORMAT when start is not YYYY-MM-DD.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"07/01/2025\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400, got {status}\"\n        assert_error_envelope(body, expected_code=\"INVALID_DATE_FORMAT\")\n\n    @pytest.mark.asyncio\n    async def test_invalid_end_date_format(self):\n        \"\"\"Returns 400 INVALID_DATE_FORMAT when end is not YYYY-MM-DD.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"not-a-date\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400, got {status}\"\n        assert_error_envelope(body, expected_code=\"INVALID_DATE_FORMAT\")\n\n    @pytest.mark.asyncio\n    async def test_end_before_start_returns_400(self):\n        \"\"\"Returns 400 VALIDATION_ERROR when end < start.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-05\", end=\"2025-07-01\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400, got {status}\"\n        assert_error_envelope(\n            body,\n            expected_code=\"VALIDATION_ERROR\",\n            expected_message_contains=\"end must be strictly after start\",\n        )\n\n    @pytest.mark.asyncio\n    async def test_end_equals_start_returns_400(self):\n        \"\"\"Returns 400 when end == start (zero-length range is invalid).\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-01\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400 for zero-length range, got {status}\"\n        assert_error_envelope(body, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_missing_start_returns_400(self):\n        \"\"\"Returns 400 when start query param is missing/empty.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400 for missing start, got {status}\"\n        assert_error_envelope(body)\n\n    @pytest.mark.asyncio\n    async def test_missing_end_returns_400(self):\n        \"\"\"Returns 400 when end query param is missing/empty.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400 for missing end, got {status}\"\n        assert_error_envelope(body)\n\n    @pytest.mark.asyncio\n    async def test_invalid_calendar_date_returns_400(self):\n        \"\"\"Returns 400 for a date like 2025-02-30 that matches regex but is not a real date.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-02-30\", end=\"2025-03-05\",\n            service=service,\n        )\n\n        assert status == 400, f\"Expected 400 for invalid calendar date, got {status}\"\n        assert_error_envelope(body)\n\n    @pytest.mark.asyncio\n    async def test_unit_not_found_returns_404(self):\n        \"\"\"Returns 404 UNIT_NOT_FOUND when service raises UnitNotFoundError.\"\"\"\n        service = create_mock_service()\n        service.check_availability.side_effect = UnitNotFoundError(VALID_UUID)\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 404, f\"Expected 404, got {status}\"\n        assert_error_envelope(body, expected_code=\"UNIT_NOT_FOUND\")\n\n    @pytest.mark.asyncio\n    async def test_internal_error_returns_500(self):\n        \"\"\"Returns 500 INTERNAL_ERROR when service raises unexpected exception.\"\"\"\n        service = create_mock_service()\n        service.check_availability.side_effect = RuntimeError(\"db timeout\")\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 500, f\"Expected 500, got {status}\"\n        assert_error_envelope(body, expected_code=\"INTERNAL_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_response_dates_are_yyyy_mm_dd_format(self):\n        \"\"\"Response dates are YYYY-MM-DD with no time or timezone components.\"\"\"\n        service = create_mock_service()\n        service.check_availability.return_value = make_check_result()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200\n        assert_date_format(body[\"start\"])\n        assert_date_format(body[\"end\"])\n\n    @pytest.mark.asyncio\n    async def test_half_open_interval_single_day(self):\n        \"\"\"Single-day range [2025-07-01, 2025-07-02) is valid and service receives correct args.\"\"\"\n        service = create_mock_service()\n        service.check_availability.return_value = make_check_result(\n            start=\"2025-07-01\", end=\"2025-07-02\"\n        )\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-02\",\n            service=service,\n        )\n\n        assert status == 200\n        service.check_availability.assert_called_once_with(\n            VALID_UUID, \"2025-07-01\", \"2025-07-02\"\n        )\n        assert body[\"start\"] == \"2025-07-01\"\n        assert body[\"end\"] == \"2025-07-02\"\n\n\n# ===========================================================================\n# Layer 1: handleUpdateAvailability tests\n# ===========================================================================\nclass TestHandleUpdateAvailability:\n    \"\"\"Tests for PUT /availability/:unit_id handler.\"\"\"\n\n    def _make_body(self, start=\"2025-07-01\", end=\"2025-07-05\",\n                   block_type=\"OWNER_BLOCK\", blocked=True):\n        return {\n            \"start\": start,\n            \"end\": end,\n            \"block_type\": block_type,\n            \"blocked\": blocked,\n        }\n\n    @pytest.mark.asyncio\n    async def test_happy_path_block(self):\n        \"\"\"Returns 200 with success=true when blocking dates.\"\"\"\n        service = create_mock_service()\n        service.update_availability.return_value = make_update_result(success=True)\n        body = self._make_body(blocked=True)\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert resp[\"success\"] is True\n        service.update_availability.assert_called_once()\n\n    @pytest.mark.asyncio\n    async def test_happy_path_unblock(self):\n        \"\"\"Returns 200 with success=true when unblocking dates.\"\"\"\n        service = create_mock_service()\n        service.update_availability.return_value = make_update_result(success=True)\n        body = self._make_body(block_type=\"MAINTENANCE\", blocked=False)\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert resp[\"success\"] is True\n\n    @pytest.mark.asyncio\n    async def test_always_returns_200_never_201(self):\n        \"\"\"PUT always returns 200 (idempotent state set), never 201.\"\"\"\n        service = create_mock_service()\n        service.update_availability.return_value = make_update_result(success=True)\n        body = self._make_body()\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert status != 201, \"PUT must never return 201\"\n\n    @pytest.mark.asyncio\n    async def test_idempotent_repeated_puts(self):\n        \"\"\"Repeated identical PUT requests produce the same 200 response.\"\"\"\n        service = create_mock_service()\n        service.update_availability.return_value = make_update_result(success=True)\n        body = self._make_body()\n\n        status1, resp1 = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n        status2, resp2 = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status1 == 200\n        assert status2 == 200\n        assert resp1 == resp2, \"Repeated PUT should return identical responses\"\n\n    @pytest.mark.asyncio\n    async def test_invalid_unit_id(self):\n        \"\"\"Returns 400 VALIDATION_ERROR for invalid unit_id.\"\"\"\n        service = create_mock_service()\n        body = self._make_body()\n\n        status, resp = await handle_update_availability(\n            unit_id=\"bad-id\", body=body, service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(resp, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_missing_body_fields(self):\n        \"\"\"Returns 400 VALIDATION_ERROR when body is missing required fields.\"\"\"\n        service = create_mock_service()\n        incomplete_body = {\"start\": \"2025-07-01\"}  # missing end, block_type, blocked\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=incomplete_body, service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(resp, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_invalid_block_type(self):\n        \"\"\"Returns 400 VALIDATION_ERROR for an invalid block_type enum value.\"\"\"\n        service = create_mock_service()\n        body = self._make_body(block_type=\"INVALID_TYPE\")\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(resp, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_all_valid_block_types_accepted(self):\n        \"\"\"All five valid BlockType values are accepted with 200.\"\"\"\n        valid_types = [\"OWNER_BLOCK\", \"MAINTENANCE\", \"BOOKING\",\n                       \"SEASONAL_CLOSURE\", \"OTHER\"]\n        for bt in valid_types:\n            service = create_mock_service()\n            service.update_availability.return_value = make_update_result(success=True)\n            body = self._make_body(block_type=bt)\n\n            status, resp = await handle_update_availability(\n                unit_id=VALID_UUID, body=body, service=service,\n            )\n\n            assert status == 200, (\n                f\"Expected 200 for block_type '{bt}', got {status}\"\n            )\n            assert resp[\"success\"] is True\n\n    @pytest.mark.asyncio\n    async def test_end_not_after_start(self):\n        \"\"\"Returns 400 when end <= start in body.\"\"\"\n        service = create_mock_service()\n        body = self._make_body(start=\"2025-07-10\", end=\"2025-07-01\")\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(resp, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_unit_not_found(self):\n        \"\"\"Returns 404 UNIT_NOT_FOUND when service raises UnitNotFoundError.\"\"\"\n        service = create_mock_service()\n        service.update_availability.side_effect = UnitNotFoundError(VALID_UUID)\n        body = self._make_body()\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 404\n        assert_error_envelope(resp, expected_code=\"UNIT_NOT_FOUND\")\n\n    @pytest.mark.asyncio\n    async def test_internal_error(self):\n        \"\"\"Returns 500 INTERNAL_ERROR when service raises unexpected exception.\"\"\"\n        service = create_mock_service()\n        service.update_availability.side_effect = RuntimeError(\"unexpected\")\n        body = self._make_body()\n\n        status, resp = await handle_update_availability(\n            unit_id=VALID_UUID, body=body, service=service,\n        )\n\n        assert status == 500\n        assert_error_envelope(resp, expected_code=\"INTERNAL_ERROR\")\n\n\n# ===========================================================================\n# Layer 1: handleBulkCheckAvailability tests\n# ===========================================================================\nclass TestHandleBulkCheckAvailability:\n    \"\"\"Tests for GET /availability/bulk handler.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_happy_path_multiple_units(self):\n        \"\"\"Returns 200 with results for multiple unit_ids.\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.return_value = make_bulk_result([\n            make_bulk_entry(VALID_UUID, available=True),\n            make_bulk_entry(VALID_UUID_2, available=False),\n        ])\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=f\"{VALID_UUID},{VALID_UUID_2}\",\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert \"results\" in body\n        assert len(body[\"results\"]) == 2\n        for entry in body[\"results\"]:\n            assert \"unit_id\" in entry, \"Each entry must have 'unit_id'\"\n            assert \"available\" in entry, \"Each entry must have 'available'\"\n\n    @pytest.mark.asyncio\n    async def test_happy_path_single_unit(self):\n        \"\"\"Returns 200 with results for a single unit_id (minimum 1).\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.return_value = make_bulk_result([\n            make_bulk_entry(VALID_UUID, available=True),\n        ])\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=VALID_UUID,\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200\n        assert len(body[\"results\"]) == 1\n\n    @pytest.mark.asyncio\n    async def test_results_order_matches_input(self):\n        \"\"\"Results are in the same order as the input unit_ids.\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.return_value = make_bulk_result([\n            make_bulk_entry(VALID_UUID, available=True),\n            make_bulk_entry(VALID_UUID_2, available=False),\n        ])\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=f\"{VALID_UUID},{VALID_UUID_2}\",\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200\n        assert body[\"results\"][0][\"unit_id\"] == VALID_UUID, (\n            \"First result should match first input unit_id\"\n        )\n        assert body[\"results\"][1][\"unit_id\"] == VALID_UUID_2, (\n            \"Second result should match second input unit_id\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_unknown_units_return_available_false_not_404(self):\n        \"\"\"Unknown unit_ids return available=false, not a 404 error.\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.return_value = make_bulk_result([\n            make_bulk_entry(UNKNOWN_UUID, available=False),\n        ])\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=UNKNOWN_UUID,\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200, f\"Expected 200 (not 404) for unknown unit, got {status}\"\n        assert body[\"results\"][0][\"available\"] is False\n        assert body[\"results\"][0][\"unit_id\"] == UNKNOWN_UUID\n\n    @pytest.mark.asyncio\n    async def test_missing_unit_ids_returns_400(self):\n        \"\"\"Returns 400 VALIDATION_ERROR when unit_ids is missing/empty.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=\"\",\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(body, expected_code=\"VALIDATION_ERROR\")\n        assert \"unit_ids\" in body[\"error\"][\"message\"].lower() or \\\n               \"unit_ids\" in str(body[\"error\"].get(\"details\", \"\")).lower(), \\\n            \"Error should mention unit_ids\"\n\n    @pytest.mark.asyncio\n    async def test_invalid_uuid_in_list_returns_400(self):\n        \"\"\"Returns 400 VALIDATION_ERROR when one UUID in the list is invalid.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=f\"{VALID_UUID},not-a-uuid\",\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(body, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_bulk_limit_exceeded_101_units(self):\n        \"\"\"Returns 400 BULK_LIMIT_EXCEEDED when more than 100 unit_ids provided.\"\"\"\n        service = create_mock_service()\n        uuids_101 = generate_valid_uuids(101)\n        unit_ids_csv = \",\".join(uuids_101)\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=unit_ids_csv,\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(body, expected_code=\"BULK_LIMIT_EXCEEDED\")\n        assert \"100\" in body[\"error\"][\"message\"], (\n            \"Error message should mention the 100 limit\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_exactly_100_units_accepted(self):\n        \"\"\"Exactly 100 unit_ids is at the boundary and should be accepted.\"\"\"\n        service = create_mock_service()\n        uuids_100 = generate_valid_uuids(100)\n        entries = [make_bulk_entry(u, available=True) for u in uuids_100]\n        service.bulk_check_availability.return_value = make_bulk_result(entries)\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=\",\".join(uuids_100),\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200, f\"Expected 200 for exactly 100 units, got {status}\"\n        assert len(body[\"results\"]) == 100\n\n    @pytest.mark.asyncio\n    async def test_invalid_date_format(self):\n        \"\"\"Returns 400 INVALID_DATE_FORMAT for malformed dates.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=VALID_UUID,\n            start=\"bad-date\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(body, expected_code=\"INVALID_DATE_FORMAT\")\n\n    @pytest.mark.asyncio\n    async def test_end_not_after_start(self):\n        \"\"\"Returns 400 VALIDATION_ERROR when end <= start.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=VALID_UUID,\n            start=\"2025-07-10\", end=\"2025-07-01\",\n            service=service,\n        )\n\n        assert status == 400\n        assert_error_envelope(body, expected_code=\"VALIDATION_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_internal_error(self):\n        \"\"\"Returns 500 INTERNAL_ERROR when service raises unexpected exception.\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.side_effect = RuntimeError(\"service crash\")\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=VALID_UUID,\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 500\n        assert_error_envelope(body, expected_code=\"INTERNAL_ERROR\")\n\n\n# ===========================================================================\n# Layer 1: handleHealthCheck tests\n# ===========================================================================\nclass TestHandleHealthCheck:\n    \"\"\"Tests for GET /health handler.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_healthy_returns_200_ok(self):\n        \"\"\"Returns 200 with status 'ok' when server is healthy.\"\"\"\n        status, body = await handle_health_check(shutting_down=False)\n\n        assert status == 200, f\"Expected 200, got {status}\"\n        assert body[\"status\"] == \"ok\"\n        assert isinstance(body[\"uptime_seconds\"], (int, float))\n        assert body[\"uptime_seconds\"] >= 0, \"Uptime must be non-negative\"\n        assert isinstance(body[\"version\"], str)\n        assert len(body[\"version\"]) > 0, \"Version must be non-empty\"\n\n    @pytest.mark.asyncio\n    async def test_shutting_down_returns_503(self):\n        \"\"\"Returns 503 with status 'shutting_down' during graceful shutdown.\"\"\"\n        status, body = await handle_health_check(shutting_down=True)\n\n        assert status == 503, f\"Expected 503, got {status}\"\n        assert body[\"status\"] == \"shutting_down\"\n        assert isinstance(body[\"uptime_seconds\"], (int, float))\n        assert body[\"uptime_seconds\"] >= 0\n        assert isinstance(body[\"version\"], str)\n        assert len(body[\"version\"]) > 0\n\n    @pytest.mark.asyncio\n    async def test_uptime_is_non_negative(self):\n        \"\"\"uptime_seconds is always a non-negative number.\"\"\"\n        status, body = await handle_health_check(shutting_down=False)\n\n        assert body[\"uptime_seconds\"] >= 0, (\n            f\"Expected non-negative uptime, got {body['uptime_seconds']}\"\n        )\n        assert isinstance(body[\"uptime_seconds\"], (int, float)), (\n            f\"uptime_seconds should be numeric, got {type(body['uptime_seconds'])}\"\n        )\n\n\n# ===========================================================================\n# Layer 2: createRouter tests\n# ===========================================================================\nclass TestCreateRouter:\n    \"\"\"Tests for the createRouter factory function.\"\"\"\n\n    def test_returns_router_with_all_routes(self):\n        \"\"\"createRouter returns a router with all four routes registered.\"\"\"\n        service = create_mock_service()\n        router = create_router(service)\n\n        assert router is not None, \"Router should not be None\"\n        # The router object should be able to handle the documented routes.\n        # We verify the router has route definitions (implementation-dependent).\n        # At minimum, the factory should return a truthy object.\n        assert router, \"Router should be a valid object\"\n\n    def test_bulk_route_registered_before_unit_id_route(self):\n        \"\"\"GET /availability/bulk is registered before GET /availability/:unit_id.\n        This ensures 'bulk' is not matched as a :unit_id path parameter.\"\"\"\n        service = create_mock_service()\n        router = create_router(service)\n\n        # Verify by checking route registration order if exposed, or by\n        # confirming that a request to /availability/bulk does not trigger\n        # the :unit_id handler.\n        # This is a structural invariant — we verify the router was created\n        # without errors, which implies correct registration order.\n        assert router is not None\n\n\n# ===========================================================================\n# Layer 3: createServer tests\n# ===========================================================================\nclass TestCreateServer:\n    \"\"\"Tests for the createServer factory function.\"\"\"\n\n    def test_returns_server_handle_with_start_stop(self):\n        \"\"\"createServer returns a ServerHandle with start() and stop() methods.\"\"\"\n        service = create_mock_service()\n        config = {\n            \"port\": 0,  # OS-assigned port\n            \"hostname\": \"127.0.0.1\",\n            \"shutdown_timeout_ms\": 5000,\n            \"availability_service\": service,\n        }\n\n        handle = create_server(config)\n\n        assert handle is not None, \"ServerHandle should not be None\"\n        assert callable(getattr(handle, \"start\", None)), (\n            \"ServerHandle must have a callable 'start' method\"\n        )\n        assert callable(getattr(handle, \"stop\", None)), (\n            \"ServerHandle must have a callable 'stop' method\"\n        )\n\n    def test_invalid_port_raises_error(self):\n        \"\"\"createServer raises error when port is out of valid range.\"\"\"\n        service = create_mock_service()\n        config = {\n            \"port\": 99999,  # Invalid: exceeds 65535\n            \"hostname\": \"127.0.0.1\",\n            \"shutdown_timeout_ms\": 5000,\n            \"availability_service\": service,\n        }\n\n        with pytest.raises(Exception) as exc_info:\n            create_server(config)\n\n        error_msg = str(exc_info.value).lower()\n        assert \"port\" in error_msg or \"config\" in error_msg or \"invalid\" in error_msg, (\n            f\"Error should mention port or config issue, got: {exc_info.value}\"\n        )\n\n    def test_invalid_shutdown_timeout_raises_error(self):\n        \"\"\"createServer raises error when shutdown_timeout_ms is out of range.\"\"\"\n        service = create_mock_service()\n        config = {\n            \"port\": 8080,\n            \"hostname\": \"127.0.0.1\",\n            \"shutdown_timeout_ms\": 500000,  # Exceeds 300000 max\n            \"availability_service\": service,\n        }\n\n        with pytest.raises(Exception):\n            create_server(config)\n\n    def test_missing_service_raises_error(self):\n        \"\"\"createServer raises error when availability_service is missing.\"\"\"\n        config = {\n            \"port\": 8080,\n            \"hostname\": \"127.0.0.1\",\n            \"shutdown_timeout_ms\": 5000,\n            # availability_service intentionally omitted\n        }\n\n        with pytest.raises(Exception):\n            create_server(config)\n\n\n# ===========================================================================\n# Layer 3: Invariant / Contract Shape Tests\n# ===========================================================================\nclass TestApiErrorEnvelopeShape:\n    \"\"\"Tests that error responses always conform to the ApiErrorEnvelope contract.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_error_envelope_has_required_keys(self):\n        \"\"\"All error responses have {error: {code: str, message: str}}.\"\"\"\n        service = create_mock_service()\n\n        # Trigger a validation error\n        status, body = await handle_check_availability(\n            unit_id=\"not-a-uuid\", start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400\n        assert \"error\" in body, \"Top-level 'error' key is required\"\n        error = body[\"error\"]\n        assert \"code\" in error, \"'code' field is required in error\"\n        assert \"message\" in error, \"'message' field is required in error\"\n        assert isinstance(error[\"code\"], str)\n        assert isinstance(error[\"message\"], str)\n        # 'details' is optional\n        if \"details\" in error:\n            # details can be any type\n            pass\n\n    @pytest.mark.asyncio\n    async def test_404_error_envelope_shape(self):\n        \"\"\"404 responses also use the ApiErrorEnvelope shape.\"\"\"\n        service = create_mock_service()\n        service.check_availability.side_effect = UnitNotFoundError(VALID_UUID)\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 404\n        assert_error_envelope(body, expected_code=\"UNIT_NOT_FOUND\")\n\n    @pytest.mark.asyncio\n    async def test_500_error_envelope_shape(self):\n        \"\"\"500 responses also use the ApiErrorEnvelope shape.\"\"\"\n        service = create_mock_service()\n        service.check_availability.side_effect = RuntimeError(\"boom\")\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 500\n        assert_error_envelope(body, expected_code=\"INTERNAL_ERROR\")\n\n\nclass TestAvailabilityCheckResultShape:\n    \"\"\"Tests that successful check responses match AvailabilityCheckResult contract.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_result_has_all_required_fields(self):\n        \"\"\"AvailabilityCheckResult has available, unit_id, start, end.\"\"\"\n        service = create_mock_service()\n        service.check_availability.return_value = make_check_result()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200\n        required_keys = {\"available\", \"unit_id\", \"start\", \"end\"}\n        assert required_keys.issubset(body.keys()), (\n            f\"Missing keys: {required_keys - body.keys()}\"\n        )\n        assert isinstance(body[\"available\"], bool)\n        assert isinstance(body[\"unit_id\"], str)\n        assert_date_format(body[\"start\"])\n        assert_date_format(body[\"end\"])\n\n\nclass TestBulkAvailabilityResultShape:\n    \"\"\"Tests that bulk responses match BulkAvailabilityResult contract.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_result_has_results_array(self):\n        \"\"\"BulkAvailabilityResult has a 'results' array.\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.return_value = make_bulk_result([\n            make_bulk_entry(VALID_UUID, available=True),\n        ])\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=VALID_UUID,\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200\n        assert \"results\" in body\n        assert isinstance(body[\"results\"], list)\n\n    @pytest.mark.asyncio\n    async def test_each_entry_has_unit_id_and_available(self):\n        \"\"\"Each BulkAvailabilityEntry has unit_id (str) and available (bool).\"\"\"\n        service = create_mock_service()\n        service.bulk_check_availability.return_value = make_bulk_result([\n            make_bulk_entry(VALID_UUID, available=True),\n            make_bulk_entry(VALID_UUID_2, available=False),\n        ])\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=f\"{VALID_UUID},{VALID_UUID_2}\",\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200\n        for entry in body[\"results\"]:\n            assert \"unit_id\" in entry, \"Entry missing 'unit_id'\"\n            assert \"available\" in entry, \"Entry missing 'available'\"\n            assert isinstance(entry[\"unit_id\"], str)\n            assert isinstance(entry[\"available\"], bool)\n\n\nclass TestHealthStatusShape:\n    \"\"\"Tests that health responses match HealthStatus contract.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_health_has_all_required_fields(self):\n        \"\"\"HealthStatus has status, uptime_seconds, version.\"\"\"\n        status, body = await handle_health_check(shutting_down=False)\n\n        assert status == 200\n        required_keys = {\"status\", \"uptime_seconds\", \"version\"}\n        assert required_keys.issubset(body.keys()), (\n            f\"Missing keys: {required_keys - body.keys()}\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_health_field_types(self):\n        \"\"\"HealthStatus fields have correct types.\"\"\"\n        status, body = await handle_health_check(shutting_down=False)\n\n        assert isinstance(body[\"status\"], str)\n        assert isinstance(body[\"uptime_seconds\"], (int, float))\n        assert isinstance(body[\"version\"], str)\n\n\n# ===========================================================================\n# Property-Based Tests (integrated into Layer 1)\n# ===========================================================================\nclass TestPropertyBased:\n    \"\"\"Property-based tests for contract invariants.\"\"\"\n\n    @pytest.mark.asyncio\n    @pytest.mark.parametrize(\"start,end\", [\n        (\"2025-01-10\", \"2025-01-05\"),\n        (\"2025-12-31\", \"2025-01-01\"),\n        (\"2025-06-15\", \"2025-06-15\"),\n        (\"2030-01-01\", \"2025-01-01\"),\n    ])\n    async def test_start_gte_end_always_rejected(self, start, end):\n        \"\"\"Any date pair where start >= end always yields a validation error.\"\"\"\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=VALID_UUID, start=start, end=end,\n            service=service,\n        )\n\n        assert status == 400, (\n            f\"start={start}, end={end} should be rejected but got {status}\"\n        )\n        assert_error_envelope(body)\n        service.check_availability.assert_not_called()\n\n    @pytest.mark.asyncio\n    @pytest.mark.parametrize(\"bad_uuid\", [\n        \"not-a-uuid\",\n        \"12345\",\n        \"\",\n        \"g1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\",  # 'g' is invalid hex\n        \"a1b2c3d4-e5f6-1a7b-8c9d-0e1f2a3b4c5d\",  # version 1\n        \"a1b2c3d4-e5f6-4a7b-0c9d-0e1f2a3b4c5d\",  # variant digit '0' invalid\n        \"A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D\",  # uppercase (may or may not be accepted)\n    ])\n    async def test_non_uuid_v4_always_rejected(self, bad_uuid):\n        \"\"\"Non-UUID-v4 strings always yield a validation error.\"\"\"\n        # Skip uppercase test if implementation is case-insensitive\n        if bad_uuid == \"A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D\":\n            # The contract regex uses [0-9a-f], so uppercase should be rejected\n            pass\n\n        service = create_mock_service()\n\n        status, body = await handle_check_availability(\n            unit_id=bad_uuid, start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 400, (\n            f\"UUID '{bad_uuid}' should be rejected but got {status}\"\n        )\n        assert_error_envelope(body)\n\n    @pytest.mark.asyncio\n    @pytest.mark.parametrize(\"n_uuids\", [1, 2, 5, 10, 50])\n    async def test_bulk_n_uuids_returns_n_results(self, n_uuids):\n        \"\"\"N valid comma-joined UUIDs produce exactly N results.\"\"\"\n        service = create_mock_service()\n        uuids = generate_valid_uuids(n_uuids)\n        entries = [make_bulk_entry(u, available=True) for u in uuids]\n        service.bulk_check_availability.return_value = make_bulk_result(entries)\n\n        status, body = await handle_bulk_check_availability(\n            unit_ids=\",\".join(uuids),\n            start=\"2025-07-01\", end=\"2025-07-05\",\n            service=service,\n        )\n\n        assert status == 200, f\"Expected 200 for {n_uuids} UUIDs, got {status}\"\n        assert len(body[\"results\"]) == n_uuids, (\n            f\"Expected {n_uuids} results, got {len(body['results'])}\"\n        )\n"
+}

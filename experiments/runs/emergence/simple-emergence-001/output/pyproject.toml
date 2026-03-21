@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "anonymous-identity"
+version = "0.1.0"
+description = "Privacy-preserving anonymous identity system"
+requires-python = ">=3.8"
+dependencies = [
+    "PyNaCl>=1.5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

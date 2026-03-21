@@ -1,0 +1,118 @@
+{
+  "task_summary": "Define the interface contract for the Pricing Service component (pricing_service) — a rate cache service providing fast price lookups for rental units. The service orchestrates between PostgreSQL (authoritative rate configurations via pricing_schema), Redis (hash-sharded hot cache via pricing_cache_engine), a REST API layer (pricing_api), and a test suite (pricing_tests). The contract must specify the public types, functions, error handling conventions, and serialization formats that tie these four dependencies together into a coherent service facade.",
+  "findings": [
+    {
+      "topic": "Service Facade / Orchestrator Pattern",
+      "finding": "The Pricing Service sits as a facade/orchestrator over four sub-components. Best practice is to define a thin coordination layer that delegates to dependencies and owns only orchestration logic: cache-aside reads (check cache → fallback to DB → populate cache), write-through invalidation (update DB → invalidate cache), and quote computation (resolve rates → apply discounts → apply fees → apply taxes → return breakdown). The facade should NOT re-export dependency internals; it should define its own public contract types that compose from but don't leak dependency types.",
+      "source": "Domain-Driven Design (Eric Evans), Facade pattern (GoF), Microsoft Cloud Design Patterns — Cache-Aside",
+      "relevance": "Directly defines the structural contract of pricing_service: what it exposes vs. what it delegates.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Monetary Amount Representation",
+      "finding": "Store all monetary values as integer cents (or smallest currency unit) to avoid floating-point rounding. Use a branded/opaque type (e.g., CentsAmount) with explicit currency pairing. Never perform arithmetic on amounts of different currencies. The pricing_schema already uses CentsAmount; pricing_service should maintain this convention and only format to decimal at the API boundary. IEEE 754 floating-point errors in JS/TS are the #1 pricing bug in vacation rental systems.",
+      "source": "Martin Fowler — Money pattern, JavaMoney JSR-354 principles, existing pricing_schema dependency types",
+      "relevance": "Critical for type system design — the service contract must enforce cents-based arithmetic internally and specify conversion rules at boundaries.",
+      "confidence": 0.98
+    },
+    {
+      "topic": "Date Range Edge Cases in Pricing",
+      "finding": "Common pitfalls: (1) Off-by-one errors — nightly rates apply to check-in nights, so a 3-night stay from Jan 1–4 has rates for Jan 1, 2, 3 only. (2) Timezone confusion — all dates must be date-only (YYYY-MM-DD) not datetimes, stored and compared in local property time but transmitted as ISO 8601 date strings. (3) Gap handling — when no rate covers a date, the service must return an explicit error, not silently zero-fill. (4) Boundary dates for seasonal rates — inclusive start, exclusive end avoids overlap ambiguity.",
+      "source": "Airbnb/VRBO pricing model conventions, ISO 8601, common vacation-rental pricing bugs",
+      "relevance": "The contract must specify date semantics (inclusive check-in, exclusive check-out), error behavior for uncovered dates, and date format requirements.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Cache-Aside with Write-Through Invalidation",
+      "finding": "The standard cache-aside pattern for pricing: (1) On read: hash unit_id → shard key → check Redis → if miss, resolve from PostgreSQL via pricing_schema.resolveRatesForDateRange → populate cache via pricing_cache_engine.cacheRates → return. (2) On write: update PostgreSQL first (within transaction) → invalidate cache via pricing_cache_engine.invalidateUnit → return. Key pitfall: race condition where a concurrent read re-populates stale data between DB write and cache invalidation. Mitigation: use short TTLs (5-15 min) as a safety net, and consider a version/generation counter on cache entries.",
+      "source": "Redis caching best practices, AWS ElastiCache documentation, Facebook cache invalidation paper (TAO)",
+      "relevance": "Directly shapes the service's read/write function signatures and the CacheOptions/TTL types in the contract.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Quote Computation Pipeline",
+      "finding": "Industry-standard vacation rental pricing follows a strict computation order: (1) Resolve nightly base rates (seasonal + date-specific overrides). (2) Sum nightly subtotal. (3) Apply length-of-stay discounts (percentage off nightly subtotal). (4) Apply flat fees (cleaning fee, pet fee, etc.) — added after discount. (5) Apply percentage-based fees (service fee as % of discounted subtotal). (6) Compute taxes on the taxable amount (which fees are taxable varies). (7) Sum grand total. Each step produces line items for the breakdown. The contract should model this as a pipeline with intermediate results exposed for transparency/debugging.",
+      "source": "VRBO/Airbnb pricing breakdowns, Guesty/Hostaway PMS pricing engines, OTA integration specs",
+      "relevance": "Defines the core getQuote/computeQuote function return type structure — must include full line-item breakdown, not just a total.",
+      "confidence": 0.96
+    },
+    {
+      "topic": "TypeScript Branded Types for Domain Safety",
+      "finding": "Use branded types (intersection with a unique symbol) for UnitId, RatePlanId, CentsAmount, etc. to prevent accidental mixing. Pattern: `type UnitId = string & { readonly __brand: unique symbol }`. Deno/TypeScript supports this natively. The existing dependencies already define branded-style types (CentsAmount, CurrencyCode, DiscountPercent, TaxRateBasisPoints). The service contract should re-use or alias these, not redefine incompatible versions.",
+      "source": "TypeScript handbook — type branding, Deno standard patterns, existing dependency type signatures",
+      "relevance": "Ensures type-level safety across the service boundary; prevents unit_id/rate_plan_id mixups at compile time.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Result Type Error Handling (No Thrown Exceptions)",
+      "finding": "The dependencies consistently use Result types (e.g., RatePlanResult, ResolvedRateResult, CacheResult with CacheHit/CacheMiss discriminated unions). The pricing_service contract should follow the same convention: return Result<T, PricingServiceError> from all public functions, never throw. Use discriminated unions with a 'kind' field for error variants. Common error kinds: RATE_NOT_FOUND, DATES_UNCOVERED, CACHE_FAILURE (non-fatal, fallback to DB), INVALID_DATE_RANGE, CURRENCY_MISMATCH, UNIT_NOT_FOUND, CONFIGURATION_ERROR.",
+      "source": "Rust Result pattern adapted to TypeScript, existing dependency conventions (PricingError, PricingErrorKind, CacheMissReason)",
+      "relevance": "Critical for consistent error handling contract — callers must know exactly what errors to expect and handle.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Serialization at Service Boundaries",
+      "finding": "Per project standards, services communicate via HTTP REST with JSON. Key conventions: (1) All dates as ISO 8601 strings (YYYY-MM-DD for dates, full ISO for timestamps). (2) Money amounts in API responses should include both cents (integer) and formatted display string with currency. (3) Use camelCase for JSON keys (TypeScript convention). (4) Envelope all responses: { data: T, meta: { requestId, timestamp } } for success, { error: { code, message, details } } for failure. (5) The pricing_api dependency already defines these envelopes (QuoteResponseEnvelope, ErrorResponseEnvelope) — the service should delegate serialization to that layer.",
+      "source": "Project operating procedures, JSON:API conventions, existing pricing_api types",
+      "relevance": "Defines the serialization contract at the HTTP boundary and ensures consistency with the API layer.",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Idempotency for Rate Configuration Updates",
+      "finding": "Rate configuration writes should be idempotent. Use PUT semantics with full replacement (not PATCH) for rate plans, or use explicit version fields for optimistic concurrency control. The pricing_schema dependency supports withTransaction for atomicity. The service contract should expose update operations that: (1) accept the full desired state, (2) wrap multi-step updates in a transaction, (3) invalidate the cache after commit, (4) return the updated state. Include an optional `expectedVersion` field for optimistic locking to prevent lost updates from concurrent admin edits.",
+      "source": "REST API design best practices, optimistic concurrency control patterns, existing pricing_schema.withTransaction",
+      "relevance": "Shapes the write-path function signatures and ensures data consistency guarantees are explicit in the contract.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Length-of-Stay Discount Edge Cases",
+      "finding": "Common pitfalls: (1) Discount tiers must be non-overlapping (e.g., 7-night and 14-night discounts; a 14-night stay should get the 14-night rate, not both). Convention: apply the highest-qualifying tier. (2) Discount should apply to nightly subtotal only, not fees. (3) The discount amount must be stored as a negative line item in the breakdown for transparency. (4) Minimum-stay requirements can interact with discounts — the contract should clarify whether min-stay validation is in scope.",
+      "source": "VRBO/Airbnb pricing rules, Guesty LOS discount implementation, existing pricing_schema.LosDiscount type",
+      "relevance": "Affects the QuoteBreakdown type design and the compute pipeline specification.",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Cache Warming and Graceful Degradation",
+      "finding": "The service should support: (1) Cache warming on startup or on-demand for high-traffic units. (2) Graceful degradation — if Redis is down, fall back to PostgreSQL with increased latency but no errors. The cache layer should be treated as an optimization, never a requirement. The contract should define a warmCache function and specify that all read functions work (with degraded performance) when cache is unavailable. The CacheResult discriminated union from pricing_cache_engine already supports this with CacheMiss.",
+      "source": "Netflix Hystrix patterns, Redis failure mode best practices, circuit breaker pattern",
+      "relevance": "Affects the service initialization contract and the error handling strategy for cache failures.",
+      "confidence": 0.89
+    },
+    {
+      "topic": "Tax Computation Complexity",
+      "finding": "Tax computation in rental pricing is jurisdiction-dependent and complex: (1) Some taxes apply to nightly rates only, others to rates + fees. (2) Tax-on-tax scenarios exist (e.g., state tax, then county tax on state-tax-inclusive amount). (3) Tax rounding must happen per-tax-type, not on the aggregate. (4) The pricing_schema uses TaxRateBasisPoints (1/100th of a percent, e.g., 10000 = 100% = rate×1.0) for precision. The service contract should specify the tax application order and which amounts each tax applies to.",
+      "source": "US short-term rental tax regulations, existing pricing_schema TaxRateBasisPoints type, Avalara tax computation docs",
+      "relevance": "Affects the tax computation step in the quote pipeline and the TaxLineItem type design.",
+      "confidence": 0.88
+    }
+  ],
+  "recommended_approach": "Define pricing_service as a thin orchestration facade with these key design decisions:\n\n**1. Public Interface — 5 Core Functions:**\n- `createPricingService(config: PricingServiceConfig): PricingService` — factory, takes DB pool + Redis client + options\n- `getQuote(unitId, checkIn, checkOut, currency, options?): Promise<QuoteResult>` — cache-aside read → compute full breakdown\n- `getRates(unitId, startDate, endDate, currency): Promise<RatesResult>` — nightly rate lookup (cache-aside)\n- `updateRateConfiguration(unitId, config): Promise<UpdateResult>` — write-through with cache invalidation\n- `upsertFee(unitId, fee): Promise<FeeResult>` — write-through with cache invalidation\n- `warmCache(unitIds, dateRange): Promise<WarmCacheResult>` — bulk cache population\n- `invalidateCache(unitId): Promise<InvalidateResult>` — explicit cache bust\n\n**2. Type System:**\n- Re-export/alias branded types from dependencies (CentsAmount, UnitId, CurrencyCode) — do NOT redefine\n- Define service-level composite types: QuoteBreakdown (full pipeline output with line items), PricingServiceConfig, PricingServiceError\n- Use discriminated union Result types consistently: `Result<T, PricingServiceError>` with error kinds\n- QuoteBreakdown includes: nightlyRates[], subtotal, losDiscount?, discountedSubtotal, fees[], feesTotal, taxableAmount, taxes[], taxTotal, grandTotal — all as CentsAmount with CurrencyCode\n\n**3. Error Handling:**\n- Never throw — always return Result types\n- PricingServiceError has `kind` discriminant: UNIT_NOT_FOUND | DATES_UNCOVERED | INVALID_DATE_RANGE | CURRENCY_MISMATCH | CONFIGURATION_ERROR | INTERNAL_ERROR\n- Cache failures are silent/logged — automatically fall back to DB\n- Wrap dependency errors into service-level errors (don't leak internal error types)\n\n**4. Cache Strategy:**\n- Cache-aside for reads with configurable TTL (default 10 min)\n- Write-through invalidation on all mutations (invalidate after DB commit)\n- Graceful degradation: Redis failure → DB fallback, never an error to callers\n\n**5. Computation Pipeline (getQuote):**\n- Strict order: resolve nightly rates → sum subtotal → apply best LOS discount → add flat fees → add percentage fees → compute taxes → sum grand total\n- Each step produces typed line items for full transparency\n- All arithmetic in CentsAmount (integer cents), bankers rounding for percentage calculations\n\n**6. File Organization:**\n- `services/pricing_service/mod.ts` — public exports (<300 lines)\n- `services/pricing_service/types.ts` — all contract types\n- `services/pricing_service/service.ts` — orchestration implementation\n- `services/pricing_service/pipeline.ts` — quote computation pipeline\n- `services/pricing_service/deps.ts` — dependency interface definitions",
+  "alternatives_considered": [
+    "CQRS separation (separate read/write models) — rejected as over-engineered for this scope; the cache-aside pattern achieves read optimization without a separate read model. Could revisit if read/write patterns diverge significantly.",
+    "Event-sourced rate changes — rejected; PostgreSQL as authoritative store with simple CRUD via pricing_schema is sufficient. Event sourcing adds complexity without clear benefit for rate configuration which is low-write, high-read.",
+    "Exposing dependency types directly (re-exporting pricing_schema types as the service contract) — rejected; this leaks internal structure and creates tight coupling. The service should define its own public types that compose from dependency types.",
+    "GraphQL API instead of REST — rejected per project standards (HTTP REST with JSON). The pricing domain has well-defined query shapes that don't benefit from GraphQL flexibility.",
+    "Centralized pricing computation in the cache layer — rejected; computation belongs in the service layer. The cache stores pre-resolved nightly rates, but quote computation (discounts, fees, taxes) runs on each request since it depends on stay-specific parameters."
+  ],
+  "risks": [
+    "Cache-DB consistency race: A concurrent read between DB write and cache invalidation can re-populate stale data. Mitigate with short TTLs (10 min max) and generation counters on cached entries.",
+    "Floating-point creep: If any code path accidentally converts CentsAmount to a float for division (e.g., percentage calculations), rounding errors accumulate. Enforce integer-only arithmetic with bankers rounding (Math.round for half-to-even).",
+    "Date off-by-one errors: Check-out date is exclusive (3-night stay = 3 nightly rates). This must be documented and enforced at the contract level with explicit DateRange type semantics.",
+    "Tax computation ordering: If taxes are applied in wrong order or to wrong base amounts, totals will be incorrect. The pipeline must have explicit, tested ordering rules.",
+    "Uncovered date gaps: If a unit has no rate for certain dates in a requested range, the service must fail explicitly rather than silently returning partial results. The DATES_UNCOVERED error kind handles this.",
+    "Currency mismatch: If a unit's rate plan is in USD but the request asks for EUR, the service must reject (no FX conversion in scope) or the contract must specify FX behavior. Recommend rejecting with CURRENCY_MISMATCH.",
+    "Redis connection pool exhaustion under load: If cache operations don't have timeouts, a slow Redis can back-pressure the entire service. All cache operations should have aggressive timeouts (50-100ms) with automatic fallback."
+  ],
+  "compliance_notes": [
+    "All monetary amounts stored and computed as integer cents (CentsAmount) — never floating-point — per financial accuracy requirements.",
+    "All dates transmitted as ISO 8601 date strings (YYYY-MM-DD) in UTC per project operating procedures.",
+    "UUIDs for all entity identifiers (unit_id, rate_plan_id, etc.) per project standards.",
+    "All public functions must have full TypeScript type annotations per project standards.",
+    "Files must stay under 300 lines per project preferences — split service into mod.ts, types.ts, service.ts, pipeline.ts.",
+    "No external dependencies beyond Deno stdlib, Oak framework, and pg/redis drivers per project preference for stdlib over third-party.",
+    "All functions must have at least one test; integration boundaries require contract tests validating request/response shapes.",
+    "Tests must run without external services — mock PostgreSQL and Redis per project verification requirements.",
+    "Hash-sharded caching by unit_id per project architecture pattern.",
+    "Service must be independently deployable under services/pricing_service/ per project structure."
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "task_summary": "Define the interface contract for the 'Availability Bitmask Cache Layer' component (availability_bitmask_cache). This component builds and maintains Redis-cached bitmasks from PostgreSQL availability_blocks data, exposing checkAvailability(unitId, startDate, endDate) → boolean and invalidateCache(unitId). It uses hash-sharded Redis keys (avail:{hash(unit_id) % 64}:{unit_id}) with a 365-day sliding window. The contract must specify types, error handling, serialization, and naming conventions for a Deno/TypeScript + Redis + PostgreSQL stack.",
+  "findings": [
+    {
+      "topic": "Bitmask representation for date-range availability",
+      "finding": "A 365-day availability window maps naturally to a 365-bit bitmask (46 bytes). Redis BITFIELD and GETRANGE commands can operate on binary strings directly, enabling O(1) sub-range checks via bitwise AND against a pre-computed range mask. The anchor date (day 0) must be explicitly stored or derived deterministically (e.g., today's UTC date or a fixed epoch) so that bit positions are unambiguous. A rolling-window approach where day 0 = today requires daily rotation/rebuild, whereas a fixed-epoch approach (day 0 = a known date) avoids rotation but needs offset math.",
+      "source": "Redis documentation on BITFIELD/SETBIT/GETBIT; industry patterns from booking/calendar systems (Airbnb engineering blog, Booking.com tech talks)",
+      "relevance": "Core data structure choice — the interface must expose or abstract the anchor-date concept and define how bit positions map to calendar dates.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Redis key design and hash-slot sharding",
+      "finding": "The key format avail:{hash(unit_id) % 64}:{unit_id} distributes keys across 64 logical shards. This is a well-established pattern for Redis Cluster compatibility — using hash tags {shard} ensures all keys for a shard land on the same cluster node. However, since unit_id is a UUID (128-bit), the hash function must be deterministic and consistent across services. A common approach: use a fast non-cryptographic hash (e.g., CRC32 or FNV-1a) of the UUID string, mod 64. The interface contract should specify the exact hash algorithm to prevent cross-service inconsistencies.",
+      "source": "Redis Cluster specification (hash slots); distributed caching best practices",
+      "relevance": "The key format is part of the public contract since other components or debugging tools may need to derive keys. The hash algorithm must be specified precisely.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "TypeScript type design for bitmask cache interfaces",
+      "finding": "Best practice is to use branded/opaque types for domain identifiers (UnitId as a branded string type) to prevent accidental misuse. Date parameters should be typed as ISO 8601 date strings (YYYY-MM-DD) not full timestamps, since availability is day-granularity. A dedicated DateString branded type prevents passing datetime strings. Return types should use discriminated unions for success/error cases rather than throwing exceptions, especially at module boundaries. The Result<T, E> pattern (inspired by Rust) is idiomatic in modern TypeScript for composable error handling.",
+      "source": "TypeScript handbook (branded types); fp-ts and neverthrow libraries; Deno standard library patterns",
+      "relevance": "Directly applicable — the interface contract needs precise type definitions that prevent misuse and encode domain constraints at the type level.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Cache invalidation patterns — lazy rebuild vs eager rebuild",
+      "finding": "Lazy invalidation (delete key, rebuild on next read) is simpler and preferred when read frequency is moderate. However, it introduces a cache-miss latency spike (cold read penalty). For high-traffic units, a hybrid approach — invalidate + async pre-warm — avoids thundering herd. The interface should expose invalidateCache as fire-and-forget (void return) but internally should handle the case where multiple concurrent reads trigger simultaneous rebuilds. A common pitfall: not using a distributed lock or single-flight pattern, causing N concurrent cache-miss queries to PostgreSQL for the same unit_id.",
+      "source": "Cache-aside pattern (Microsoft architecture docs); singleflight pattern (Go stdlib, adaptable to TS); Redis SETNX for distributed locks",
+      "relevance": "The invalidateCache contract needs to document behavior under concurrent access. The checkAvailability contract needs to document cache-miss behavior and latency characteristics.",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Error handling conventions at cache layer boundaries",
+      "finding": "Cache layers should degrade gracefully: if Redis is unavailable, fall back to direct PostgreSQL query. The interface should define explicit error types: CacheMiss (normal, triggers rebuild), CacheUnavailable (Redis down, fallback), DataNotFound (unit doesn't exist in PostgreSQL), InvalidDateRange (start > end, range exceeds 365 days, dates in the past). Throwing generic errors across module boundaries makes contract testing fragile. Instead, define a closed set of error codes/types as part of the contract.",
+      "source": "Circuit breaker pattern (Hystrix/Resilience4j concepts); Netflix reliability engineering practices",
+      "relevance": "Critical for the interface contract — callers need to know exactly what error states are possible and how to handle them.",
+      "confidence": 0.94
+    },
+    {
+      "topic": "TTL strategy for cached bitmasks",
+      "finding": "A 365-day bitmask cached with a fixed TTL (e.g., 24h) balances freshness vs load. However, the TTL should be configurable and documented in the interface. A common pitfall: not accounting for the sliding window — if the bitmask is anchored to a fixed date, after 24h the first bit(s) may represent past dates. Best practice: anchor to the start of the current UTC day, set TTL to expire at end of day (or use a 24h TTL), and always validate that requested dates fall within the bitmask's valid range. The contract should specify what happens when querying dates outside the 365-day window.",
+      "source": "Calendar/booking system engineering practices; Redis TTL documentation",
+      "relevance": "The interface must document the valid query range and behavior for out-of-range date requests.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Serialization format for bitmask storage in Redis",
+      "finding": "Two main approaches: (1) Store as a raw binary string using Redis SETBIT/GETBIT — most space-efficient (46 bytes for 365 bits) and allows server-side bit operations. (2) Store as a base64-encoded string — portable and debuggable but requires client-side bit manipulation. For this use case, raw binary (Redis bit string) is preferred since Redis BITCOUNT and BITFIELD can do range checks server-side. The interface contract should specify the internal format even though callers don't directly interact with it, for debugging and cross-service consistency.",
+      "source": "Redis bit operations documentation; binary protocol best practices",
+      "relevance": "Internal implementation detail but should be documented in the contract for operational clarity and future interoperability.",
+      "confidence": 0.88
+    },
+    {
+      "topic": "Deno 2.x + Redis client considerations",
+      "finding": "Deno 2.x supports npm packages natively, so the 'ioredis' or 'redis' npm packages work. Alternatively, deno-redis (r/redis on deno.land/x) is a native Deno Redis client. For PostgreSQL, deno-postgres (deno.land/x/postgres) is the standard. The interface should be client-agnostic — depend on abstractions (a RedisClient interface and a PgClient interface) not concrete implementations, enabling easy mocking in tests per the project's testing requirements.",
+      "source": "Deno 2.x documentation; deno.land/x registry; project operating procedures (mock DB/Redis requirement)",
+      "relevance": "The contract should define dependency injection interfaces for Redis and PostgreSQL clients to support testability requirements.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Bulk availability check optimization",
+      "finding": "The parent context mentions a bulk endpoint (GET /availability/bulk?unit_ids=&start=&end=). The cache layer should expose a bulk method (checkBulkAvailability) that uses Redis MGET or pipeline to fetch multiple bitmasks in a single round trip. A common pitfall: not batching Redis calls for bulk operations, resulting in N sequential round trips. The interface should define this bulk method even if initially implemented as a loop, to prevent callers from implementing their own batching logic.",
+      "source": "Redis pipelining documentation; bulk operation patterns in caching layers",
+      "relevance": "The parent REST API has a bulk endpoint — the cache layer interface needs a corresponding bulk method for efficiency.",
+      "confidence": 0.89
+    },
+    {
+      "topic": "Date boundary edge cases in bitmask operations",
+      "finding": "Frequently missed edge cases: (1) Timezone issues — availability must be strictly UTC day-aligned; the contract must enforce this. (2) Off-by-one errors in date range inclusion — is the range [start, end] inclusive on both ends? Must be specified. (3) Leap years — 365-bit bitmask may need to be 366 bits in leap years, or the system can always allocate 366 bits. (4) Querying a single day (start == end). (5) The bitmask anchor date rolling over at midnight UTC — concurrent requests during rollover may see stale data. (6) What 'available' means for today's date (partially elapsed day).",
+      "source": "Booking system engineering post-mortems; date/time handling best practices (W3C, ISO 8601)",
+      "relevance": "These edge cases must be explicitly addressed in the interface contract to prevent bugs in consuming services.",
+      "confidence": 0.95
+    }
+  ],
+  "recommended_approach": "Define the interface contract using the following structure:\n\n1. **Branded Types**: Define `UnitId` (branded UUID string), `DateString` (branded YYYY-MM-DD ISO 8601 string), and `ShardKey` (branded number 0-63) to enforce domain constraints at the type level.\n\n2. **Result Type**: Use a discriminated union `Result<T, AvailabilityError>` where `AvailabilityError` is a union of `InvalidDateRange | UnitNotFound | CacheUnavailable | InternalError`, each with an error code and message.\n\n3. **Core Interface** (`AvailabilityBitmaskCache`):\n   - `checkAvailability(unitId: UnitId, startDate: DateString, endDate: DateString): Promise<Result<boolean, AvailabilityError>>` — inclusive date range [start, end], max 365 days, must be today or future.\n   - `checkBulkAvailability(unitIds: UnitId[], startDate: DateString, endDate: DateString): Promise<Result<Map<UnitId, boolean>, AvailabilityError>>` — batched Redis pipeline for bulk lookups.\n   - `invalidateCache(unitId: UnitId): Promise<Result<void, AvailabilityError>>` — deletes the cached bitmask; next read triggers lazy rebuild.\n\n4. **Dependency Injection Interfaces**: Define `RedisClient` and `PgClient` abstractions that the cache layer depends on, enabling mock injection for tests.\n\n5. **Configuration Type**: Define `CacheConfig` with `ttlSeconds`, `shardCount` (default 64), `windowDays` (default 366 to handle leap years), `hashAlgorithm` (CRC32), `keyPrefix` ('avail').\n\n6. **Internal Contracts** (documented but not exposed): Bitmask is a raw Redis bit string, 366 bits, anchored to today's UTC date (bit 0 = today, bit 365 = today + 365 days). 1 = available, 0 = blocked. Key format: `avail:{CRC32(unit_id) % 64}:{unit_id}`.\n\n7. **Edge Case Handling**: Date range is inclusive on both ends. Querying past dates returns InvalidDateRange error. Single-day queries (start == end) are supported. Singleflight pattern prevents thundering herd on cache miss. Redis unavailability triggers PostgreSQL fallback (logged as warning).\n\n8. **Contract Tests**: Define request/response shape tests for each method, including error cases. Mock Redis and PostgreSQL per project standards.",
+  "alternatives_considered": [
+    "Fixed-epoch anchor (e.g., 2024-01-01) vs rolling-window anchor (today's UTC date): Fixed epoch avoids daily rebuild but wastes bits on past dates and requires larger bitmasks over time. Rolling window (anchor = today) keeps bitmask compact at 366 bits but requires daily expiration/rebuild. Recommend: rolling window anchored to today's UTC date with TTL expiring at end of UTC day.",
+    "Raw Redis bit string vs base64-encoded string vs JSON array of 0/1: Raw bit string is most efficient and allows server-side BITCOUNT/BITFIELD operations. Base64 is portable but requires client-side decoding. JSON array is wasteful (365+ bytes vs 46). Recommend: raw Redis bit string with SETBIT/GETBIT.",
+    "Result<T, E> discriminated union vs thrown exceptions for error handling: Result type is more explicit, testable, and composable. Exceptions are simpler but leak across module boundaries unpredictably. Recommend: Result<T, E> pattern at the interface boundary, with specific error type union.",
+    "Single checkAvailability method vs separate getCachedBitmask + checkRange: Exposing the raw bitmask enables callers to do multiple range checks without repeated cache lookups. However, it leaks implementation details. Recommend: keep checkAvailability as the primary interface but add an optional getBitmask for advanced/bulk use cases.",
+    "Eager cache rebuild on invalidation vs lazy rebuild on next read: Eager avoids cold-read latency but adds write-path complexity and may rebuild unnecessarily. Lazy is simpler and sufficient for moderate traffic. Recommend: lazy rebuild with singleflight protection against thundering herd.",
+    "CRC32 vs FNV-1a vs simple modulo of UUID segments for hash sharding: All are acceptable. CRC32 is widely available and well-distributed. Recommend: CRC32 of the UUID string representation, mod 64, for determinism and broad language support."
+  ],
+  "risks": [
+    "Thundering herd on cache miss: Multiple concurrent reads for the same unit_id during cache rebuild can overwhelm PostgreSQL. Mitigate with singleflight/mutex pattern.",
+    "Bitmask anchor date rollover at UTC midnight: Requests spanning the rollover moment may read a stale bitmask anchored to yesterday. Mitigate by checking anchor date validity before returning cached results.",
+    "Hash algorithm inconsistency across services: If any other service needs to compute the Redis key, using a different hash function or different string representation of UUID will produce wrong keys. Mitigate by documenting exact algorithm (CRC32 of lowercase UUID string with hyphens) in the contract.",
+    "Leap year handling: A 365-bit bitmask is insufficient for years spanning Feb 29. Mitigate by always using 366 bits.",
+    "Redis key collision or stale data: If TTL is set incorrectly or invalidation fails silently, stale availability data could cause double bookings. Mitigate by making invalidation return success/failure and logging all failures.",
+    "Off-by-one in date-to-bit-position mapping: Inclusive vs exclusive range boundaries are a classic source of booking bugs. Mitigate by explicit contract specification and thorough edge-case tests.",
+    "PostgreSQL fallback under Redis outage may not handle load: If Redis goes down and all traffic falls through to PostgreSQL, the database may be overwhelmed. Mitigate by documenting this risk and recommending rate limiting or circuit breaking in the implementation."
+  ],
+  "compliance_notes": [
+    "All dates must be ISO 8601 format (YYYY-MM-DD), UTC, per project standards.",
+    "UUIDs for all entity identifiers (unit_id) per project standards.",
+    "Type annotations required on all public functions per project standards.",
+    "All functions must have at least one test; tests must be runnable without external services (mock Redis/PostgreSQL) per project standards.",
+    "Integration boundaries must have contract tests validating request/response shapes per project standards.",
+    "Files must stay under 300 lines per project standards — interface definition, types, implementation, and tests should be separate files.",
+    "Prefer Deno stdlib over third-party libraries where possible per project standards.",
+    "Service must be independently deployable under services/availability_bitmask_cache/ per project standards."
+  ]
+}

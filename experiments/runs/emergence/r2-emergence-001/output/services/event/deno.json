@@ -1,0 +1,15 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --allow-read src/main.ts",
+    "dev": "deno run --watch --allow-net --allow-env --allow-read src/main.ts",
+    "test": "deno test --allow-net --allow-env --allow-read --allow-hrtime",
+    "test:unit": "deno test --allow-net --allow-env --allow-read tests/unit/",
+    "test:integration": "deno test --allow-net --allow-env --allow-read tests/integration/"
+  },
+  "imports": {
+    "std/": "https://deno.land/std@0.208.0/"
+  },
+  "compilerOptions": {
+    "strict": true
+  }
+}

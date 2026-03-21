@@ -1,0 +1,118 @@
+{
+  "task_summary": "Define the interface contract for 'Pricing Service Tests' (pricing_tests): a comprehensive test suite for a rate cache service covering unit tests for rate calculation logic (seasonal overlaps, LOS discounts, fee/tax stacking), cache shard distribution tests, API contract tests, cache miss/hit path tests, and edge cases (zero-night stays, currency rounding, overlapping rate overrides). The system uses TypeScript/Deno, Redis hash-sharded by unit_id, PostgreSQL for authoritative rate configs, and must follow strict typing, mocking, and contract-testing conventions.",
+  "findings": [
+    {
+      "topic": "Type system design for pricing/monetary values",
+      "finding": "Monetary values should be represented as integer minor units (cents/pence) rather than floating-point to avoid IEEE 754 rounding errors. A branded/opaque type pattern in TypeScript (e.g., `type Cents = number & { readonly __brand: 'Cents' }`) prevents accidental mixing of currencies or raw numbers. All intermediate calculations should stay in integer arithmetic; only format to decimal at the presentation boundary. Libraries like dinero.js formalize this, but for stdlib preference, a simple value object with currency code + minor-unit integer suffices.",
+      "source": "Martin Fowler's 'Money' pattern; IEEE 754 best practices; TypeScript branded types pattern",
+      "relevance": "Directly applies to rate calculation, fee/tax stacking, and currency rounding edge cases. The test suite must validate that no floating-point drift occurs across multi-night stays with percentage-based fees.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Naming conventions for test files and cases in Deno",
+      "finding": "Deno convention is `*_test.ts` suffix. Test cases should follow the pattern `Deno.test('ServiceName > methodName > scenario description', ...)`. Grouping via `describe/it` from `@std/testing/bdd` is available in Deno std. For pricing, name tests to encode the business rule: e.g., 'RateCalculator > calculateNightlyTotal > applies LOS discount when stay >= threshold nights'. Use nested describe blocks to group by feature area (rate calculation, cache sharding, API contract, edge cases).",
+      "source": "Deno standard library documentation; Deno testing best practices",
+      "relevance": "Establishes the file structure and naming pattern for all test cases in the suite.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Contract testing patterns for REST API boundaries",
+      "finding": "Contract tests should validate request/response shapes using schema validation (Zod or TypeBox in TypeScript). Define shared schema objects that both the service and its consumers reference. Tests assert: (1) the response matches the declared schema for all status codes, (2) required fields are always present, (3) date fields are ISO 8601 UTC strings, (4) UUIDs are valid v4. Use a pattern where the contract schema is the single source of truth, and both producer and consumer tests import it. This is lighter-weight than Pact but satisfies the project's 'contract tests validating request/response shapes' requirement.",
+      "source": "Consumer-Driven Contract Testing (Pact); Zod schema validation; TypeBox for JSON Schema compat",
+      "relevance": "Directly required by operating procedures: 'Integration boundaries must have contract tests validating request/response shapes'.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Redis mock strategies for cache testing without external services",
+      "finding": "For Deno/TypeScript, create an in-memory Redis mock implementing only the subset of commands used (HGET, HSET, HDEL, EXPIRE, etc.). The mock should be a class implementing a `RedisClient` interface with the same method signatures. This follows the dependency inversion principle — the service depends on the interface, tests inject the mock. Alternative: use `testcontainers` for integration but that violates the 'no external services' rule. The mock should simulate: key expiry (TTL), hash operations, and optionally latency/errors for resilience testing.",
+      "source": "Dependency injection patterns; hexagonal architecture testing practices",
+      "relevance": "Operating procedures mandate: 'Tests must be runnable without external services (mock DB/Redis/Kafka)'. The mock must faithfully represent Redis hash-shard behavior.",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Cache shard distribution testing",
+      "finding": "Hash-sharding by unit_id should use a consistent hashing function (CRC32 or MurmurHash mod N shards). Tests should verify: (1) deterministic shard assignment — same unit_id always maps to the same shard, (2) uniform distribution — given a large random set of UUIDs, shard counts should be within statistical tolerance (chi-squared test or simple ±15% deviation check), (3) no hot-shard scenario with realistic unit_id distributions. The shard key function should be a pure function, trivially testable in isolation.",
+      "source": "Consistent hashing literature; Redis cluster key-slot distribution patterns",
+      "relevance": "Directly required test category. Pure function extraction makes this highly testable without Redis.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Rate calculation: seasonal overlap and override resolution",
+      "finding": "The established pattern is a priority-based override chain (platform → brand → property → unit per the 4-tier model) combined with date-range specificity. When multiple seasonal rates overlap for the same date, the most specific (narrowest date range or highest-priority tier) wins. The 'last-writer-wins' anti-pattern should be avoided. Tests must cover: (1) non-overlapping seasons, (2) fully overlapping seasons with different priorities, (3) partially overlapping seasons where a stay spans the boundary, (4) gap dates that fall back to the default rate. A common pitfall is off-by-one errors on season boundaries (inclusive start, exclusive end is the safest convention).",
+      "source": "Revenue management system design patterns; date-range overlap resolution algorithms",
+      "relevance": "Core business logic under test. The 4-tier override system from the architecture patterns compounds the complexity.",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Length-of-stay (LOS) discount calculation patterns",
+      "finding": "LOS discounts are typically defined as threshold-based tiers: e.g., 7+ nights = 10%, 28+ nights = 20%. The discount applies to the total nightly rate sum, not per-night. Key test scenarios: (1) stay exactly at threshold boundary (7 nights), (2) stay one night below threshold (6 nights), (3) multiple thresholds — highest qualifying tier wins, (4) interaction with seasonal rates — discount applies after rate calculation but before fees/taxes, (5) zero-night edge case should not trigger any discount. A common bug is applying the discount before or after the wrong step in the calculation pipeline.",
+      "source": "Vacation rental pricing engine patterns (Guesty, Lodgify, PriceLabs documentation)",
+      "relevance": "Directly in scope. Order of operations (rates → discounts → fees → taxes) must be tested explicitly.",
+      "confidence": 0.89
+    },
+    {
+      "topic": "Fee and tax stacking order",
+      "finding": "Fees and taxes must have a defined application order. Common pattern: (1) compute base nightly total, (2) apply LOS discount, (3) add flat fees (cleaning fee, service fee), (4) compute percentage-based fees on subtotal, (5) compute taxes on the taxable subtotal (which may or may not include fees depending on jurisdiction). Tests must cover: tax-on-fee vs tax-on-rent-only, multiple tax rates stacking additively vs compounding, and the rounding strategy at each step (round-last vs round-per-line-item). The calculation pipeline should be a pure function taking a structured input and returning an itemized breakdown.",
+      "source": "Accounting/invoicing best practices; vacation rental tax compliance patterns",
+      "relevance": "Directly in scope. Rounding errors compound across steps — tests must assert exact cent values.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Edge case: zero-night stays and currency rounding",
+      "finding": "Zero-night stays (check-in == check-out) should be explicitly handled — either rejected with a validation error or return a zero-total quote. Tests should assert the specific behavior chosen. For currency rounding: banker's rounding (round half to even) is preferred for financial calculations to avoid systematic bias. Test with values that hit exact half-cent boundaries (e.g., $100.005). Also test currencies with non-standard minor units: JPY has 0 decimal places, BHD has 3. If multi-currency is supported, the minor-unit multiplier must be currency-aware.",
+      "source": "ISO 4217 currency standards; IEEE 754 rounding modes; financial software testing guidelines",
+      "relevance": "Explicitly listed as an edge case requirement. Rounding mode choice affects every calculation test assertion.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Cache miss/hit path testing patterns",
+      "finding": "Test the read-through cache pattern: (1) cache hit — returns data from Redis mock without DB call, (2) cache miss — falls through to PostgreSQL mock, populates cache, returns data, (3) cache write-back — after miss, verify the value was written to Redis with correct TTL, (4) stale cache — test TTL expiry leads to re-fetch, (5) cache stampede — concurrent misses for the same key should not cause N parallel DB queries (use a singleflight/lock pattern). Use spy/mock counters to assert the number of DB calls made.",
+      "source": "Cache-aside / read-through caching patterns; Thundering herd mitigation",
+      "relevance": "Directly required test category. Spy-based assertion on call counts is essential for verifying the path taken.",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Serialization format for rate data in Redis",
+      "finding": "For Redis hash storage, rate data should be serialized as JSON strings within hash fields, or as MessagePack for compactness. Given the project preference for JSON and stdlib, JSON is the pragmatic choice. The serialization schema should be versioned (include a `v` field) to allow schema evolution without cache invalidation storms. Dates in the serialized format must be ISO 8601 strings per project standards. Tests should verify round-trip serialization: serialize → deserialize → assert deep equality, including edge cases like empty arrays, null optional fields, and maximum precision decimal values.",
+      "source": "Redis data modeling best practices; schema evolution patterns",
+      "relevance": "Affects how rate data is stored/retrieved and how tests construct mock cache entries.",
+      "confidence": 0.88
+    },
+    {
+      "topic": "Error handling conventions in TypeScript for pricing",
+      "finding": "Use discriminated union result types (`type Result<T> = { ok: true; value: T } | { ok: false; error: PricingError }`) rather than thrown exceptions for expected failure modes (invalid date range, unknown unit, unsupported currency). Reserve thrown exceptions for truly unexpected failures (Redis connection loss, serialization corruption). Define a `PricingError` union type with specific error kinds: `UNIT_NOT_FOUND`, `INVALID_DATE_RANGE`, `RATE_NOT_CONFIGURED`, `CURRENCY_MISMATCH`. Tests should assert both the success path and each error variant.",
+      "source": "TypeScript error handling patterns; Result monad pattern; Rust-inspired error handling in TS",
+      "relevance": "Establishes the error handling contract that all tests must validate. Discriminated unions give exhaustive checking at compile time.",
+      "confidence": 0.9
+    }
+  ],
+  "recommended_approach": "Structure the pricing_tests contract around these pillars:\n\n**1. Type Definitions (shared types)**\n- Define `Money` as a branded type wrapping `{ amountMinor: number; currency: CurrencyCode }` (integer cents).\n- Define `PricingError` as a discriminated union with error kinds.\n- Use `Result<T, PricingError>` return types for all calculation functions.\n- Define Zod schemas for API request/response shapes that serve double duty as contract test validators.\n- All entity IDs are branded UUID strings; all dates are ISO 8601 UTC strings (branded `ISODateString`).\n\n**2. Test File Structure** (under `services/pricing/tests/`)\n- `rate_calculation_test.ts` — pure function tests for nightly rate resolution, seasonal overlap, 4-tier override\n- `los_discount_test.ts` — LOS threshold logic\n- `fee_tax_test.ts` — fee/tax stacking, rounding, order of operations\n- `cache_shard_test.ts` — deterministic shard assignment, distribution uniformity\n- `cache_path_test.ts` — miss/hit/writeback/TTL with mock Redis + spy counters\n- `api_contract_test.ts` — schema validation of all endpoint request/response shapes\n- `edge_cases_test.ts` — zero-night, currency rounding, overlapping overrides, boundary dates\n- `serialization_test.ts` — round-trip JSON serialization of rate structures\n\n**3. Mocking Strategy**\n- Define `RedisClient` and `RateRepository` interfaces; inject mock implementations in tests.\n- Mocks track call counts for path assertions. No external services needed.\n\n**4. Naming & Conventions**\n- Deno BDD style: `describe('RateCalculator') > describe('calculateTotal') > it('applies 20% LOS discount for 28+ night stays')`.\n- All monetary assertions compare exact integer minor-unit values.\n- Use test fixture factories (e.g., `buildRate()`, `buildStay()`) with sensible defaults and overrides.\n\n**5. Calculation Pipeline Contract**\n- The computation order is codified as: base rates → seasonal/override resolution → LOS discount → flat fees → percentage fees → taxes.\n- Each step is a pure function, independently testable.\n- The pipeline function composes them and returns an itemized `PriceBreakdown`.",
+  "alternatives_considered": [
+    "Using Pact for contract testing — rejected as heavyweight; Zod schema validation is lighter, fits the stdlib preference, and satisfies the stated contract test requirements.",
+    "Using floating-point dollars instead of integer minor units — rejected due to IEEE 754 rounding errors that compound across multi-night stays with percentage fees/taxes.",
+    "Using thrown exceptions for all error handling — rejected in favor of Result types for expected failures; exceptions reserved for unexpected/infrastructure failures, giving compile-time exhaustiveness checking.",
+    "Using MessagePack for Redis serialization — rejected in favor of JSON for consistency with project-wide JSON standard and easier debugging; performance difference is negligible at expected scale.",
+    "Using testcontainers for Redis integration tests — rejected because operating procedures require tests runnable without external services; in-memory mock with interface abstraction is sufficient.",
+    "Single monolithic test file — rejected; splitting by concern area (rate calc, cache, API, edge cases) keeps files under 300 lines per project standards."
+  ],
+  "risks": [
+    "Rounding error accumulation: If the calculation pipeline rounds at each intermediate step rather than rounding once at the end, cent-level discrepancies can appear. Decision on round-per-step vs round-last must be explicit and tested.",
+    "Seasonal boundary off-by-one errors: Inclusive vs exclusive date range semantics must be defined and enforced consistently. A check-in on a season boundary date could resolve to either season.",
+    "4-tier override complexity explosion: Platform → brand → property → unit overrides for rates, fees, AND taxes creates a combinatorial test space. Prioritize: unit override present, fallback to property, gap scenarios.",
+    "Cache mock fidelity: In-memory Redis mock may not replicate Redis behavior for edge cases like MULTI/EXEC atomicity or key expiry timing. Document mock limitations explicitly.",
+    "Cache stampede under concurrent misses: If the service doesn't implement singleflight/mutex for cache population, tests won't catch thundering herd issues. This is hard to test deterministically — consider a dedicated concurrency test with controlled timing.",
+    "Currency assumption: If the system assumes a single currency (USD) but later needs multi-currency, the Money type must already carry currency codes. Build this in from the start.",
+    "Test fixture drift: If test factories (buildRate, buildStay) diverge from actual domain types, tests pass but production breaks. Fixtures must be typed against the same interfaces as production code."
+  ],
+  "compliance_notes": [
+    "All public functions must have type annotations — enforced by TypeScript strict mode and the branded type patterns.",
+    "All dates must be ISO 8601 UTC strings — both in API contracts and Redis serialized data.",
+    "UUIDs for all entity identifiers — use branded UUID type to prevent string mixing.",
+    "Tests must run without external services — Redis and PostgreSQL interactions must use injected mock implementations.",
+    "No task is done until contract tests pass — API contract tests using Zod schemas are mandatory before marking complete.",
+    "Files must stay under 300 lines — test suite is split into 7-8 focused files.",
+    "Prefer stdlib over third-party — use Deno std testing utilities; Zod is a justified exception for schema validation (or use TypeBox which generates JSON Schema).",
+    "Each service gets its own directory — tests live under services/pricing/tests/.",
+    "Integration boundaries must have contract tests — api_contract_test.ts validates all request/response shapes."
+  ]
+}

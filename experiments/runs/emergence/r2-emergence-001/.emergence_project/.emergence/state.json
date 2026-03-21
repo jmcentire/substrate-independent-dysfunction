@@ -1,0 +1,83 @@
+{
+  "id": "06336456",
+  "project_dir": "experiments/runs/emergence/r2-emergence-001/.emergence_project",
+  "status": "partial",
+  "agents": [
+    {
+      "agent_id": "agent-00",
+      "status": "idle",
+      "tasks_completed": 2,
+      "tasks_created": 6,
+      "tokens_used": 109195,
+      "iterations": 8,
+      "error": null
+    },
+    {
+      "agent_id": "agent-01",
+      "status": "idle",
+      "tasks_completed": 2,
+      "tasks_created": 1,
+      "tokens_used": 163743,
+      "iterations": 10,
+      "error": null
+    },
+    {
+      "agent_id": "agent-02",
+      "status": "idle",
+      "tasks_completed": 2,
+      "tasks_created": 6,
+      "tokens_used": 81065,
+      "iterations": 5,
+      "error": null
+    },
+    {
+      "agent_id": "agent-03",
+      "status": "idle",
+      "tasks_completed": 1,
+      "tasks_created": 7,
+      "tokens_used": 164797,
+      "iterations": 18,
+      "error": null
+    },
+    {
+      "agent_id": "agent-04",
+      "status": "idle",
+      "tasks_completed": 2,
+      "tasks_created": 4,
+      "tokens_used": 133283,
+      "iterations": 10,
+      "error": null
+    },
+    {
+      "agent_id": "agent-05",
+      "status": "idle",
+      "tasks_completed": 2,
+      "tasks_created": 6,
+      "tokens_used": 97790,
+      "iterations": 7,
+      "error": null
+    },
+    {
+      "agent_id": "agent-06",
+      "status": "idle",
+      "tasks_completed": 3,
+      "tasks_created": 7,
+      "tokens_used": 133693,
+      "iterations": 7,
+      "error": null
+    },
+    {
+      "agent_id": "agent-07",
+      "status": "idle",
+      "tasks_completed": 2,
+      "tasks_created": 3,
+      "tokens_used": 157733,
+      "iterations": 12,
+      "error": null
+    }
+  ],
+  "total_tasks": 41,
+  "tasks_completed": 16,
+  "total_tokens": 1041299,
+  "total_cost_usd": 43.924605
+}

@@ -1,0 +1,43 @@
+{
+  "files": [
+    {
+      "path": "hermes_p2p/__init__.py",
+      "relevance": "new",
+      "reasoning": "Package init file that exports the public API: Node, Network, channel types, and crypto utilities. Must be created from scratch."
+    },
+    {
+      "path": "hermes_p2p/crypto.py",
+      "relevance": "new",
+      "reasoning": "Core crypto module implementing Ed25519 keypair generation, Ed25519-to-X25519 conversion, onion packet construction/peeling with constant-size padding, symmetric encryption (AES-GCM/ChaCha20-Poly1305), and signing/verification. Foundation for all security properties."
+    },
+    {
+      "path": "hermes_p2p/messages.py",
+      "relevance": "new",
+      "reasoning": "Message and channel types module. Defines MessageEnvelope dataclass, PublicChannel, PrivateChannel, DirectMessage channel types, and serialization/deserialization logic."
+    },
+    {
+      "path": "hermes_p2p/dedup.py",
+      "relevance": "new",
+      "reasoning": "Deduplication module implementing TTLExpiringSet (dict-based with expiry timestamps, bounded by max_size) and a simple Bloom filter class for bounded-memory deduplication."
+    },
+    {
+      "path": "hermes_p2p/network.py",
+      "relevance": "new",
+      "reasoning": "Network simulator class that holds a registry of nodes, simulates message delivery with configurable latency and packet loss, and supports network partition/heal simulation for testing."
+    },
+    {
+      "path": "hermes_p2p/node.py",
+      "relevance": "new",
+      "reasoning": "Core Node class implementing: keypair identity, peer management, bootstrap, message receive/send/forward, gossip propagation with configurable fanout, onion routing integration, TTL enforcement with clock skew tolerance, deduplication, and channel subscription."
+    },
+    {
+      "path": "tests/test_hermes.py",
+      "relevance": "new",
+      "reasoning": "Comprehensive test file implementing all 9 required test cases: message delivery, TTL expiry, deduplication, onion relay privacy, bloom filter bounds, public channel signatures, private channel encryption, bootstrap discovery, and partition/recovery."
+    }
+  ],
+  "confidence": 0.97,
+  "search_strategy": "The file listing is empty, confirming this is a greenfield project. All files referenced in the architecture plan need to be created from scratch. The plan is self-consistent — all 7 files form a complete package with no external dependencies beyond the Python cryptography library.",
+  "consternation": "",
+  "escalation": ""
+}

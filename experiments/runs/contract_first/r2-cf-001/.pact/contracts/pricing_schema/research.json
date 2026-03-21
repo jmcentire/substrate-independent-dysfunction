@@ -1,0 +1,104 @@
+{
+  "task_summary": "Define the interface contract for 'Pricing Database Schema & Repository' (pricing_schema) — a PostgreSQL schema and data access layer for rental unit pricing. This includes table definitions (rate_plans, rate_overrides, fees, taxes, los_discounts), TypeScript type definitions, and repository functions for rate resolution given a unit and date range. The component lives within a rate cache service using PostgreSQL as the authoritative store and Redis as a hot cache, built on Deno/TypeScript with Oak.",
+  "findings": [
+    {
+      "topic": "PostgreSQL Schema Design for Pricing/Rate Management",
+      "finding": "Best practice for rate management schemas uses a normalized structure: a base rate_plans table with temporal override tables using date ranges (date_start, date_end). Critical: use DATE type (not TIMESTAMP) for nightly rate boundaries, use NUMERIC/DECIMAL (not FLOAT) for all monetary values to avoid floating-point rounding errors. Add CHECK constraints ensuring date_start <= date_end and non-negative rates. Use EXCLUDE constraints with daterange and the btree_gist extension to prevent overlapping rate overrides for the same rate_plan_id.",
+      "source": "PostgreSQL documentation on range types and exclusion constraints; industry patterns from Cloudbeds, Lodgify, and similar PMS systems",
+      "relevance": "Directly applies to rate_overrides table design. Overlapping date ranges are the #1 source of pricing bugs in hospitality software.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "TypeScript Type Patterns for Financial/Monetary Data",
+      "finding": "Represent monetary amounts as integer cents (or smallest currency unit) internally, with a branded/opaque type pattern (e.g., `type CentsAmount = number & { readonly __brand: 'CentsAmount' }`) to prevent accidental mixing of cents and dollars. Alternatively, use a Money value object `{ amount: number; currency: string }` where amount is in minor units. Never use bare `number` for money. Currency should be ISO 4217 (3-letter code). Percentages should be stored as basis points (integer) or as decimal with explicit precision constraints.",
+      "source": "Martin Fowler's 'Patterns of Enterprise Application Architecture' (Money pattern); Stripe API conventions; dinero.js library patterns",
+      "relevance": "Directly impacts type definitions for base_rate, nightly_rate, amount, rate, and discount_pct fields across all five tables.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Repository Pattern in TypeScript/Deno",
+      "finding": "The repository pattern should expose a narrow interface of pure async functions (composition over inheritance per project standards). Use a factory function that accepts a database client/pool dependency, returning an object of typed methods. Each method should return `Result<T, PricingError>` or similar discriminated union rather than throwing — this makes error handling explicit at the type level. For Deno+PostgreSQL, use deno-postgres (https://deno.land/x/postgres) which is the stdlib-aligned choice. Repository functions should accept and return domain types, not raw SQL rows — mapping happens inside the repository.",
+      "source": "Clean Architecture (Robert C. Martin); deno-postgres library documentation; TypeScript community patterns for repository layers",
+      "relevance": "Directly shapes the repository function signatures and error handling approach. The factory pattern also enables easy mocking for tests (project requirement).",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Rate Resolution Algorithm Patterns",
+      "finding": "Rate resolution for a date range should follow a 'most-specific-wins' cascade: (1) check rate_overrides for each night in the range, (2) fall back to rate_plan base_rate for nights without overrides. The function should return a per-night breakdown (array of {date, nightly_rate, source}) plus an aggregated total — never just a total, as callers need transparency for display and auditing. LOS discounts should be applied after per-night summation. Fees should be categorized as per-night vs per-stay and as flat vs percentage. Taxes apply after fees are added. The resolution order is: nightly rates → LOS discount → fees → taxes. This matches OTA (Online Travel Agency) industry standards.",
+      "source": "OpenTravel Alliance (OTA) pricing specifications; Expedia/Booking.com partner API documentation patterns; HTNG (Hotel Technology Next Generation) standards",
+      "relevance": "Defines the shape of the primary repository function (resolveRatesForDateRange) and its return type. Getting the computation order wrong is a common and costly bug.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "4-Tier Override Pattern for Pricing Settings",
+      "finding": "Per the project's architectural decision, pricing follows platform → brand → property → unit specificity. For the pricing_schema component specifically, the tables are scoped to unit_id (most specific tier). The repository should accept an optional override_context that can resolve up the chain. However, since this is the schema/repository layer (not the engine), the repository should store and retrieve data as-is, and defer the merge logic to the pricing_engine component. The schema should include a `tier` or `source_level` column (or rely on the presence/absence of unit_id vs property_id) to support this.",
+      "source": "Project engineering decision ED-007 (4-tier override); CSS specificity model analogy; feature flag systems like LaunchDarkly's targeting rules",
+      "relevance": "Impacts whether tables need additional foreign keys (property_id, brand_id) or if unit_id is sufficient at this layer. Recommend keeping unit_id only in the schema and letting the engine handle hierarchy.",
+      "confidence": 0.85
+    },
+    {
+      "topic": "Date Range Query Patterns and Edge Cases",
+      "finding": "Common pitfalls in date-range pricing queries: (1) Off-by-one errors — a stay from Jan 1-3 means 2 nights (Jan 1 and Jan 2), not 3. Convention: check-in date is inclusive, check-out date is exclusive (half-open interval [check_in, check_out)). (2) Timezone handling — all dates should be stored as DATE (not TIMESTAMP) since nightly rates are calendar-date-bound, not time-bound. (3) Gap handling — if no rate exists for a night in the range, the function must explicitly error rather than silently skip. (4) Rate plan validity — rate_plans should have optional valid_from/valid_to dates. (5) Currency mismatch — all rates for a single resolution must be in the same currency; mixing currencies must be a hard error.",
+      "source": "Hospitality industry date conventions (HTNG, OTA); common bug reports in open-source PMS systems; PostgreSQL date/range type documentation",
+      "relevance": "Directly impacts repository function contracts, error types, and return types. The half-open interval convention is critical for correctness.",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Serialization and JSON Representation for Pricing Types",
+      "finding": "For REST API serialization (project uses JSON over HTTP): dates should be ISO 8601 date strings (YYYY-MM-DD, not full datetime). Monetary amounts in JSON should include both the numeric value and currency as sibling fields. UUIDs as string format. Percentages should be serialized as decimal numbers (e.g., 0.15 for 15%) with a clear naming convention (_pct suffix already used in the schema). Consider including a `version` or `updated_at` field on rate_plans for cache invalidation signaling to Redis. Use snake_case for database columns and camelCase for TypeScript types with explicit mapping.",
+      "source": "JSON:API specification; Google API design guidelines; project operating procedures (ISO 8601, UUIDs, JSON REST)",
+      "relevance": "Ensures the repository's type definitions align with the API layer's serialization needs and the project's stated conventions.",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Deno-Postgres and Connection Management",
+      "finding": "deno-postgres (https://deno.land/x/postgres) provides connection pooling via Pool class. Repository factory should accept a Pool (not a single client) for concurrent query support. Use parameterized queries exclusively to prevent SQL injection. For the database-per-service-via-schemas pattern (project decision), prefix all table names with the schema name (e.g., pricing.rate_plans) or set search_path at connection time. Transactions are needed for multi-table writes (e.g., creating a rate_plan with its overrides atomically). The repository interface should expose a transaction helper or accept an optional transaction client.",
+      "source": "deno-postgres library documentation; PostgreSQL schema isolation patterns; project decision ED-010 (database-per-service via schemas)",
+      "relevance": "Directly impacts the repository factory signature, connection handling, and how the schema DDL is structured.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Mock/Stub Strategy for Repository Testing",
+      "finding": "Per project requirements, tests must run without external services. For repository testing: (1) Define the repository as an interface/type, then provide both a real PostgreSQL implementation and an in-memory mock implementation. (2) The mock should use Map<string, T> structures internally. (3) Contract tests should be written against the interface type so they can run against both implementations. (4) For the real implementation, consider using testcontainers or pg_tmp for integration tests, but keep unit tests fully in-memory. The factory function pattern naturally supports this — just swap the dependency.",
+      "source": "Project operating procedure (mock all external deps); Testing patterns from 'Growing Object-Oriented Software Guided by Tests'; Deno testing documentation",
+      "relevance": "Shapes how the repository interface is defined — it must be mockable, meaning all database access is behind the interface boundary.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Indexing Strategy for Pricing Tables",
+      "finding": "Critical indexes for performance: (1) rate_plans: unique index on (unit_id, name) to prevent duplicate plan names per unit; index on unit_id for lookups. (2) rate_overrides: composite index on (rate_plan_id, date_start, date_end) for range queries; GiST index with daterange for exclusion constraints. (3) fees: index on (unit_id, fee_type). (4) taxes: index on (unit_id, tax_type). (5) los_discounts: index on (unit_id, min_nights). For the rate resolution query (find all rates for a unit across a date range), the critical path is: rate_plans by unit_id → rate_overrides overlapping the requested range. A covering index on rate_overrides(rate_plan_id) INCLUDING (date_start, date_end, nightly_rate) can eliminate heap lookups.",
+      "source": "PostgreSQL indexing best practices; Use The Index Luke (use-the-index-luke.com); hospitality database optimization patterns",
+      "relevance": "Should be included in the schema DDL as part of the contract — indexes affect performance contracts and uniqueness guarantees.",
+      "confidence": 0.88
+    }
+  ],
+  "recommended_approach": "Define the pricing_schema contract in three parts:\n\n1. **Schema DDL**: PostgreSQL migration SQL within the `pricing` schema namespace. All five tables with proper types (UUID PKs, DATE for temporal fields, NUMERIC for money, TEXT for ISO 4217 currency codes). Include CHECK constraints, EXCLUDE constraints (for non-overlapping overrides), and indexes. Add `created_at`/`updated_at` audit columns on all tables.\n\n2. **TypeScript Domain Types**: Branded types for monetary amounts (CentsAmount), a discriminated union for fee types (flat vs percentage), and full entity types matching each table. Use camelCase for TS properties with explicit column-mapping helpers. Define a `ResolvedRate` type for the rate resolution output that includes a per-night breakdown. Define a `PricingError` discriminated union (RateNotFound, CurrencyMismatch, DateRangeInvalid, OverlapConflict, etc.).\n\n3. **Repository Interface**: A TypeScript type/interface produced by a factory function accepting a database pool. Methods: CRUD for each table + the critical `resolveRatesForDateRange(unitId, checkIn, checkOut)` query method. Return types use `Result<T, PricingError>` pattern. Include a `withTransaction` helper. Design the interface to be fully mockable — the test component will provide an in-memory implementation.\n\nUse half-open date intervals [checkIn, checkOut) throughout. Store all monetary values as integers in minor currency units. Keep the schema DDL and TypeScript types in separate files but ensure they stay synchronized via contract tests.",
+  "alternatives_considered": [
+    "Using TIMESTAMP instead of DATE for rate boundaries — rejected because nightly rates are inherently date-scoped, timestamps add timezone complexity with no benefit",
+    "Using FLOAT/DOUBLE for monetary values — rejected due to floating-point rounding errors; NUMERIC in PostgreSQL and integer cents in TypeScript are standard",
+    "Throwing exceptions from repository methods instead of returning Result types — rejected because explicit error types are more composable and type-safe in TypeScript, especially for rate resolution where 'no rate found' is an expected case not an exception",
+    "Including the 4-tier override hierarchy (property_id, brand_id, platform_id) directly in the schema tables — rejected because this is the unit-level schema layer; the pricing_engine component should handle hierarchy resolution per the service decomposition",
+    "Using an ORM (e.g., Prisma, Drizzle) instead of raw deno-postgres — rejected per project preference for stdlib over third-party libraries; raw parameterized queries with typed mappers are sufficient and more transparent",
+    "Storing rates as decimal dollars instead of integer cents — rejected because integer arithmetic eliminates rounding errors; conversion to display format happens at the API boundary"
+  ],
+  "risks": [
+    "Overlapping rate_overrides for the same rate_plan can cause ambiguous pricing — mitigate with EXCLUDE constraint using btree_gist extension",
+    "Currency mismatch within a single rate resolution (e.g., rate_plan in USD but override in EUR) — mitigate with CHECK constraint enforcing currency consistency and repository-level validation",
+    "Off-by-one errors in date range calculations — mitigate by enforcing half-open interval convention [checkIn, checkOut) consistently in all types and functions, with explicit documentation",
+    "Schema drift between PostgreSQL DDL and TypeScript types — mitigate with contract tests that validate type shapes against actual DB query results",
+    "Performance degradation on rate resolution for long date ranges with many overrides — mitigate with proper indexing and query optimization; flag stays >30 nights for batch processing",
+    "Deadlocks on concurrent rate_plan updates — mitigate by always acquiring locks in consistent order (by rate_plan_id) within transactions",
+    "Loss of precision when converting between integer cents and display decimals — mitigate by keeping all internal computation in cents and converting only at serialization boundary",
+    "The btree_gist extension may not be available in all PostgreSQL environments — mitigate by including CREATE EXTENSION IF NOT EXISTS in migration and documenting the requirement"
+  ],
+  "compliance_notes": [
+    "All entity identifiers must be UUIDs (project standard)",
+    "All dates must be ISO 8601 format in UTC (project standard)",
+    "All public functions must have type annotations (project standard)",
+    "Repository must be mockable without external services (project testing requirement)",
+    "Tables must be namespaced under the 'pricing' PostgreSQL schema (ED-010: database-per-service via schemas)",
+    "Files must stay under 300 lines (project preference — split schema DDL, types, and repository into separate files)",
+    "Snake_case for database columns, camelCase for TypeScript properties (project convention alignment)",
+    "Shared types referenced from shared_foundation, not duplicated (ED-008: services depend on shared_foundation)"
+  ]
+}

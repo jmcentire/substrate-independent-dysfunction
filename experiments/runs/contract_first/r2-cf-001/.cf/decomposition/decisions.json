@@ -1,0 +1,52 @@
+[
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "Task spec states Deno is preferred to match existing codebase. All 7 services will be implemented in TypeScript using Deno 2.x with Oak framework. This avoids polyglot complexity and allows shared type definitions."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "All 7 services share common patterns (UUID generation, date handling, bitmask operations, caching helpers, DB connections, test mocks). Extracting these into a shared library avoids duplication while maintaining service independence \u2014 each service imports the library at build time but deploys independently."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "Confirmed in interview answers: database-per-service pattern for independent deployability. In practice for local dev, this means one PostgreSQL instance with separate databases (or schemas) per service, created by Docker Compose init scripts."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "Assumption states Kafka is an internal implementation detail of the Event Service. Other services interact via HTTP. For testing and simple deployments, an in-memory event bus implementation satisfies the same interface. This dramatically simplifies testing and reduces infrastructure requirements."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "Real Stripe integration requires API keys and adds ~1s latency. A mock adapter that simulates Stripe behavior (success, decline, network error) with configurable latency (default ~300ms) enables full testing of the <3s booking flow without external dependencies. The real adapter is a drop-in replacement for production."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "The <3s constraint requires a synchronous request-response flow \u2014 not eventual consistency via sagas. The Booking Service makes sequential HTTP calls to downstream services with per-step timeout budgets (total ~2s active, ~1s margin). On failure, it executes compensating actions (refund, unblock) before returning an error. Idempotency keys prevent double-bookings on retry."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "365 bits requires more than a standard 64-bit integer. JavaScript BigInt natively supports arbitrary-precision integers with bitwise operations. A 365-bit bitmask stored as a hex string in Redis is compact (~92 bytes) and supports O(1) range checks via AND with a precomputed mask. This is simpler than Buffer-based approaches."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "Interview confirmed: 8 full bidirectional PMS integrations are infeasible. The adapter interface is the valuable deliverable \u2014 it defines the contract any future PMS integration must satisfy. The MockPMS adapter serves as both a reference implementation and a testing tool. Stubs for the 8 named PMS systems establish the extension points."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "Assumption confirms hash-sharding is a key-naming convention (hash(unit_id) % N \u2192 prefix), not multi-node Redis Cluster sharding. This distributes keys across logical partitions for future horizontal scaling while working on a single Redis instance today. N=64 provides enough distribution without excessive prefix space."
+  },
+  {
+    "ambiguity": "",
+    "decision": "",
+    "rationale": "The booking flow (Availability \u2192 Pricing \u2192 Property \u2192 Payments \u2192 Booking) is the core user story ('user at checkout with credit card'). Building in dependency order means each service can be tested independently as completed. Event and Sync services are lower priority \u2014 the booking flow works without them (events can be logged locally, sync can be deferred)."
+  }
+]

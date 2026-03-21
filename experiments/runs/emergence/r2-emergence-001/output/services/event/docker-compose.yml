@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  event-service:
+    build: .
+    ports:
+      - "8004:8004"
+    environment:
+      PORT: 8004
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/wander_events
+      KAFKA_BROKERS: kafka:9092
+      USE_MOCK_KAFKA: "true"
+      USE_MOCK_DB: "true"
+    depends_on:
+      - postgres
+      - kafka
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: wander_events
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5436:5432"
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - event_pgdata:/var/lib/postgresql/data
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+volumes:
+  event_pgdata:

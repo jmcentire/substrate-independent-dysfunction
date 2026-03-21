@@ -1,0 +1,25 @@
+Per-project budget exceeded: $10.2001 > $10.00
+Agent agent-04: execution failed for task 05660789: Budget exceeded after 1382+9974 tokens
+Per-project budget exceeded: $10.2330 > $10.00
+Agent agent-01: execution failed for task 40351522: Budget exceeded after 1384+162 tokens
+Per-project budget exceeded: $11.0622 > $10.00
+Agent agent-02: execution failed for task 5c1e34b7: Budget exceeded after 1369+10783 tokens
+Per-project budget exceeded: $12.0727 > $10.00
+Agent agent-00: execution failed for task 2d431cec: Budget exceeded after 1363+13200 tokens
+
+============================================================
+Emergence Swarm — simple-emergence-001
+============================================================
+Status:  budget_exceeded
+Cost:    $12.0727 / $10.00
+Tokens:  334,108
+Time:    355s
+Files:   16
+Tasks:   9/23 completed
+  agent-00: finished (done=2, created=2, iters=11)
+  agent-01: finished (done=4, created=12, iters=16)
+  agent-02: finished (done=1, created=6, iters=11)
+  agent-03: idle (done=1, created=1, iters=19)
+  agent-04: finished (done=1, created=1, iters=12)
+Output:  /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/emergence/simple-emergence-001
+============================================================

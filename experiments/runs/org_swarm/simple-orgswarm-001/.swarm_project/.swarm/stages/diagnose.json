@@ -1,0 +1,23 @@
+{
+  "task_type": "feature",
+  "complexity": "simple",
+  "confidence": 0.9,
+  "language": "Python",
+  "framework": "",
+  "summary": "Build an Anonymous Identity system with SSO authentication, site-specific unlinkable token derivation using hashing, Ed25519 token signing, and routing key resolution. Despite the detailed cryptographic spec, this is a single-module implementation using standard crypto primitives (SHA-256 hashing, Ed25519 signing) with an in-memory SSO server and client-side token derivation logic, plus tests.",
+  "reasoning": "The spec is thorough and detailed, but the actual implementation is straightforward:\n\n1. **Core crypto operations**: All are simple compositions of standard primitives — SHA-256 hashes of concatenated strings, Ed25519 sign/verify. No novel cryptography.\n2. **SSO server**: An in-memory store with three endpoints (register, authenticate, route_message). This is essentially a dictionary-backed class with ~3 methods.\n3. **Client**: Derives credential_hash, site-specific tokens, routing keys — all just hash() calls with different inputs. Signs tokens with Ed25519.\n4. **Token construction**: A small data structure signed with Ed25519.\n5. **Tests**: 6 test cases that are direct assertions on the properties described.\n\nThis is likely a single file (or two — implementation + tests) totaling ~200-350 lines. The complexity of the *concept* (privacy-preserving architecture) is high, but the complexity of the *implementation* is low because everything reduces to hash concatenations and a signing operation. No networking, no databases, no multi-service orchestration, no complex state management.",
+  "constraints": [
+    "Ed25519 must be used for token signing",
+    "All token derivation must be client-side only",
+    "SSO must never receive site_id",
+    "Tokens must be unlinkable across sites",
+    "Routing keys must resolve without exposing contact info to sites"
+  ],
+  "risks": [
+    "Choice of hash function matters for security claims — need a cryptographically secure hash (SHA-256 or better)",
+    "Ed25519 key management: where does the signing keypair live? Likely client-side, but spec doesn't fully clarify key lifecycle",
+    "proof_of_human_score is mentioned in token construction but not specified how it's obtained — will need to stub or simplify"
+  ],
+  "consternation": "",
+  "escalation": ""
+}

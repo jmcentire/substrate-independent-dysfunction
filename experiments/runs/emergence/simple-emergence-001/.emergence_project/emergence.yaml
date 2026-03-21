@@ -1,0 +1,5 @@
+backend: anthropic
+budget: 10.0
+model: claude-opus-4-6
+num_agents: 5
+repo: /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/emergence/simple-emergence-001/output

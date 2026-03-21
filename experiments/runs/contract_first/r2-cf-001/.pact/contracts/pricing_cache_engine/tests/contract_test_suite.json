@@ -1,0 +1,824 @@
+{
+  "component_id": "pricing_cache_engine",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "shard_key_happy_path",
+      "description": "shardKey returns a key in the format 'pricing:{N}:{unit_id}' where N is in [0, shard_count)",
+      "function": "shardKey",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "String matching pattern 'pricing:{N}:{unit_id}' where N is an integer in [0, shard_count)",
+      "expected_error": "",
+      "assertions": [
+        "Result matches regex 'pricing:\\d+:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'",
+        "Shard number N is in [0, shard_count)"
+      ]
+    },
+    {
+      "id": "shard_key_deterministic",
+      "description": "shardKey always returns the same key for the same unit_id (deterministic)",
+      "function": "shardKey",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Multiple calls return identical strings",
+      "expected_error": "",
+      "assertions": [
+        "Calling shardKey 100 times with same unit_id always returns the same result"
+      ]
+    },
+    {
+      "id": "shard_key_different_units_may_differ",
+      "description": "shardKey produces different shard numbers for different unit_ids (not guaranteed but statistically likely with enough samples)",
+      "function": "shardKey",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Multiple distinct UUID v4 unit_ids",
+      "expected_output_description": "At least 2 distinct shard numbers observed across 20 different unit_ids",
+      "expected_error": "",
+      "assertions": [
+        "More than one distinct shard number is observed"
+      ]
+    },
+    {
+      "id": "shard_key_shard_count_1",
+      "description": "With shard_count=1, all unit_ids map to shard 0",
+      "function": "shardKey",
+      "category": "edge_case",
+      "setup_description": "Engine configured with shard_count=1",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Key is 'pricing:0:{unit_id}'",
+      "expected_error": "",
+      "assertions": [
+        "Shard number is 0"
+      ]
+    },
+    {
+      "id": "shard_key_shard_bound_max",
+      "description": "With shard_count=4096 (max), shard number is still within [0, 4096)",
+      "function": "shardKey",
+      "category": "edge_case",
+      "setup_description": "Engine configured with shard_count=4096",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Shard number in [0, 4096)",
+      "expected_error": "",
+      "assertions": [
+        "0 <= shard_number < 4096"
+      ]
+    },
+    {
+      "id": "cache_rates_happy_path_single_night",
+      "description": "cacheRates stores a single nightly rate and getCachedRates retrieves it as a CacheHit",
+      "function": "cacheRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (in-memory)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "Single NightlyRate for 2025-07-01, base_rate=10000 cents USD",
+      "expected_output_description": "None returned; subsequent getCachedRates returns CacheHit with the rate",
+      "expected_error": "",
+      "assertions": [
+        "cacheRates returns None (no exception)",
+        "getCachedRates returns CacheHit with hit=True",
+        "Returned rate date matches '2025-07-01'",
+        "Returned rate base_rate.amount_cents == 10000"
+      ]
+    },
+    {
+      "id": "cache_rates_happy_path_multi_night",
+      "description": "cacheRates stores multiple nightly rates and round-trip retrieval preserves all data",
+      "function": "cacheRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (in-memory)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "3 NightlyRates for 2025-07-01 through 2025-07-03",
+      "expected_output_description": "All 3 rates retrieved with correct data, sorted by date ascending",
+      "expected_error": "",
+      "assertions": [
+        "getCachedRates returns CacheHit",
+        "data contains exactly 3 rates",
+        "Rates are sorted by date ascending",
+        "All monetary values preserved exactly"
+      ]
+    },
+    {
+      "id": "cache_rates_with_custom_ttl",
+      "description": "cacheRates with custom TTL via CacheOptions sets TTL on the Redis key",
+      "function": "cacheRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with TTL tracking"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "Single rate with CacheOptions(ttl_seconds=7200)",
+      "expected_output_description": "Redis EXPIRE called with 7200",
+      "expected_error": "",
+      "assertions": [
+        "EXPIRE was called with the correct TTL value of 7200"
+      ]
+    },
+    {
+      "id": "cache_rates_with_ttl_zero_no_expiry",
+      "description": "cacheRates with ttl_seconds=0 means no expiry is set",
+      "function": "cacheRates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with TTL tracking"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "Single rate with CacheOptions(ttl_seconds=0)",
+      "expected_output_description": "EXPIRE is either not called or called with 0 (no expiry semantics)",
+      "expected_error": "",
+      "assertions": [
+        "Data is still retrievable (no immediate expiry)"
+      ]
+    },
+    {
+      "id": "cache_rates_preserves_fees_and_taxes",
+      "description": "cacheRates preserves fee/tax line items through round-trip serialization",
+      "function": "cacheRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "NightlyRate with cleaning_fee (1500 cents) and occupancy_tax (800 cents, is_tax=True)",
+      "expected_output_description": "Retrieved rate has identical fees_and_taxes",
+      "expected_error": "",
+      "assertions": [
+        "fees_and_taxes list has 2 entries",
+        "First fee: fee_code='cleaning_fee', amount=1500, is_tax=False",
+        "Second fee: fee_code='occupancy_tax', amount=800, is_tax=True"
+      ]
+    },
+    {
+      "id": "cache_rates_preserves_los_discount",
+      "description": "cacheRates preserves LOS discount through round-trip serialization",
+      "function": "cacheRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "NightlyRate with los_discount (min_nights=7, discount_percent=10, discount_amount=1000 cents)",
+      "expected_output_description": "Retrieved rate has identical los_discount",
+      "expected_error": "",
+      "assertions": [
+        "los_discount is not None",
+        "los_discount.min_nights == 7",
+        "los_discount.discount_percent == 10",
+        "los_discount.discount_amount.amount_cents == 1000"
+      ]
+    },
+    {
+      "id": "cache_rates_preserves_null_los_discount",
+      "description": "cacheRates preserves null LOS discount through round-trip",
+      "function": "cacheRates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "NightlyRate with los_discount=None",
+      "expected_output_description": "Retrieved rate has los_discount=None",
+      "expected_error": "",
+      "assertions": [
+        "los_discount is None"
+      ]
+    },
+    {
+      "id": "cache_rates_redis_connection_failure_swallowed",
+      "description": "cacheRates swallows Redis connection errors and returns None",
+      "function": "cacheRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises ConnectionError on hset"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "None returned, no exception raised",
+      "expected_error": "",
+      "assertions": [
+        "Function returns None",
+        "No exception propagated"
+      ]
+    },
+    {
+      "id": "cache_rates_redis_timeout_swallowed",
+      "description": "cacheRates swallows Redis timeout errors and returns None",
+      "function": "cacheRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises TimeoutError on hset"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "None returned, no exception raised",
+      "expected_error": "",
+      "assertions": [
+        "Function returns None",
+        "No exception propagated"
+      ]
+    },
+    {
+      "id": "cache_rates_schema_version_stamped",
+      "description": "cacheRates stamps _v field on serialized payloads matching current_schema_version",
+      "function": "cacheRates",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with raw data inspection"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Raw JSON stored in Redis contains '_v': 1",
+      "expected_error": "",
+      "assertions": [
+        "Every stored hash field value, when parsed as JSON, contains '_v' == 1"
+      ]
+    },
+    {
+      "id": "cache_rates_duplicate_dates_last_write_wins",
+      "description": "When rates list has duplicate dates, the last entry for each date is the one stored",
+      "function": "cacheRates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "Two rates for 2025-07-01 with different base_rate values (10000 and 20000)",
+      "expected_output_description": "getCachedRates returns the last-written rate (base_rate=20000)",
+      "expected_error": "",
+      "assertions": [
+        "Retrieved rate for 2025-07-01 has base_rate.amount_cents == 20000"
+      ]
+    },
+    {
+      "id": "get_cached_rates_happy_path",
+      "description": "getCachedRates returns CacheHit when all dates in range are cached with valid schema version",
+      "function": "getCachedRates",
+      "category": "happy_path",
+      "setup_description": "Pre-cache rates for 2025-07-01, 2025-07-02, 2025-07-03",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis pre-populated"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-04"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheHit with 3 rates sorted by date",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is True",
+        "len(result.data) == 3",
+        "result.data[0].date == '2025-07-01'",
+        "result.data[2].date == '2025-07-03'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_single_night",
+      "description": "getCachedRates works for a single-night stay (check_in + 1 day = check_out)",
+      "function": "getCachedRates",
+      "category": "edge_case",
+      "setup_description": "Pre-cache rate for 2025-07-01",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis pre-populated"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-02"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheHit with exactly 1 rate",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is True",
+        "len(result.data) == 1",
+        "result.data[0].date == '2025-07-01'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_complete_miss",
+      "description": "getCachedRates returns CacheMiss(reason='miss') when no dates are cached",
+      "function": "getCachedRates",
+      "category": "happy_path",
+      "setup_description": "Empty Redis (no data cached)",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (empty)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-04"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='miss'",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'miss'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_partial_miss",
+      "description": "getCachedRates returns CacheMiss(reason='miss') when some dates are cached but not all",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "Only 2025-07-01 and 2025-07-03 cached; 2025-07-02 missing",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with partial data"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-04"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='miss'",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'miss'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_schema_version_mismatch",
+      "description": "getCachedRates returns CacheMiss(reason='miss') and triggers DEL when cached data has wrong _v",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "Cache rate with _v=999 (mismatched schema version)",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with version-mismatched data"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-02"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='miss', hash key auto-deleted",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'miss'",
+        "Redis DEL was called for the shard key"
+      ]
+    },
+    {
+      "id": "get_cached_rates_deserialization_failure",
+      "description": "getCachedRates returns CacheMiss(reason='error') and triggers DEL when cached JSON is corrupt",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "Store invalid JSON string '{corrupt' in Redis hash field",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with corrupt data"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-02"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='error', hash key auto-deleted",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'error'",
+        "Redis DEL was called for the shard key"
+      ]
+    },
+    {
+      "id": "get_cached_rates_redis_connection_failure",
+      "description": "getCachedRates returns CacheMiss(reason='error') on Redis connection failure",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises ConnectionError on hmget"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-02"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='error'",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'error'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_redis_timeout",
+      "description": "getCachedRates returns CacheMiss(reason='error') on Redis timeout",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises TimeoutError on hmget"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-02"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='error'",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'error'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_invalid_date_range_check_in_gte_check_out",
+      "description": "getCachedRates returns CacheMiss(reason='error') when check_in >= check_out",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (should not be called)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-04",
+        "check_out": "2025-07-01"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='error', no Redis call made",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'error'",
+        "Redis hmget was NOT called"
+      ]
+    },
+    {
+      "id": "get_cached_rates_invalid_date_range_same_day",
+      "description": "getCachedRates returns CacheMiss(reason='error') when check_in == check_out",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (should not be called)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-01"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='error'",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'error'"
+      ]
+    },
+    {
+      "id": "get_cached_rates_invalid_date_range_exceeds_730_days",
+      "description": "getCachedRates returns CacheMiss(reason='error') when date range exceeds 730 days",
+      "function": "getCachedRates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (should not be called)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2023-01-01",
+        "check_out": "2025-12-31"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss with reason='error'",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'error'"
+      ]
+    },
+    {
+      "id": "invalidate_unit_happy_path",
+      "description": "invalidateUnit removes the entire hash key so subsequent getCachedRates returns CacheMiss",
+      "function": "invalidateUnit",
+      "category": "happy_path",
+      "setup_description": "Pre-cache rates for the unit, then call invalidateUnit",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with pre-populated data"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "None returned; getCachedRates now returns CacheMiss",
+      "expected_error": "",
+      "assertions": [
+        "invalidateUnit returns None",
+        "getCachedRates returns CacheMiss with reason='miss'"
+      ]
+    },
+    {
+      "id": "invalidate_unit_idempotent",
+      "description": "invalidateUnit is idempotent: calling on non-existent key succeeds silently",
+      "function": "invalidateUnit",
+      "category": "edge_case",
+      "setup_description": "No data in Redis for this unit",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis (empty)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "None returned, no exception",
+      "expected_error": "",
+      "assertions": [
+        "invalidateUnit returns None",
+        "No exception raised"
+      ]
+    },
+    {
+      "id": "invalidate_unit_double_call_idempotent",
+      "description": "Calling invalidateUnit twice on the same unit succeeds both times",
+      "function": "invalidateUnit",
+      "category": "edge_case",
+      "setup_description": "Pre-cache data, then call invalidateUnit twice",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Both calls succeed without exception",
+      "expected_error": "",
+      "assertions": [
+        "First invalidateUnit returns None",
+        "Second invalidateUnit returns None"
+      ]
+    },
+    {
+      "id": "invalidate_unit_redis_connection_failure_swallowed",
+      "description": "invalidateUnit swallows Redis connection errors",
+      "function": "invalidateUnit",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises ConnectionError on delete"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "None returned, no exception",
+      "expected_error": "",
+      "assertions": [
+        "No exception propagated",
+        "Function returns None"
+      ]
+    },
+    {
+      "id": "invalidate_unit_redis_timeout_swallowed",
+      "description": "invalidateUnit swallows Redis timeout errors",
+      "function": "invalidateUnit",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises TimeoutError on delete"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "None returned, no exception",
+      "expected_error": "",
+      "assertions": [
+        "No exception propagated",
+        "Function returns None"
+      ]
+    },
+    {
+      "id": "invariant_monetary_values_integer_cents",
+      "description": "All monetary values in cached payloads are integer cents (no floating point corruption)",
+      "function": "cacheRates",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with raw data inspection"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "Rate with base_rate=15999 cents, seasonal_rate=17999 cents, adjusted_rate=16499 cents, total_cents=18299",
+      "expected_output_description": "All values round-trip as exact integers",
+      "expected_error": "",
+      "assertions": [
+        "base_rate.amount_cents is exactly 15999",
+        "seasonal_rate.amount_cents is exactly 17999",
+        "adjusted_rate.amount_cents is exactly 16499",
+        "total_cents is exactly 18299",
+        "All values are of type int, not float"
+      ]
+    },
+    {
+      "id": "invariant_no_exception_from_any_public_method",
+      "description": "No public method ever throws — all Redis errors surfaced as CacheMiss or swallowed",
+      "function": "getCachedRates",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "Mock that raises various exceptions"
+      },
+      "input_values": {},
+      "input_description": "Various error-inducing scenarios across all methods",
+      "expected_output_description": "No exceptions escape any public method call",
+      "expected_error": "",
+      "assertions": [
+        "cacheRates with broken Redis does not throw",
+        "getCachedRates with broken Redis returns CacheMiss",
+        "invalidateUnit with broken Redis does not throw"
+      ]
+    },
+    {
+      "id": "invariant_shard_key_format",
+      "description": "Shard key always follows format 'pricing:{N}:{unit_id}' with N in [0, shard_count)",
+      "function": "shardKey",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Multiple UUIDs tested against pattern",
+      "expected_output_description": "All keys match the expected pattern",
+      "expected_error": "",
+      "assertions": [
+        "Every generated key matches regex ^pricing:\\d+:[0-9a-f-]+$",
+        "Extracted shard number N satisfies 0 <= N < shard_count"
+      ]
+    },
+    {
+      "id": "invariant_cache_hit_only_when_all_dates_present",
+      "description": "getCachedRates returns CacheHit ONLY when ALL dates in range are present and valid",
+      "function": "getCachedRates",
+      "category": "invariant",
+      "setup_description": "Cache 3 of 4 needed dates (missing 2025-07-03)",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis with partial data"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-05"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheMiss, not partial CacheHit",
+      "expected_error": "",
+      "assertions": [
+        "result.hit is False",
+        "result.reason == 'miss'"
+      ]
+    },
+    {
+      "id": "cache_rates_empty_fees_list",
+      "description": "cacheRates handles NightlyRate with empty fees_and_taxes list",
+      "function": "cacheRates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "NightlyRate with fees_and_taxes=[]",
+      "expected_output_description": "Round-trip preserves empty list",
+      "expected_error": "",
+      "assertions": [
+        "Retrieved rate has fees_and_taxes == []"
+      ]
+    },
+    {
+      "id": "get_cached_rates_data_sorted_by_date",
+      "description": "getCachedRates returns data sorted by date ascending regardless of insertion order",
+      "function": "getCachedRates",
+      "category": "invariant",
+      "setup_description": "Cache rates in reverse order (2025-07-03, 2025-07-02, 2025-07-01)",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "check_in": "2025-07-01",
+        "check_out": "2025-07-04"
+      },
+      "input_description": "",
+      "expected_output_description": "CacheHit with rates sorted ascending by date",
+      "expected_error": "",
+      "assertions": [
+        "result.data[0].date == '2025-07-01'",
+        "result.data[1].date == '2025-07-02'",
+        "result.data[2].date == '2025-07-03'"
+      ]
+    },
+    {
+      "id": "cache_rates_different_currencies_preserved",
+      "description": "cacheRates preserves currency field correctly through round-trip (EUR example)",
+      "function": "cacheRates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "NightlyRate with currency=EUR, all MoneyAmount.currency=EUR",
+      "expected_output_description": "Retrieved rate has currency='EUR'",
+      "expected_error": "",
+      "assertions": [
+        "Retrieved rate currency == 'EUR'",
+        "base_rate.currency == 'EUR'"
+      ]
+    },
+    {
+      "id": "cache_rates_jpy_zero_decimal_currency",
+      "description": "cacheRates handles JPY (zero-decimal currency) correctly - amount_cents represents yen",
+      "function": "cacheRates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis_client": "FakeRedis"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "NightlyRate with currency=JPY, base_rate.amount_cents=15000 (15000 yen)",
+      "expected_output_description": "Round-trip preserves exact integer value",
+      "expected_error": "",
+      "assertions": [
+        "Retrieved rate currency == 'JPY'",
+        "base_rate.amount_cents == 15000"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract tests for pricing_cache_engine — Hash-Sharded Price Cache.\n\nTests verify the contract behavior of shardKey, cacheRates, getCachedRates,\nand invalidateUnit using a FakeRedis in-memory mock. No external services required.\n\nRun with: pytest contract_test.py -v\n\"\"\"\nimport json\nimport re\nimport uuid\nfrom datetime import date, timedelta\nfrom typing import Any, Dict, List, Optional\nfrom unittest.mock import AsyncMock, MagicMock, patch, call\n\nimport pytest\n\n# ---------------------------------------------------------------------------\n# Import the component under test\n# ---------------------------------------------------------------------------\nfrom src.pricing_cache_engine import (\n    PricingCacheEngine,\n    CacheEngineConfig,\n    CacheOptions,\n    DateRange,\n    NightlyRate,\n    MoneyAmount,\n    FeeDetail,\n    LosDiscount,\n    CacheHit,\n    CacheMiss,\n)\n\n\n# ---------------------------------------------------------------------------\n# Test Data Factories\n# ---------------------------------------------------------------------------\nVALID_UNIT_ID = \"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\"\nVALID_UNIT_ID_2 = \"b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e\"\n\n\ndef make_money(amount_cents: int = 10000, currency: str = \"USD\") -> MoneyAmount:\n    \"\"\"Factory for MoneyAmount with sensible defaults.\"\"\"\n    return MoneyAmount(amount_cents=amount_cents, currency=currency)\n\n\ndef make_fee(\n    fee_code: str = \"cleaning_fee\",\n    label: str = \"Cleaning Fee\",\n    amount_cents: int = 1500,\n    currency: str = \"USD\",\n    is_tax: bool = False,\n) -> FeeDetail:\n    \"\"\"Factory for FeeDetail.\"\"\"\n    return FeeDetail(\n        fee_code=fee_code,\n        label=label,\n        amount=make_money(amount_cents, currency),\n        is_tax=is_tax,\n    )\n\n\ndef make_los_discount(\n    min_nights: int = 7,\n    discount_percent: int = 10,\n    discount_amount_cents: int = 1000,\n    currency: str = \"USD\",\n) -> LosDiscount:\n    \"\"\"Factory for LosDiscount.\"\"\"\n    return LosDiscount(\n        min_nights=min_nights,\n        discount_percent=discount_percent,\n        discount_amount=make_money(discount_amount_cents, currency),\n    )\n\n\ndef make_nightly_rate(\n    rate_date: str = \"2025-07-01\",\n    base_rate_cents: int = 10000,\n    seasonal_rate_cents: int = 10000,\n    adjusted_rate_cents: int = 10000,\n    total_cents: int = 10000,\n    currency: str = \"USD\",\n    fees_and_taxes: Optional[List[FeeDetail]] = None,\n    los_discount: Optional[LosDiscount] = None,\n) -> NightlyRate:\n    \"\"\"Factory for NightlyRate with sensible defaults.\"\"\"\n    return NightlyRate(\n        date=rate_date,\n        base_rate=make_money(base_rate_cents, currency),\n        seasonal_rate=make_money(seasonal_rate_cents, currency),\n        adjusted_rate=make_money(adjusted_rate_cents, currency),\n        los_discount=los_discount,\n        fees_and_taxes=fees_and_taxes if fees_and_taxes is not None else [],\n        total_cents=total_cents,\n        currency=currency,\n    )\n\n\ndef make_rates_for_range(\n    check_in: str, check_out: str, base_cents: int = 10000, currency: str = \"USD\"\n) -> List[NightlyRate]:\n    \"\"\"Create a list of NightlyRate objects for each date in [check_in, check_out).\"\"\"\n    start = date.fromisoformat(check_in)\n    end = date.fromisoformat(check_out)\n    rates = []\n    current = start\n    while current < end:\n        rates.append(\n            make_nightly_rate(\n                rate_date=current.isoformat(),\n                base_rate_cents=base_cents,\n                total_cents=base_cents,\n                currency=currency,\n            )\n        )\n        current += timedelta(days=1)\n    return rates\n\n\ndef make_date_range(check_in: str = \"2025-07-01\", check_out: str = \"2025-07-04\") -> DateRange:\n    \"\"\"Factory for DateRange.\"\"\"\n    return DateRange(check_in=check_in, check_out=check_out)\n\n\ndef default_config(shard_count: int = 64, ttl: int = 3600, schema_version: int = 1) -> CacheEngineConfig:\n    \"\"\"Factory for CacheEngineConfig.\"\"\"\n    return CacheEngineConfig(\n        shard_count=shard_count,\n        default_ttl_seconds=ttl,\n        current_schema_version=schema_version,\n    )\n\n\n# ---------------------------------------------------------------------------\n# FakeRedis — In-memory Redis mock with hash and TTL support\n# ---------------------------------------------------------------------------\nclass FakeRedis:\n    \"\"\"Minimal in-memory Redis mock supporting hset, hmget, expire, delete.\"\"\"\n\n    def __init__(self):\n        self.store: Dict[str, Dict[str, str]] = {}  # key -> {field: value}\n        self.ttls: Dict[str, int] = {}\n        self.calls: Dict[str, List[Any]] = {\n            \"hset\": [],\n            \"hmget\": [],\n            \"expire\": [],\n            \"delete\": [],\n        }\n\n    def hset(self, key: str, mapping: Dict[str, str] = None, **kwargs) -> int:\n        self.calls[\"hset\"].append((key, mapping or kwargs))\n        if key not in self.store:\n            self.store[key] = {}\n        data = mapping if mapping else kwargs\n        self.store[key].update(data)\n        return len(data)\n\n    def hmget(self, key: str, *fields) -> List[Optional[str]]:\n        # Handle fields passed as a list or as *args\n        if len(fields) == 1 and isinstance(fields[0], (list, tuple)):\n            fields = fields[0]\n        self.calls[\"hmget\"].append((key, list(fields)))\n        hash_data = self.store.get(key, {})\n        return [hash_data.get(f) for f in fields]\n\n    def expire(self, key: str, seconds: int) -> bool:\n        self.calls[\"expire\"].append((key, seconds))\n        self.ttls[key] = seconds\n        return key in self.store\n\n    def delete(self, *keys) -> int:\n        self.calls[\"delete\"].append(list(keys))\n        count = 0\n        for k in keys:\n            if k in self.store:\n                del self.store[k]\n                count += 1\n            self.ttls.pop(k, None)\n        return count\n\n    def get_raw_hash(self, key: str) -> Optional[Dict[str, str]]:\n        \"\"\"Test helper: inspect raw stored data.\"\"\"\n        return self.store.get(key)\n\n\nclass ErrorRedis:\n    \"\"\"Redis mock that raises configurable exceptions on specific operations.\"\"\"\n\n    def __init__(self, error_class=ConnectionError, error_on=None):\n        self.error_class = error_class\n        self.error_on = error_on or [\"hset\", \"hmget\", \"expire\", \"delete\"]\n        self.calls: Dict[str, List] = {\n            \"hset\": [], \"hmget\": [], \"expire\": [], \"delete\": []\n        }\n\n    def _maybe_raise(self, op: str):\n        if op in self.error_on:\n            raise self.error_class(f\"Simulated {self.error_class.__name__} on {op}\")\n\n    def hset(self, key, mapping=None, **kwargs):\n        self.calls[\"hset\"].append(key)\n        self._maybe_raise(\"hset\")\n\n    def hmget(self, key, *fields):\n        self.calls[\"hmget\"].append(key)\n        self._maybe_raise(\"hmget\")\n\n    def expire(self, key, seconds):\n        self.calls[\"expire\"].append(key)\n        self._maybe_raise(\"expire\")\n\n    def delete(self, *keys):\n        self.calls[\"delete\"].append(keys)\n        self._maybe_raise(\"delete\")\n\n\n# ---------------------------------------------------------------------------\n# shardKey Tests\n# ---------------------------------------------------------------------------\nclass TestShardKey:\n    \"\"\"Tests for shardKey — pure deterministic shard key computation.\"\"\"\n\n    def setup_method(self):\n        self.config = default_config(shard_count=64)\n        self.engine = PricingCacheEngine(config=self.config, redis_client=FakeRedis())\n\n    def test_shard_key_happy_path_format(self):\n        \"\"\"shardKey returns a key matching 'pricing:{N}:{unit_id}'.\"\"\"\n        key = self.engine.shard_key(VALID_UNIT_ID)\n        pattern = rf\"^pricing:\\d+:{re.escape(VALID_UNIT_ID)}$\"\n        assert re.match(pattern, key), f\"Key '{key}' does not match expected pattern\"\n\n    def test_shard_key_shard_number_in_range(self):\n        \"\"\"Shard number N is in [0, shard_count).\"\"\"\n        key = self.engine.shard_key(VALID_UNIT_ID)\n        shard_num = int(key.split(\":\")[1])\n        assert 0 <= shard_num < 64, f\"Shard number {shard_num} out of range [0, 64)\"\n\n    def test_shard_key_deterministic(self):\n        \"\"\"Same unit_id always produces the same key (100 iterations).\"\"\"\n        results = {self.engine.shard_key(VALID_UNIT_ID) for _ in range(100)}\n        assert len(results) == 1, \"shardKey is not deterministic — got multiple results\"\n\n    def test_shard_key_different_units_may_differ(self):\n        \"\"\"Different unit_ids produce different shard numbers (statistical check).\"\"\"\n        shard_numbers = set()\n        for i in range(20):\n            uid = str(uuid.uuid4())\n            key = self.engine.shard_key(uid)\n            shard_numbers.add(int(key.split(\":\")[1]))\n        assert len(shard_numbers) > 1, (\n            \"Expected multiple distinct shard numbers across 20 random UUIDs\"\n        )\n\n    def test_shard_key_shard_count_1(self):\n        \"\"\"With shard_count=1, all unit_ids map to shard 0.\"\"\"\n        engine = PricingCacheEngine(\n            config=default_config(shard_count=1), redis_client=FakeRedis()\n        )\n        key = engine.shard_key(VALID_UNIT_ID)\n        shard_num = int(key.split(\":\")[1])\n        assert shard_num == 0, f\"Expected shard 0 with shard_count=1, got {shard_num}\"\n\n    def test_shard_key_shard_count_max(self):\n        \"\"\"With shard_count=4096 (max), shard number is in [0, 4096).\"\"\"\n        engine = PricingCacheEngine(\n            config=default_config(shard_count=4096), redis_client=FakeRedis()\n        )\n        key = engine.shard_key(VALID_UNIT_ID)\n        shard_num = int(key.split(\":\")[1])\n        assert 0 <= shard_num < 4096, f\"Shard {shard_num} out of [0, 4096)\"\n\n    def test_shard_key_format_invariant_multiple_uuids(self):\n        \"\"\"All generated keys match the pattern ^pricing:\\\\d+:[0-9a-f-]+$.\"\"\"\n        for _ in range(50):\n            uid = str(uuid.uuid4())\n            key = self.engine.shard_key(uid)\n            assert re.match(r\"^pricing:\\d+:[0-9a-f-]+$\", key), (\n                f\"Key '{key}' violates format invariant\"\n            )\n            shard_num = int(key.split(\":\")[1])\n            assert 0 <= shard_num < 64\n\n\n# ---------------------------------------------------------------------------\n# cacheRates Tests\n# ---------------------------------------------------------------------------\nclass TestCacheRates:\n    \"\"\"Tests for cacheRates — writing nightly rates to Redis.\"\"\"\n\n    def setup_method(self):\n        self.fake_redis = FakeRedis()\n        self.config = default_config()\n        self.engine = PricingCacheEngine(\n            config=self.config, redis_client=self.fake_redis\n        )\n\n    def test_cache_single_night_round_trip(self):\n        \"\"\"Cache a single night and retrieve it as a CacheHit.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\", base_rate_cents=10000)\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True, \"Expected CacheHit\"\n        assert len(result.data) == 1\n        assert result.data[0].date == \"2025-07-01\"\n        assert result.data[0].base_rate.amount_cents == 10000\n\n    def test_cache_multi_night_round_trip(self):\n        \"\"\"Cache 3 nights and verify all are returned sorted by date.\"\"\"\n        rates = make_rates_for_range(\"2025-07-01\", \"2025-07-04\", base_cents=15000)\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result.hit is True, \"Expected CacheHit for all 3 nights\"\n        assert len(result.data) == 3\n        dates = [r.date for r in result.data]\n        assert dates == [\"2025-07-01\", \"2025-07-02\", \"2025-07-03\"]\n        for r in result.data:\n            assert r.base_rate.amount_cents == 15000\n\n    def test_cache_with_custom_ttl(self):\n        \"\"\"Custom TTL from CacheOptions is used for EXPIRE.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\")\n        options = CacheOptions(ttl_seconds=7200)\n        self.engine.cache_rates(VALID_UNIT_ID, [rate], options=options)\n\n        shard_key = self.engine.shard_key(VALID_UNIT_ID)\n        assert len(self.fake_redis.calls[\"expire\"]) >= 1\n        # Find the expire call for our key\n        expire_ttls = [t for k, t in self.fake_redis.calls[\"expire\"] if k == shard_key]\n        assert 7200 in expire_ttls, f\"Expected TTL 7200, got {expire_ttls}\"\n\n    def test_cache_with_ttl_zero_no_immediate_expiry(self):\n        \"\"\"TTL of 0 means no expiry; data remains retrievable.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\")\n        options = CacheOptions(ttl_seconds=0)\n        self.engine.cache_rates(VALID_UNIT_ID, [rate], options=options)\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True, \"Data should be retrievable with TTL=0\"\n\n    def test_cache_preserves_fees_and_taxes(self):\n        \"\"\"Fees and taxes round-trip through cache correctly.\"\"\"\n        fees = [\n            make_fee(\"cleaning_fee\", \"Cleaning Fee\", 1500, \"USD\", False),\n            make_fee(\"occupancy_tax\", \"Occupancy Tax\", 800, \"USD\", True),\n        ]\n        rate = make_nightly_rate(\n            \"2025-07-01\", base_rate_cents=10000, total_cents=12300, fees_and_taxes=fees\n        )\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        retrieved = result.data[0]\n        assert len(retrieved.fees_and_taxes) == 2\n        assert retrieved.fees_and_taxes[0].fee_code == \"cleaning_fee\"\n        assert retrieved.fees_and_taxes[0].amount.amount_cents == 1500\n        assert retrieved.fees_and_taxes[0].is_tax is False\n        assert retrieved.fees_and_taxes[1].fee_code == \"occupancy_tax\"\n        assert retrieved.fees_and_taxes[1].amount.amount_cents == 800\n        assert retrieved.fees_and_taxes[1].is_tax is True\n\n    def test_cache_preserves_los_discount(self):\n        \"\"\"LOS discount round-trips through cache correctly.\"\"\"\n        discount = make_los_discount(min_nights=7, discount_percent=10, discount_amount_cents=1000)\n        rate = make_nightly_rate(\n            \"2025-07-01\", base_rate_cents=10000, total_cents=9000, los_discount=discount\n        )\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        d = result.data[0].los_discount\n        assert d is not None, \"Expected LOS discount to be present\"\n        assert d.min_nights == 7\n        assert d.discount_percent == 10\n        assert d.discount_amount.amount_cents == 1000\n\n    def test_cache_preserves_null_los_discount(self):\n        \"\"\"Null LOS discount round-trips as None.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\", los_discount=None)\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert result.data[0].los_discount is None\n\n    def test_cache_preserves_empty_fees_list(self):\n        \"\"\"Empty fees_and_taxes list round-trips as empty list.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\", fees_and_taxes=[])\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert result.data[0].fees_and_taxes == []\n\n    def test_cache_duplicate_dates_last_write_wins(self):\n        \"\"\"Duplicate dates in rates list: last entry wins.\"\"\"\n        rate1 = make_nightly_rate(\"2025-07-01\", base_rate_cents=10000, total_cents=10000)\n        rate2 = make_nightly_rate(\"2025-07-01\", base_rate_cents=20000, total_cents=20000)\n        self.engine.cache_rates(VALID_UNIT_ID, [rate1, rate2])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert result.data[0].base_rate.amount_cents == 20000, (\n            \"Expected last-write-wins for duplicate date\"\n        )\n\n    def test_cache_rates_redis_connection_failure_swallowed(self):\n        \"\"\"cacheRates swallows Redis connection errors.\"\"\"\n        error_redis = ErrorRedis(ConnectionError, error_on=[\"hset\"])\n        engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n        rate = make_nightly_rate(\"2025-07-01\")\n        # Should NOT raise\n        result = engine.cache_rates(VALID_UNIT_ID, [rate])\n        assert result is None, \"cacheRates should return None even on error\"\n\n    def test_cache_rates_redis_timeout_swallowed(self):\n        \"\"\"cacheRates swallows Redis timeout errors.\"\"\"\n        error_redis = ErrorRedis(TimeoutError, error_on=[\"hset\"])\n        engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n        rate = make_nightly_rate(\"2025-07-01\")\n        result = engine.cache_rates(VALID_UNIT_ID, [rate])\n        assert result is None\n\n    def test_cache_rates_schema_version_stamped(self):\n        \"\"\"Cached payloads contain _v field matching current_schema_version.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\")\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        shard_key = self.engine.shard_key(VALID_UNIT_ID)\n        raw_hash = self.fake_redis.get_raw_hash(shard_key)\n        assert raw_hash is not None, \"Expected data in Redis\"\n        for field_name, raw_value in raw_hash.items():\n            parsed = json.loads(raw_value)\n            assert parsed.get(\"_v\") == 1, (\n                f\"Expected _v=1 in serialized payload, got {parsed.get('_v')}\"\n            )\n\n    def test_cache_rates_preserves_currency_eur(self):\n        \"\"\"Currency field preserved through round-trip for EUR.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\", currency=\"EUR\")\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert result.data[0].currency == \"EUR\"\n        assert result.data[0].base_rate.currency == \"EUR\"\n\n    def test_cache_rates_jpy_zero_decimal_currency(self):\n        \"\"\"JPY (zero-decimal) amount_cents represents yen and round-trips exactly.\"\"\"\n        rate = make_nightly_rate(\"2025-07-01\", base_rate_cents=15000, total_cents=15000, currency=\"JPY\")\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert result.data[0].currency == \"JPY\"\n        assert result.data[0].base_rate.amount_cents == 15000\n\n    def test_cache_rates_monetary_values_exact_integers(self):\n        \"\"\"All monetary values round-trip as exact integers (no floating-point drift).\"\"\"\n        rate = make_nightly_rate(\n            \"2025-07-01\",\n            base_rate_cents=15999,\n            seasonal_rate_cents=17999,\n            adjusted_rate_cents=16499,\n            total_cents=18299,\n        )\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        r = result.data[0]\n        assert r.base_rate.amount_cents == 15999\n        assert isinstance(r.base_rate.amount_cents, int)\n        assert r.seasonal_rate.amount_cents == 17999\n        assert isinstance(r.seasonal_rate.amount_cents, int)\n        assert r.adjusted_rate.amount_cents == 16499\n        assert isinstance(r.adjusted_rate.amount_cents, int)\n        assert r.total_cents == 18299\n        assert isinstance(r.total_cents, int)\n\n\n# ---------------------------------------------------------------------------\n# getCachedRates Tests\n# ---------------------------------------------------------------------------\nclass TestGetCachedRates:\n    \"\"\"Tests for getCachedRates — reading cached rates from Redis.\"\"\"\n\n    def setup_method(self):\n        self.fake_redis = FakeRedis()\n        self.config = default_config()\n        self.engine = PricingCacheEngine(\n            config=self.config, redis_client=self.fake_redis\n        )\n\n    def test_cache_hit_all_dates_present(self):\n        \"\"\"CacheHit when all dates in range are cached and valid.\"\"\"\n        rates = make_rates_for_range(\"2025-07-01\", \"2025-07-04\")\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result.hit is True\n        assert len(result.data) == 3\n        assert result.data[0].date == \"2025-07-01\"\n        assert result.data[2].date == \"2025-07-03\"\n\n    def test_single_night_stay(self):\n        \"\"\"CacheHit for single-night stay (1 date in range).\"\"\"\n        rates = make_rates_for_range(\"2025-07-01\", \"2025-07-02\")\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert len(result.data) == 1\n        assert result.data[0].date == \"2025-07-01\"\n\n    def test_complete_miss_empty_redis(self):\n        \"\"\"CacheMiss(reason='miss') when Redis has no data for the unit.\"\"\"\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result.hit is False\n        assert result.reason == \"miss\"\n\n    def test_partial_miss_some_dates_missing(self):\n        \"\"\"CacheMiss(reason='miss') when some dates are cached but not all.\"\"\"\n        # Cache only 2 of 3 needed dates\n        rate1 = make_nightly_rate(\"2025-07-01\")\n        rate3 = make_nightly_rate(\"2025-07-03\")\n        self.engine.cache_rates(VALID_UNIT_ID, [rate1, rate3])\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result.hit is False, \"Partial hit should be treated as miss\"\n        assert result.reason == \"miss\"\n\n    def test_schema_version_mismatch_returns_miss_and_deletes(self):\n        \"\"\"Schema version mismatch → CacheMiss(reason='miss') + DEL of hash key.\"\"\"\n        # Write with schema version 1\n        rate = make_nightly_rate(\"2025-07-01\")\n        self.engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        # Create engine expecting schema version 2\n        engine_v2 = PricingCacheEngine(\n            config=default_config(schema_version=2), redis_client=self.fake_redis\n        )\n        result = engine_v2.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is False\n        assert result.reason == \"miss\", (\n            \"Schema version mismatch should return reason='miss'\"\n        )\n        # Verify DEL was called\n        shard_key = engine_v2.shard_key(VALID_UNIT_ID)\n        del_calls = self.fake_redis.calls[\"delete\"]\n        deleted_keys = [k for call_keys in del_calls for k in call_keys]\n        assert shard_key in deleted_keys, (\n            \"Expected auto-invalidation (DEL) of hash key on schema mismatch\"\n        )\n\n    def test_deserialization_failure_returns_error_and_deletes(self):\n        \"\"\"Corrupt JSON → CacheMiss(reason='error') + DEL of hash key.\"\"\"\n        # Manually store corrupt JSON\n        shard_key = self.engine.shard_key(VALID_UNIT_ID)\n        self.fake_redis.hset(shard_key, mapping={\"2025-07-01\": \"{corrupt_json\"})\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is False\n        assert result.reason == \"error\", (\n            \"Corrupt JSON should return reason='error'\"\n        )\n        del_calls = self.fake_redis.calls[\"delete\"]\n        deleted_keys = [k for call_keys in del_calls for k in call_keys]\n        assert shard_key in deleted_keys, (\n            \"Expected auto-invalidation (DEL) on deserialization failure\"\n        )\n\n    def test_redis_connection_failure_returns_error(self):\n        \"\"\"Redis connection failure → CacheMiss(reason='error').\"\"\"\n        error_redis = ErrorRedis(ConnectionError, error_on=[\"hmget\"])\n        engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n\n        result = engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is False\n        assert result.reason == \"error\"\n\n    def test_redis_timeout_returns_error(self):\n        \"\"\"Redis timeout → CacheMiss(reason='error').\"\"\"\n        error_redis = ErrorRedis(TimeoutError, error_on=[\"hmget\"])\n        engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n\n        result = engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is False\n        assert result.reason == \"error\"\n\n    def test_invalid_date_range_check_in_after_check_out(self):\n        \"\"\"check_in > check_out → CacheMiss(reason='error'), no Redis call.\"\"\"\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-04\", \"2025-07-01\")\n        )\n        assert result.hit is False\n        assert result.reason == \"error\"\n        assert len(self.fake_redis.calls[\"hmget\"]) == 0, (\n            \"Should not call Redis with invalid date range\"\n        )\n\n    def test_invalid_date_range_same_day(self):\n        \"\"\"check_in == check_out → CacheMiss(reason='error').\"\"\"\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-01\")\n        )\n        assert result.hit is False\n        assert result.reason == \"error\"\n\n    def test_invalid_date_range_exceeds_730_days(self):\n        \"\"\"Date range > 730 days → CacheMiss(reason='error').\"\"\"\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2023-01-01\", \"2025-12-31\")\n        )\n        assert result.hit is False\n        assert result.reason == \"error\"\n\n    def test_data_sorted_by_date_regardless_of_insertion_order(self):\n        \"\"\"CacheHit.data is sorted by date ascending even if cached out of order.\"\"\"\n        # Cache in reverse order\n        rates = [\n            make_nightly_rate(\"2025-07-03\"),\n            make_nightly_rate(\"2025-07-01\"),\n            make_nightly_rate(\"2025-07-02\"),\n        ]\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result.hit is True\n        dates = [r.date for r in result.data]\n        assert dates == [\"2025-07-01\", \"2025-07-02\", \"2025-07-03\"], (\n            f\"Expected sorted dates, got {dates}\"\n        )\n\n    def test_cache_hit_only_when_all_dates_present(self):\n        \"\"\"Invariant: CacheHit ONLY when ALL dates in range are present.\"\"\"\n        # Cache 3 of 4 dates (missing 2025-07-03)\n        rates = [\n            make_nightly_rate(\"2025-07-01\"),\n            make_nightly_rate(\"2025-07-02\"),\n            make_nightly_rate(\"2025-07-04\"),\n        ]\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        result = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-05\")\n        )\n        assert result.hit is False, \"Missing 2025-07-03 should cause full miss\"\n        assert result.reason == \"miss\"\n\n\n# ---------------------------------------------------------------------------\n# invalidateUnit Tests\n# ---------------------------------------------------------------------------\nclass TestInvalidateUnit:\n    \"\"\"Tests for invalidateUnit — deleting cached rates for a unit.\"\"\"\n\n    def setup_method(self):\n        self.fake_redis = FakeRedis()\n        self.config = default_config()\n        self.engine = PricingCacheEngine(\n            config=self.config, redis_client=self.fake_redis\n        )\n\n    def test_invalidate_removes_cached_data(self):\n        \"\"\"After invalidateUnit, getCachedRates returns CacheMiss.\"\"\"\n        rates = make_rates_for_range(\"2025-07-01\", \"2025-07-04\")\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        # Verify data is cached\n        result_before = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result_before.hit is True, \"Setup: data should be cached\"\n\n        # Invalidate\n        ret = self.engine.invalidate_unit(VALID_UNIT_ID)\n        assert ret is None, \"invalidateUnit should return None\"\n\n        # Verify data is gone\n        result_after = self.engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-04\")\n        )\n        assert result_after.hit is False\n        assert result_after.reason == \"miss\"\n\n    def test_invalidate_idempotent_nonexistent_key(self):\n        \"\"\"invalidateUnit on non-existent key succeeds silently.\"\"\"\n        ret = self.engine.invalidate_unit(VALID_UNIT_ID)\n        assert ret is None\n\n    def test_invalidate_double_call_idempotent(self):\n        \"\"\"Calling invalidateUnit twice succeeds both times.\"\"\"\n        rates = make_rates_for_range(\"2025-07-01\", \"2025-07-02\")\n        self.engine.cache_rates(VALID_UNIT_ID, rates)\n\n        ret1 = self.engine.invalidate_unit(VALID_UNIT_ID)\n        ret2 = self.engine.invalidate_unit(VALID_UNIT_ID)\n        assert ret1 is None\n        assert ret2 is None\n\n    def test_invalidate_redis_connection_failure_swallowed(self):\n        \"\"\"invalidateUnit swallows Redis connection errors.\"\"\"\n        error_redis = ErrorRedis(ConnectionError, error_on=[\"delete\"])\n        engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n        ret = engine.invalidate_unit(VALID_UNIT_ID)\n        assert ret is None\n\n    def test_invalidate_redis_timeout_swallowed(self):\n        \"\"\"invalidateUnit swallows Redis timeout errors.\"\"\"\n        error_redis = ErrorRedis(TimeoutError, error_on=[\"delete\"])\n        engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n        ret = engine.invalidate_unit(VALID_UNIT_ID)\n        assert ret is None\n\n\n# ---------------------------------------------------------------------------\n# Cross-cutting Invariant Tests\n# ---------------------------------------------------------------------------\nclass TestCrossCuttingInvariants:\n    \"\"\"Tests for invariants that span multiple functions.\"\"\"\n\n    def setup_method(self):\n        self.config = default_config()\n\n    def test_no_public_method_throws_on_redis_errors(self):\n        \"\"\"No public method ever raises; errors are swallowed or CacheMiss.\"\"\"\n        for error_cls in [ConnectionError, TimeoutError, OSError, RuntimeError]:\n            error_redis = ErrorRedis(error_cls)\n            engine = PricingCacheEngine(config=self.config, redis_client=error_redis)\n\n            # cacheRates should not throw\n            rate = make_nightly_rate(\"2025-07-01\")\n            ret = engine.cache_rates(VALID_UNIT_ID, [rate])\n            assert ret is None, (\n                f\"cacheRates should not throw on {error_cls.__name__}\"\n            )\n\n            # getCachedRates should not throw\n            result = engine.get_cached_rates(\n                VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n            )\n            assert result.hit is False, (\n                f\"getCachedRates should return CacheMiss on {error_cls.__name__}\"\n            )\n            assert result.reason == \"error\"\n\n            # invalidateUnit should not throw\n            ret = engine.invalidate_unit(VALID_UNIT_ID)\n            assert ret is None, (\n                f\"invalidateUnit should not throw on {error_cls.__name__}\"\n            )\n\n    def test_round_trip_full_rate_object(self):\n        \"\"\"Complete NightlyRate with all fields populated round-trips correctly.\"\"\"\n        fake_redis = FakeRedis()\n        engine = PricingCacheEngine(config=self.config, redis_client=fake_redis)\n\n        fees = [\n            make_fee(\"cleaning_fee\", \"Cleaning Fee\", 2500, \"USD\", False),\n            make_fee(\"occupancy_tax\", \"Occupancy Tax\", 1200, \"USD\", True),\n            make_fee(\"resort_fee\", \"Resort Fee\", 500, \"USD\", False),\n        ]\n        discount = make_los_discount(\n            min_nights=7, discount_percent=15, discount_amount_cents=2250\n        )\n        rate = make_nightly_rate(\n            rate_date=\"2025-07-01\",\n            base_rate_cents=15000,\n            seasonal_rate_cents=17000,\n            adjusted_rate_cents=16500,\n            total_cents=18450,\n            currency=\"USD\",\n            fees_and_taxes=fees,\n            los_discount=discount,\n        )\n        engine.cache_rates(VALID_UNIT_ID, [rate])\n\n        result = engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        r = result.data[0]\n        assert r.date == \"2025-07-01\"\n        assert r.base_rate.amount_cents == 15000\n        assert r.base_rate.currency == \"USD\"\n        assert r.seasonal_rate.amount_cents == 17000\n        assert r.adjusted_rate.amount_cents == 16500\n        assert r.total_cents == 18450\n        assert r.currency == \"USD\"\n        assert len(r.fees_and_taxes) == 3\n        assert r.los_discount is not None\n        assert r.los_discount.min_nights == 7\n        assert r.los_discount.discount_percent == 15\n        assert r.los_discount.discount_amount.amount_cents == 2250\n\n    def test_invalidation_then_re_cache(self):\n        \"\"\"After invalidation, re-caching and reading works correctly.\"\"\"\n        fake_redis = FakeRedis()\n        engine = PricingCacheEngine(config=self.config, redis_client=fake_redis)\n\n        # Cache original data\n        rate_v1 = make_nightly_rate(\"2025-07-01\", base_rate_cents=10000, total_cents=10000)\n        engine.cache_rates(VALID_UNIT_ID, [rate_v1])\n\n        # Invalidate\n        engine.invalidate_unit(VALID_UNIT_ID)\n\n        # Re-cache with new data\n        rate_v2 = make_nightly_rate(\"2025-07-01\", base_rate_cents=20000, total_cents=20000)\n        engine.cache_rates(VALID_UNIT_ID, [rate_v2])\n\n        result = engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        assert result.hit is True\n        assert result.data[0].base_rate.amount_cents == 20000, (\n            \"After invalidation + re-cache, new data should be returned\"\n        )\n\n    def test_different_units_isolated(self):\n        \"\"\"Cached data for different units is isolated.\"\"\"\n        fake_redis = FakeRedis()\n        engine = PricingCacheEngine(config=self.config, redis_client=fake_redis)\n\n        rate1 = make_nightly_rate(\"2025-07-01\", base_rate_cents=10000, total_cents=10000)\n        rate2 = make_nightly_rate(\"2025-07-01\", base_rate_cents=20000, total_cents=20000)\n\n        engine.cache_rates(VALID_UNIT_ID, [rate1])\n        engine.cache_rates(VALID_UNIT_ID_2, [rate2])\n\n        result1 = engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        result2 = engine.get_cached_rates(\n            VALID_UNIT_ID_2, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n\n        assert result1.hit is True\n        assert result2.hit is True\n        assert result1.data[0].base_rate.amount_cents == 10000\n        assert result2.data[0].base_rate.amount_cents == 20000\n\n    def test_invalidate_one_unit_does_not_affect_another(self):\n        \"\"\"Invalidating one unit does not clear another unit's cache.\"\"\"\n        fake_redis = FakeRedis()\n        engine = PricingCacheEngine(config=self.config, redis_client=fake_redis)\n\n        rate1 = make_nightly_rate(\"2025-07-01\", base_rate_cents=10000, total_cents=10000)\n        rate2 = make_nightly_rate(\"2025-07-01\", base_rate_cents=20000, total_cents=20000)\n\n        engine.cache_rates(VALID_UNIT_ID, [rate1])\n        engine.cache_rates(VALID_UNIT_ID_2, [rate2])\n\n        # Invalidate only unit 1\n        engine.invalidate_unit(VALID_UNIT_ID)\n\n        result1 = engine.get_cached_rates(\n            VALID_UNIT_ID, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n        result2 = engine.get_cached_rates(\n            VALID_UNIT_ID_2, make_date_range(\"2025-07-01\", \"2025-07-02\")\n        )\n\n        assert result1.hit is False, \"Unit 1 should be invalidated\"\n        assert result2.hit is True, \"Unit 2 should still be cached\"\n        assert result2.data[0].base_rate.amount_cents == 20000\n"
+}

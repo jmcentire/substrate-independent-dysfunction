@@ -1,0 +1,553 @@
+{
+  "root_id": "root",
+  "nodes": {
+    "shared_foundation": {
+      "component_id": "shared_foundation",
+      "name": "Shared Foundation & Types",
+      "description": "Shared TypeScript types, utility functions, database helpers, Redis helpers, and testing infrastructure used by all services. Includes: UUID generation, ISO 8601 date utilities, bitmask manipulation library, SHA-256 content-addressable ID generation, hash-sharding key helpers, HTTP client wrapper for inter-service calls, shared error types/codes, Docker Compose configuration for PostgreSQL/Redis/Kafka, and test harness utilities (mock DB, mock Redis, mock HTTP). This is NOT a runtime service — it's a library package imported by each service.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "shared_types",
+        "shared_db_helpers",
+        "shared_cache_helpers",
+        "shared_bitmask_lib",
+        "shared_crypto_utils",
+        "shared_test_infra",
+        "docker_compose_infra"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "shared_types": {
+      "component_id": "shared_types",
+      "name": "Shared Type Definitions",
+      "description": "TypeScript type definitions and Zod schemas for all cross-service data contracts: UUIDs, date ranges, money amounts, API response envelopes, error response shapes, event payload types. Ensures consistent serialization/deserialization across service boundaries. All entity IDs are UUIDs, all dates ISO 8601 UTC, all money in minor units (cents) with currency code.",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "shared_db_helpers": {
+      "component_id": "shared_db_helpers",
+      "name": "Database Connection & Migration Helpers",
+      "description": "PostgreSQL connection pool factory, migration runner, and query builder helpers. Each service calls createPool(serviceName) to get a connection to its own database/schema. Includes a lightweight migration system that reads .sql files from a service's migrations/ directory. Provides transaction helpers and typed query result mapping.",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "shared_cache_helpers": {
+      "component_id": "shared_cache_helpers",
+      "name": "Redis Cache Helpers",
+      "description": "Redis connection factory and cache abstraction layer. Includes hash-sharding key generation (hash(unit_id) % N → key prefix), TTL management, cache-aside pattern helper (get-or-fetch), and serialization helpers. All cache keys follow a namespace:shard:entity_id convention.",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "shared_bitmask_lib": {
+      "component_id": "shared_bitmask_lib",
+      "name": "Bitmask Manipulation Library",
+      "description": "Core bitmask operations for availability checking. Represents a rolling 365-day window as a BigInt bitmask where bit N = 1 means 'day N is available'. Operations: setRange(bitmask, startDay, endDay, value), checkRange(bitmask, startDay, endDay) → boolean (O(1) via bitwise AND with a precomputed mask), dateToOffset(date, epochDate) → dayIndex, and bitmask serialization to/from Redis-storable strings. Epoch date is configurable per unit (typically the start of the current year).",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "shared_crypto_utils": {
+      "component_id": "shared_crypto_utils",
+      "name": "Cryptographic Utility Functions",
+      "description": "SHA-256 content-addressable ID generation for events (hash of canonical JSON payload), and hash-chaining utilities for payout snapshots (each snapshot's hash includes the previous snapshot's hash). Uses Web Crypto API (Deno stdlib), no third-party dependencies.",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "shared_test_infra": {
+      "component_id": "shared_test_infra",
+      "name": "Test Infrastructure & Mocks",
+      "description": "Reusable test utilities: mock PostgreSQL (in-memory maps honoring basic SQL semantics or a lightweight pg-mem equivalent), mock Redis (in-memory key-value with TTL support), mock HTTP server for inter-service call stubbing, test fixture factories for all entity types (units, bookings, guests, etc.), and assertion helpers for API contract testing (validates response shapes against Zod schemas).",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "docker_compose_infra": {
+      "component_id": "docker_compose_infra",
+      "name": "Docker Compose & Infrastructure Config",
+      "description": "Docker Compose file defining PostgreSQL (with per-service database initialization), Redis, and Kafka (with Zookeeper or KRaft) containers. Includes Dockerfiles for each service (Deno-based), healthcheck configurations, network definitions (all services on a shared internal network), and environment variable templates. Also includes a top-level Makefile/deno task for starting the stack, running all tests, and running integration tests.",
+      "depth": 2,
+      "parent_id": "shared_foundation",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "availability_service": {
+      "component_id": "availability_service",
+      "name": "Availability Service",
+      "description": "Manages unit availability using bitmask caching for O(1) date range lookups. Maintains a PostgreSQL source-of-truth table of availability records and a Redis cache of bitmasks per unit. Exposes REST endpoints: GET /availability/:unit_id?start=&end= (check availability for date range), PUT /availability/:unit_id (update availability — set dates as available/blocked), GET /availability/bulk?unit_ids=&start=&end= (bulk check for search results). Cache is warmed on first access and invalidated on writes. This is the lowest-dependency service and the first one called in the booking flow.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "availability_schema",
+        "availability_bitmask_cache",
+        "availability_api",
+        "availability_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "availability_schema": {
+      "component_id": "availability_schema",
+      "name": "Availability Database Schema & Repository",
+      "description": "PostgreSQL schema: availability_blocks table (id UUID PK, unit_id UUID, start_date DATE, end_date DATE, block_type ENUM('reserved','maintenance','owner_hold'), created_at TIMESTAMPTZ). Repository layer with functions: getBlocksForUnit(unitId, dateRange), createBlock(block), deleteBlock(blockId), getBlocksForUnits(unitIds, dateRange). Includes migration SQL files and seed data matching reference/test_examples/.",
+      "depth": 2,
+      "parent_id": "availability_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "availability_bitmask_cache": {
+      "component_id": "availability_bitmask_cache",
+      "name": "Availability Bitmask Cache Layer",
+      "description": "Builds and maintains Redis-cached bitmasks from PostgreSQL availability_blocks data. On cache miss: queries all blocks for a unit within the 365-day window, constructs a bitmask (1=available, 0=blocked), stores in Redis with TTL. On availability update: invalidates the cached bitmask (lazy rebuild on next read). Key format: avail:{hash(unit_id) % 64}:{unit_id}. Exposes: checkAvailability(unitId, startDate, endDate) → boolean, invalidateCache(unitId).",
+      "depth": 2,
+      "parent_id": "availability_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "availability_api": {
+      "component_id": "availability_api",
+      "name": "Availability HTTP API & Server",
+      "description": "Oak HTTP server exposing availability endpoints. GET /availability/:unit_id?start=&end= → {available: boolean, unit_id, start, end}. PUT /availability/:unit_id body: {start, end, block_type, blocked: boolean} → {success: boolean}. GET /availability/bulk?unit_ids=id1,id2&start=&end= → {results: [{unit_id, available}]}. Input validation via Zod, proper error responses (400 for bad dates, 404 for unknown units). Server startup, graceful shutdown, health check at GET /health.",
+      "depth": 2,
+      "parent_id": "availability_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "availability_tests": {
+      "component_id": "availability_tests",
+      "name": "Availability Service Tests",
+      "description": "Unit tests for bitmask operations (edge cases: single day, full year, boundary dates, leap years). Integration tests for cache layer (cache miss → DB query → cache fill → cache hit path, invalidation). API contract tests validating all endpoint request/response shapes. Tests run with mocked DB and Redis (no external services required). Minimum: 1 test per public function, contract tests for every endpoint.",
+      "depth": 2,
+      "parent_id": "availability_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "pricing_service": {
+      "component_id": "pricing_service",
+      "name": "Pricing Service",
+      "description": "Manages nightly rates and computes total prices for date ranges. Maintains per-unit rate tables in PostgreSQL with Redis cache hash-sharded by unit_id. Exposes REST endpoints: GET /pricing/:unit_id?start=&end= (get nightly rates for range), POST /pricing/quote (compute total for a booking: nightly rates + fees + taxes), PUT /pricing/:unit_id/rates (set/update rates for date ranges). Rates can vary by date (seasonal pricing). The quote endpoint is called during the booking flow.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "pricing_schema",
+        "pricing_cache",
+        "pricing_api",
+        "pricing_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "pricing_schema": {
+      "component_id": "pricing_schema",
+      "name": "Pricing Database Schema & Repository",
+      "description": "PostgreSQL schema: nightly_rates table (id UUID PK, unit_id UUID, date DATE, rate_cents INT, currency VARCHAR(3), created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ). Unique constraint on (unit_id, date). fee_rules table (id UUID PK, unit_id UUID NULLABLE, fee_type ENUM('cleaning','service','tax'), calculation_type ENUM('flat','percentage'), amount INT, currency VARCHAR(3)). Repository: getRatesForRange(unitId, start, end), upsertRates(unitId, rates[]), getFeeRules(unitId). Migration files included.",
+      "depth": 2,
+      "parent_id": "pricing_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "pricing_cache": {
+      "component_id": "pricing_cache",
+      "name": "Pricing Rate Cache Layer",
+      "description": "Redis cache for nightly rates, hash-sharded by unit_id. Key format: price:{hash(unit_id) % 64}:{unit_id}:{YYYY-MM}. Stores a month's worth of rates as a JSON hash. Cache-aside pattern: miss → DB fetch → cache store (TTL 1hr). Invalidation on rate updates. Exposes: getCachedRates(unitId, startDate, endDate) → Rate[], invalidateRateCache(unitId, months[]).",
+      "depth": 2,
+      "parent_id": "pricing_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "pricing_api": {
+      "component_id": "pricing_api",
+      "name": "Pricing HTTP API & Server",
+      "description": "Oak HTTP server. GET /pricing/:unit_id?start=&end= → {unit_id, rates: [{date, rate_cents, currency}]}. POST /pricing/quote body: {unit_id, start, end, guest_count?} → {unit_id, nightly_total_cents, fees: [{type, amount_cents}], tax_cents, total_cents, currency, nights}. PUT /pricing/:unit_id/rates body: {rates: [{date, rate_cents, currency}]} → {updated: number}. Quote calculation: sum nightly rates + apply fee rules + compute tax. Health check at GET /health.",
+      "depth": 2,
+      "parent_id": "pricing_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "pricing_tests": {
+      "component_id": "pricing_tests",
+      "name": "Pricing Service Tests",
+      "description": "Unit tests for quote calculation logic (various fee combinations, multi-night stays, missing rates → error). Cache layer tests (sharding correctness, TTL behavior, invalidation). API contract tests for all endpoints. Edge cases: zero-night stay, single night, rates in different currencies (should reject mixed currencies). All tests use mocked DB/Redis.",
+      "depth": 2,
+      "parent_id": "pricing_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "property_service": {
+      "component_id": "property_service",
+      "name": "Property Service",
+      "description": "Manages properties, units, and the 4-tier settings override hierarchy (platform → brand → property → unit). Exposes CRUD for properties and units, plus a settings resolution endpoint that merges settings across all 4 tiers. This service is the source of truth for property/unit metadata consumed by other services.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "property_schema",
+        "property_override_engine",
+        "property_api",
+        "property_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "property_schema": {
+      "component_id": "property_schema",
+      "name": "Property Database Schema & Repository",
+      "description": "PostgreSQL schema: platforms table (id UUID PK, name, settings JSONB, created_at, updated_at), brands table (id UUID PK, platform_id UUID FK, name, settings JSONB), properties table (id UUID PK, brand_id UUID FK, name, address JSONB, settings JSONB), units table (id UUID PK, property_id UUID FK, name, unit_type, bedrooms INT, bathrooms INT, max_guests INT, settings JSONB, status ENUM). Repository: CRUD for each entity, getUnitWithHierarchy(unitId) → {unit, property, brand, platform}.",
+      "depth": 2,
+      "parent_id": "property_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "property_override_engine": {
+      "component_id": "property_override_engine",
+      "name": "4-Tier Settings Override Engine",
+      "description": "Implements the settings resolution algorithm: start with platform defaults, deep-merge brand overrides, deep-merge property overrides, deep-merge unit overrides. The merge is a deep object merge where lower tiers (closer to unit) win for leaf values. Handles: cancellation policies, check-in/check-out times, minimum stay, booking rules, amenities. Pure function: resolveSettings(platform, brand, property, unit) → mergedSettings. No side effects, highly testable.",
+      "depth": 2,
+      "parent_id": "property_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "property_api": {
+      "component_id": "property_api",
+      "name": "Property HTTP API & Server",
+      "description": "Oak HTTP server. CRUD endpoints: GET/POST /properties, GET/PUT/DELETE /properties/:id, GET/POST /properties/:id/units, GET/PUT/DELETE /units/:id. Settings: GET /units/:unit_id/settings → resolved 4-tier merged settings. GET /units/:unit_id/details → full unit info with resolved settings. List endpoints support pagination (limit/offset). Health check at GET /health.",
+      "depth": 2,
+      "parent_id": "property_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "property_tests": {
+      "component_id": "property_tests",
+      "name": "Property Service Tests",
+      "description": "Unit tests for the 4-tier override engine (every merge scenario: no overrides, partial overrides at each level, conflicting values, nested object merges, array handling). CRUD repository tests. API contract tests for all endpoints. Edge cases: unit with no brand, property with no settings, deeply nested setting paths.",
+      "depth": 2,
+      "parent_id": "property_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "event_service": {
+      "component_id": "event_service",
+      "name": "Event Service",
+      "description": "Central event bus exposing an HTTP API for publishing and subscribing to domain events. Internally backed by Kafka for durability and ordering. Event IDs are content-addressable (SHA-256 of canonical payload) ensuring idempotency. Other services publish events via POST and consume via polling or webhook registration. Kafka is an internal implementation detail — no other service connects to Kafka directly.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "event_schema",
+        "event_kafka_adapter",
+        "event_api",
+        "event_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "event_schema": {
+      "component_id": "event_schema",
+      "name": "Event Database Schema & Repository",
+      "description": "PostgreSQL schema: events table (id VARCHAR(64) PK — SHA-256 hex, topic VARCHAR, payload JSONB, source_service VARCHAR, created_at TIMESTAMPTZ), subscriptions table (id UUID PK, subscriber_service VARCHAR, topic_pattern VARCHAR, webhook_url VARCHAR, created_at TIMESTAMPTZ), event_deliveries table (id UUID PK, event_id FK, subscription_id FK, status ENUM('pending','delivered','failed'), attempts INT, last_attempt_at TIMESTAMPTZ). Repository: storeEvent, getEventById, getEventsByTopic, createSubscription, getSubscriptionsForTopic, updateDeliveryStatus.",
+      "depth": 2,
+      "parent_id": "event_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "event_kafka_adapter": {
+      "component_id": "event_kafka_adapter",
+      "name": "Kafka Producer/Consumer Adapter",
+      "description": "Wraps Kafka client library for internal event routing. Producer: publishes events to Kafka topics after storing in PostgreSQL (outbox pattern — DB write first, then produce). Consumer: reads from Kafka topics and triggers webhook delivery to subscribers. Handles consumer group management, offset commits, and retry logic. For testing/local dev: includes an in-memory event bus implementation that satisfies the same interface without requiring Kafka.",
+      "depth": 2,
+      "parent_id": "event_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "event_api": {
+      "component_id": "event_api",
+      "name": "Event HTTP API & Server",
+      "description": "Oak HTTP server. POST /events body: {topic, payload, source_service} → {event_id (SHA-256), created_at}. Returns 200 with existing event_id if duplicate payload (idempotent). GET /events/:event_id → event details. GET /events?topic=&since=&limit= → list of events. POST /subscriptions body: {service, topic_pattern, webhook_url} → subscription. DELETE /subscriptions/:id. GET /health.",
+      "depth": 2,
+      "parent_id": "event_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "event_tests": {
+      "component_id": "event_tests",
+      "name": "Event Service Tests",
+      "description": "Unit tests for content-addressable ID generation (same payload → same ID, different payload → different ID, canonical JSON ordering). Idempotency tests (publishing same event twice → same event_id returned, stored once). Kafka adapter tests with in-memory implementation. API contract tests for all endpoints. Webhook delivery simulation tests.",
+      "depth": 2,
+      "parent_id": "event_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "sync_service": {
+      "component_id": "sync_service",
+      "name": "Sync Service",
+      "description": "Bidirectional synchronization between the Wander platform and external Property Management Systems (PMS). Defines a PMS adapter interface with 8 adapter stubs and 1-2 real reference implementations. Handles inbound syncs (PMS → Wander: availability updates, rate changes, new bookings) and outbound syncs (Wander → PMS: booking confirmations, cancellations). Publishes change events via the Event Service.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "sync_adapter_interface",
+        "sync_engine",
+        "sync_api",
+        "sync_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "sync_adapter_interface": {
+      "component_id": "sync_adapter_interface",
+      "name": "PMS Adapter Interface & Implementations",
+      "description": "Defines the PMS adapter TypeScript interface: pullAvailability(unitMapping) → AvailabilityUpdate[], pullRates(unitMapping) → RateUpdate[], pullBookings(unitMapping) → BookingUpdate[], pushBooking(unitMapping, booking) → PushResult, pushCancellation(unitMapping, bookingId) → PushResult. Includes: 8 stub adapters (Guesty, Hostaway, Lodgify, Escapia, Streamline, Track, Breezeway, LiveRez) that throw 'not implemented', plus 1-2 reference implementations (e.g., MockPMS adapter that simulates a real PMS with in-memory state for testing, and optionally a Guesty adapter skeleton).",
+      "depth": 2,
+      "parent_id": "sync_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "sync_engine": {
+      "component_id": "sync_engine",
+      "name": "Sync Engine & Conflict Resolution",
+      "description": "Core synchronization logic. Inbound sync: calls PMS adapter pull methods, diffs against current Wander state, resolves conflicts (last-write-wins with configurable strategy), applies changes to Availability/Pricing/Property services via their APIs, publishes sync events to Event Service. Outbound sync: listens for relevant events (booking.created, booking.cancelled), calls PMS adapter push methods. Tracks sync state per unit-PMS pair (last_sync_at, sync_cursor). Includes rate limiting and error recovery.",
+      "depth": 2,
+      "parent_id": "sync_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "sync_api": {
+      "component_id": "sync_api",
+      "name": "Sync HTTP API & Server",
+      "description": "Oak HTTP server. POST /sync/trigger body: {property_id?, pms_type?, direction: 'inbound'|'outbound'|'both'} → {sync_job_id, status}. GET /sync/jobs/:id → job status and results. GET /sync/status/:property_id → last sync times per PMS. POST /sync/mappings body: {unit_id, pms_type, pms_unit_id, credentials_ref} → mapping record. GET /sync/mappings/:unit_id → configured PMS mappings. GET /health.",
+      "depth": 2,
+      "parent_id": "sync_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "sync_tests": {
+      "component_id": "sync_tests",
+      "name": "Sync Service Tests",
+      "description": "Unit tests for the adapter interface (MockPMS adapter exercises full pull/push cycle). Sync engine tests: inbound diff detection, conflict resolution strategies, outbound event handling. API contract tests. Integration test: full round-trip sync using MockPMS adapter → Sync Engine → mock service calls → verify state. All tests use mocked external services.",
+      "depth": 2,
+      "parent_id": "sync_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "payments_service": {
+      "component_id": "payments_service",
+      "name": "Payments Service",
+      "description": "Handles payment processing via Stripe (mock/mirror for development) and maintains hash-chained payout snapshots for audit integrity. Manages payment intents, charges, refunds, and payout records. Each payout snapshot includes a hash of the previous snapshot, creating a tamper-evident chain.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "payments_schema",
+        "payments_stripe_adapter",
+        "payments_chain",
+        "payments_api",
+        "payments_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "payments_schema": {
+      "component_id": "payments_schema",
+      "name": "Payments Database Schema & Repository",
+      "description": "PostgreSQL schema: payment_intents table (id UUID PK, booking_id UUID, amount_cents INT, currency VARCHAR(3), status ENUM('created','processing','succeeded','failed','refunded'), stripe_payment_intent_id VARCHAR, created_at, updated_at). charges table (id UUID PK, payment_intent_id FK, amount_cents, stripe_charge_id, status). refunds table (id UUID PK, charge_id FK, amount_cents, reason, stripe_refund_id, status). payout_snapshots table (id UUID PK, payout_period_start DATE, payout_period_end DATE, property_id UUID, total_cents INT, line_items JSONB, hash VARCHAR(64), previous_hash VARCHAR(64), created_at). Repository for all CRUD operations.",
+      "depth": 2,
+      "parent_id": "payments_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "payments_stripe_adapter": {
+      "component_id": "payments_stripe_adapter",
+      "name": "Stripe API Adapter (Mock & Real)",
+      "description": "Interface for Stripe operations: createPaymentIntent(amount, currency, metadata) → PaymentIntent, confirmPaymentIntent(id, paymentMethod) → PaymentIntent, createRefund(chargeId, amount?) → Refund, getPaymentIntent(id) → PaymentIntent. Mock implementation: simulates Stripe behavior with configurable latency (~200-500ms to simulate real Stripe), success/failure modes, and idempotency keys. Real implementation: wraps Stripe REST API (for future use). Mock is default for development/testing.",
+      "depth": 2,
+      "parent_id": "payments_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "payments_chain": {
+      "component_id": "payments_chain",
+      "name": "Hash-Chained Payout Snapshots",
+      "description": "Implements the hash-chaining algorithm for payout audit integrity. When creating a payout snapshot: serialize line items canonically, fetch the previous snapshot's hash (or genesis hash for first snapshot per property), compute SHA-256(previous_hash + canonical_payload) → current hash, store snapshot with both hashes. Verification: verifyChain(propertyId) → walks the chain from genesis, recomputes each hash, returns {valid: boolean, broken_at?: snapshotId}. Pure functions with clear separation from persistence.",
+      "depth": 2,
+      "parent_id": "payments_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "payments_api": {
+      "component_id": "payments_api",
+      "name": "Payments HTTP API & Server",
+      "description": "Oak HTTP server. POST /payments/intents body: {booking_id, amount_cents, currency} → {payment_intent_id, status, client_secret?}. POST /payments/intents/:id/confirm body: {payment_method_token} → {status, charge_id}. POST /payments/refunds body: {charge_id, amount_cents?, reason?} → {refund_id, status}. GET /payments/intents/:id → payment intent details. POST /payouts/snapshots body: {property_id, period_start, period_end, line_items} → {snapshot_id, hash}. GET /payouts/snapshots/:property_id → chain of snapshots. POST /payouts/verify/:property_id → chain integrity result. GET /health.",
+      "depth": 2,
+      "parent_id": "payments_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "payments_tests": {
+      "component_id": "payments_tests",
+      "name": "Payments Service Tests",
+      "description": "Unit tests for hash-chaining (chain creation, verification, tamper detection — modify a middle snapshot and verify chain breaks). Stripe mock adapter tests (idempotency, failure modes, latency simulation). Payment flow tests: create intent → confirm → succeed / create intent → confirm → fail. Refund tests. API contract tests for all endpoints. All tests use mock Stripe, mocked DB.",
+      "depth": 2,
+      "parent_id": "payments_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "booking_service": {
+      "component_id": "booking_service",
+      "name": "Booking Service",
+      "description": "The synchronous orchestrator service that coordinates the <3s booking flow. Receives a booking request from the frontend/API gateway, orchestrates calls to: Availability (check), Pricing (quote), Property (unit details + settings), Payments (charge), Availability (block dates), and Event Service (publish booking.created). Implements the critical path with timeout budgets, compensating transactions on failure, and idempotency for retries.",
+      "depth": 1,
+      "parent_id": "root",
+      "children": [
+        "booking_schema",
+        "booking_orchestrator",
+        "booking_api",
+        "booking_tests"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "booking_schema": {
+      "component_id": "booking_schema",
+      "name": "Booking Database Schema & Repository",
+      "description": "PostgreSQL schema: bookings table (id UUID PK, unit_id UUID, guest_id UUID, check_in DATE, check_out DATE, guest_count INT, status ENUM('pending','confirmed','cancelled','completed'), total_cents INT, currency VARCHAR(3), payment_intent_id UUID, idempotency_key VARCHAR UNIQUE, created_at, updated_at). guests table (id UUID PK, email VARCHAR, first_name, last_name, phone, created_at). booking_status_history table (id UUID PK, booking_id FK, from_status, to_status, reason, created_at). Repository: createBooking, getBooking, updateBookingStatus, getBookingsByUnit, getBookingsByGuest, findByIdempotencyKey.",
+      "depth": 2,
+      "parent_id": "booking_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "booking_orchestrator": {
+      "component_id": "booking_orchestrator",
+      "name": "Booking Orchestration Engine",
+      "description": "The core <3s booking flow orchestrator. Steps: (1) Check idempotency key — return cached result if exists (~0ms). (2) Call Availability Service — check dates available (~200ms budget). (3) Call Pricing Service — get quote (~200ms budget). (4) Call Property Service — validate unit settings/rules (~200ms budget). (5) Call Payments Service — create + confirm payment (~1000ms budget for Stripe). (6) Call Availability Service — block dates (~200ms budget). (7) Call Event Service — publish booking.created (~200ms budget). Total budget: ~2000ms with ~1000ms margin. On failure at any step: compensating actions (refund payment if charged, unblock dates if blocked). Implements circuit breaker pattern for downstream calls. Returns partial error info for debugging.",
+      "depth": 2,
+      "parent_id": "booking_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "booking_api": {
+      "component_id": "booking_api",
+      "name": "Booking HTTP API & Server",
+      "description": "Oak HTTP server. POST /bookings body: {unit_id, guest: {email, first_name, last_name, phone?}, check_in, check_out, guest_count, payment_method_token, idempotency_key} → {booking_id, status, total_cents, currency, confirmation_code}. GET /bookings/:id → booking details with status. POST /bookings/:id/cancel body: {reason?} → {status, refund_id?}. GET /bookings?unit_id=&status=&limit=&offset= → paginated list. GET /health. The POST /bookings endpoint is the critical <3s path — includes timing headers (X-Booking-Duration-Ms) for monitoring.",
+      "depth": 2,
+      "parent_id": "booking_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "booking_tests": {
+      "component_id": "booking_tests",
+      "name": "Booking Service Tests",
+      "description": "Unit tests for orchestrator logic: happy path (all services respond successfully in <3s), each failure mode (availability unavailable, payment declined, service timeout), compensating transactions (verify refund called after availability block fails), idempotency (same key returns same result). Integration tests: mock all downstream services with configurable latency, verify total flow stays under 3s. API contract tests. Timing tests with simulated latencies to validate timeout budgets.",
+      "depth": 2,
+      "parent_id": "booking_service",
+      "children": [],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    },
+    "root": {
+      "component_id": "root",
+      "name": "Root",
+      "description": "# Task\n\nBuild the Wander Backend Services platform — a microservices backend for a\nvacation rental booking and property management system.\n\nCORE CONSTRAINT: \"User standing at checkout with credit card",
+      "depth": 0,
+      "parent_id": "",
+      "children": [
+        "availability_service",
+        "booking_service",
+        "event_service",
+        "payments_service",
+        "pricing_service",
+        "property_service",
+        "shared_foundation",
+        "sync_service"
+      ],
+      "contract": null,
+      "implementation_status": "pending",
+      "test_results": null
+    }
+  }
+}

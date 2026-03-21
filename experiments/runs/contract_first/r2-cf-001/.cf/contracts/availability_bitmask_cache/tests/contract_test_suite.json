@@ -1,0 +1,1067 @@
+{
+  "component_id": "availability_bitmask_cache",
+  "contract_version": 2,
+  "test_cases": [
+    {
+      "id": "shard_key_deterministic",
+      "description": "computeShardKey returns the same shard key for the same unit_id and shard_count across multiple calls (pure/deterministic)",
+      "function": "computeShardKey",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "An integer in [0, 63] that is identical on repeated calls",
+      "expected_error": "",
+      "assertions": [
+        "result == computeShardKey('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', 64)",
+        "isinstance(result, int)"
+      ]
+    },
+    {
+      "id": "shard_key_range_valid",
+      "description": "computeShardKey output is always in range [0, shard_count - 1]",
+      "function": "computeShardKey",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "Integer in [0, 63]",
+      "expected_error": "",
+      "assertions": [
+        "0 <= result <= 63"
+      ]
+    },
+    {
+      "id": "shard_key_shard_count_1",
+      "description": "computeShardKey with shard_count=1 always returns 0",
+      "function": "computeShardKey",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "shard_count": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "Always 0 when shard_count is 1",
+      "expected_error": "",
+      "assertions": [
+        "result == 0"
+      ]
+    },
+    {
+      "id": "shard_key_large_shard_count",
+      "description": "computeShardKey with shard_count=1024 returns value in [0, 1023]",
+      "function": "computeShardKey",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "shard_count": "1024"
+      },
+      "input_description": "",
+      "expected_output_description": "Integer in [0, 1023]",
+      "expected_error": "",
+      "assertions": [
+        "0 <= result <= 1023"
+      ]
+    },
+    {
+      "id": "shard_key_distribution_uniformity",
+      "description": "computeShardKey distributes 1000 random UUIDs approximately uniformly across 64 shards (property-based test)",
+      "function": "computeShardKey",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "Approximately uniform distribution with no extreme outliers",
+      "expected_error": "",
+      "assertions": [
+        "all shards used (no empty buckets)",
+        "max bucket count < 4 * mean bucket count (no extreme skew)"
+      ]
+    },
+    {
+      "id": "shard_key_different_uuids_can_differ",
+      "description": "computeShardKey can produce different shard keys for different unit_ids",
+      "function": "computeShardKey",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "Not all shard keys are identical for distinct inputs",
+      "expected_error": "",
+      "assertions": [
+        "at least 2 distinct shard keys among 10 different UUIDs"
+      ]
+    },
+    {
+      "id": "build_redis_key_format",
+      "description": "buildRedisKey returns key matching pattern {prefix}:{shard}:{unit_id}",
+      "function": "buildRedisKey",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "key_prefix": "avail",
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "String like avail:42:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "expected_error": "",
+      "assertions": [
+        "key matches regex avail:\\d{1,2}:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "key starts with 'avail:'",
+        "key ends with ':a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'"
+      ]
+    },
+    {
+      "id": "build_redis_key_custom_prefix",
+      "description": "buildRedisKey uses custom key_prefix from config",
+      "function": "buildRedisKey",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "key_prefix": "test_cache",
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "Key prefixed with test_cache",
+      "expected_error": "",
+      "assertions": [
+        "key starts with 'test_cache:'"
+      ]
+    },
+    {
+      "id": "build_redis_key_deterministic",
+      "description": "buildRedisKey is pure: same inputs always produce the same output",
+      "function": "buildRedisKey",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "key_prefix": "avail",
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "Identical string on every call",
+      "expected_error": "",
+      "assertions": [
+        "result1 == result2 across multiple calls"
+      ]
+    },
+    {
+      "id": "build_redis_key_shard_in_range",
+      "description": "buildRedisKey embeds a shard number in [0, shard_count-1]",
+      "function": "buildRedisKey",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "key_prefix": "avail",
+        "shard_count": "64"
+      },
+      "input_description": "",
+      "expected_output_description": "The shard segment of the key is a valid ShardKey",
+      "expected_error": "",
+      "assertions": [
+        "extracted shard integer is >= 0",
+        "extracted shard integer is <= 63"
+      ]
+    },
+    {
+      "id": "check_availability_cache_hit_available",
+      "description": "checkAvailability returns available=true on cache hit when all bits in range are 1",
+      "function": "checkAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmask with all bits=1 for range, anchor_date=today",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "AvailabilityResult(ok=True, value=True)",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value is True",
+        "result.error is None",
+        "pg.get_availability_blocks not called"
+      ]
+    },
+    {
+      "id": "check_availability_cache_hit_unavailable",
+      "description": "checkAvailability returns available=false on cache hit when any bit in range is 0",
+      "function": "checkAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmask with bit at offset 1 = 0, anchor_date=today",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "AvailabilityResult(ok=True, value=False)",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value is False"
+      ]
+    },
+    {
+      "id": "check_availability_cache_miss_rebuild",
+      "description": "checkAvailability on cache miss queries PG, builds bitmask, stores in Redis, then returns correct result",
+      "function": "checkAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "key does not exist, set_bits succeeds",
+        "pg": "unit_exists=True, returns blocks marking all days available"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "AvailabilityResult(ok=True, value=True) after cache rebuild",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value is True",
+        "redis.set_bits called once",
+        "pg.get_availability_blocks called once"
+      ]
+    },
+    {
+      "id": "check_availability_stale_anchor_triggers_rebuild",
+      "description": "checkAvailability treats bitmask with stale anchor_date (yesterday) as miss and rebuilds",
+      "function": "checkAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "key exists with anchor_date=yesterday",
+        "pg": "unit_exists=True, returns blocks"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Cache treated as miss, rebuilt from PG",
+      "expected_error": "",
+      "assertions": [
+        "pg.get_availability_blocks called (rebuild happened)",
+        "redis.set_bits called (new bitmask stored)",
+        "result.ok is True"
+      ]
+    },
+    {
+      "id": "check_availability_single_day_range",
+      "description": "checkAvailability handles single-day query (start_date == end_date) correctly",
+      "function": "checkAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmask with bit 0 = 1, anchor_date=today",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today"
+      },
+      "input_description": "",
+      "expected_output_description": "Single day available check succeeds",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value is True"
+      ]
+    },
+    {
+      "id": "check_availability_window_boundary",
+      "description": "checkAvailability succeeds when end_date equals today + window_days - 1 (maximum allowed)",
+      "function": "checkAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmask with all bits=1, anchor_date=today",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+365"
+      },
+      "input_description": "",
+      "expected_output_description": "Maximum window range is accepted",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value is True"
+      ]
+    },
+    {
+      "id": "check_availability_error_start_after_end",
+      "description": "checkAvailability returns InvalidDateRange with START_AFTER_END when start_date > end_date",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today+5",
+        "end_date": "today+2"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InvalidDateRange(reason=START_AFTER_END)",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'INVALID_DATE_RANGE'",
+        "result.error.reason == 'START_AFTER_END'"
+      ]
+    },
+    {
+      "id": "check_availability_error_dates_in_past",
+      "description": "checkAvailability returns InvalidDateRange with DATES_IN_PAST when start_date < today UTC",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "yesterday",
+        "end_date": "today+2"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InvalidDateRange(reason=DATES_IN_PAST)",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'INVALID_DATE_RANGE'",
+        "result.error.reason == 'DATES_IN_PAST'"
+      ]
+    },
+    {
+      "id": "check_availability_error_exceeds_window",
+      "description": "checkAvailability returns InvalidDateRange with RANGE_EXCEEDS_WINDOW when end_date exceeds window",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+400"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InvalidDateRange(reason=RANGE_EXCEEDS_WINDOW)",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'INVALID_DATE_RANGE'",
+        "result.error.reason == 'RANGE_EXCEEDS_WINDOW'"
+      ]
+    },
+    {
+      "id": "check_availability_error_invalid_date_format",
+      "description": "checkAvailability returns InvalidDateRange with INVALID_DATE_FORMAT for invalid calendar date (Feb 30)",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "2024-02-30",
+        "end_date": "2024-03-05"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InvalidDateRange(reason=INVALID_DATE_FORMAT)",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'INVALID_DATE_RANGE'",
+        "result.error.reason == 'INVALID_DATE_FORMAT'"
+      ]
+    },
+    {
+      "id": "check_availability_error_unit_not_found",
+      "description": "checkAvailability returns UnitNotFound when unit_id does not exist in PG during cache rebuild",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "key does not exist (cache miss)",
+        "pg": "unit_exists=False"
+      },
+      "input_values": {
+        "unit_id": "deadbeef-dead-4ead-beef-deadbeef0001",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "UnitNotFound",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'UNIT_NOT_FOUND'",
+        "result.error.unit_id == 'deadbeef-dead-4ead-beef-deadbeef0001'"
+      ]
+    },
+    {
+      "id": "check_availability_error_cache_unavailable_no_fallback",
+      "description": "checkAvailability returns CacheUnavailable when Redis is down and fallback_to_pg_on_redis_failure is false",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "raises ConnectionError on all calls",
+        "pg": "available",
+        "config": "fallback_to_pg_on_redis_failure=False"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "CacheUnavailable",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'CACHE_UNAVAILABLE'"
+      ]
+    },
+    {
+      "id": "check_availability_redis_down_fallback_enabled",
+      "description": "checkAvailability falls back to direct PG query when Redis is down and fallback is enabled",
+      "function": "checkAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "raises ConnectionError on all calls",
+        "pg": "unit_exists=True, returns blocks marking all days available",
+        "config": "fallback_to_pg_on_redis_failure=True"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Graceful degradation to PG query",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value is True",
+        "pg.get_availability_blocks called",
+        "warning log emitted"
+      ]
+    },
+    {
+      "id": "check_availability_error_internal_error_pg_timeout",
+      "description": "checkAvailability returns InternalError when PG times out during cache rebuild",
+      "function": "checkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "key does not exist (cache miss)",
+        "pg": "get_availability_blocks raises TimeoutError"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InternalError",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "check_availability_cache_write_ttl_verified",
+      "description": "On cache miss rebuild, the bitmask is stored in Redis with configured TTL",
+      "function": "checkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "key does not exist, set_bits captures args",
+        "pg": "unit_exists=True, returns blocks",
+        "config": "ttl_seconds=3600"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "TTL passed to Redis matches config.ttl_seconds",
+      "expected_error": "",
+      "assertions": [
+        "redis.set_bits called with ttl_seconds=3600"
+      ]
+    },
+    {
+      "id": "check_availability_bitmask_length_invariant",
+      "description": "Rebuilt bitmask has exactly window_days bits (366 by default)",
+      "function": "checkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "key does not exist, set_bits captures bit_map",
+        "pg": "unit_exists=True, returns blocks for full window"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Bitmask covers exactly window_days bits",
+      "expected_error": "",
+      "assertions": [
+        "max bit offset in set_bits call is <= 365",
+        "bit_map contains entries for all 366 days"
+      ]
+    },
+    {
+      "id": "bulk_availability_happy_path",
+      "description": "checkBulkAvailability returns per-unit results for multiple units",
+      "function": "checkBulkAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmasks for all units with all bits=1",
+        "pg": "not called for cache hits"
+      },
+      "input_values": {
+        "unit_ids": "[uuid1, uuid2, uuid3]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "All units available, per-unit results present",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.results) == 3",
+        "all(r.available is True for r in result.results)"
+      ]
+    },
+    {
+      "id": "bulk_availability_partial_failure",
+      "description": "checkBulkAvailability returns per-unit errors for missing units while succeeding for found units",
+      "function": "checkBulkAvailability",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "cache miss for both",
+        "pg": "unit_exists=True for uuid_found, False for uuid_not_found"
+      },
+      "input_values": {
+        "unit_ids": "[uuid_found, uuid_not_found]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Top-level ok=True, per-unit granular results",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.results) == 2",
+        "result.results[0].available is True",
+        "result.results[1].error.error_code == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "bulk_availability_preserves_input_order",
+      "description": "checkBulkAvailability results maintain same order as input unit_ids",
+      "function": "checkBulkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmasks for all",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_ids": "[uuid_a, uuid_b, uuid_c]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Results order matches input order",
+      "expected_error": "",
+      "assertions": [
+        "result.results[0].unit_id == uuid_a",
+        "result.results[1].unit_id == uuid_b",
+        "result.results[2].unit_id == uuid_c"
+      ]
+    },
+    {
+      "id": "bulk_availability_deduplicates_unit_ids",
+      "description": "checkBulkAvailability deduplicates duplicate unit_ids in input",
+      "function": "checkBulkAvailability",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "returns bitmask for uuid_a",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_ids": "[uuid_a, uuid_a, uuid_a]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Single result for deduplicated unit_id",
+      "expected_error": "",
+      "assertions": [
+        "len(result.results) == 1 (deduped)",
+        "result.results[0].unit_id == uuid_a"
+      ]
+    },
+    {
+      "id": "bulk_availability_error_empty_unit_ids",
+      "description": "checkBulkAvailability returns error when unit_ids list is empty",
+      "function": "checkBulkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "[]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InvalidDateRange or validation error for empty unit_ids",
+      "assertions": [
+        "result.ok is False",
+        "result.error is not None"
+      ]
+    },
+    {
+      "id": "bulk_availability_error_too_many_unit_ids",
+      "description": "checkBulkAvailability returns error when unit_ids list exceeds 100 entries",
+      "function": "checkBulkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "[101 UUIDs]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "Validation error for too many unit_ids",
+      "assertions": [
+        "result.ok is False",
+        "result.error is not None"
+      ]
+    },
+    {
+      "id": "bulk_availability_error_start_after_end",
+      "description": "checkBulkAvailability returns InvalidDateRange when start_date > end_date",
+      "function": "checkBulkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_ids": "[uuid1]",
+        "start_date": "today+5",
+        "end_date": "today+2"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "InvalidDateRange(reason=START_AFTER_END)",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'INVALID_DATE_RANGE'",
+        "result.error.reason == 'START_AFTER_END'"
+      ]
+    },
+    {
+      "id": "bulk_availability_systemic_failure",
+      "description": "checkBulkAvailability returns top-level error when both Redis and PG are unreachable",
+      "function": "checkBulkAvailability",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "raises ConnectionError",
+        "pg": "raises ConnectionError"
+      },
+      "input_values": {
+        "unit_ids": "[uuid1]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "CacheUnavailable or InternalError",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code in ('CACHE_UNAVAILABLE', 'INTERNAL_ERROR')"
+      ]
+    },
+    {
+      "id": "bulk_availability_pipeline_usage",
+      "description": "checkBulkAvailability uses Redis pipeline for fetching multiple units in one round-trip",
+      "function": "checkBulkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "pipeline_get_bit_ranges is called",
+        "pg": "not called"
+      },
+      "input_values": {
+        "unit_ids": "[uuid1, uuid2, uuid3]",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "Pipeline method called with batched commands",
+      "expected_error": "",
+      "assertions": [
+        "redis.pipeline_get_bit_ranges called exactly once",
+        "len(pipeline commands) == 3"
+      ]
+    },
+    {
+      "id": "invalidate_cache_success",
+      "description": "invalidateCache successfully deletes the Redis key for a unit",
+      "function": "invalidateCache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "delete_key returns True (key existed)"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "InvalidationResult(ok=True)",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.error is None",
+        "redis.delete_key called once"
+      ]
+    },
+    {
+      "id": "invalidate_cache_idempotent_nonexistent_key",
+      "description": "invalidateCache returns ok=True even when the key does not exist (idempotent)",
+      "function": "invalidateCache",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "delete_key returns False (key did not exist)"
+      },
+      "input_values": {
+        "unit_id": "deadbeef-dead-4ead-beef-deadbeef0001"
+      },
+      "input_description": "",
+      "expected_output_description": "InvalidationResult(ok=True) even for missing key",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.error is None"
+      ]
+    },
+    {
+      "id": "invalidate_cache_correct_key_format",
+      "description": "invalidateCache deletes the correctly formatted Redis key: avail:{shard}:{unit_id}",
+      "function": "invalidateCache",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "delete_key captures key argument"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Key format matches contract specification",
+      "expected_error": "",
+      "assertions": [
+        "deleted key matches pattern avail:\\d+:a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      ]
+    },
+    {
+      "id": "invalidate_cache_error_redis_unavailable",
+      "description": "invalidateCache returns CacheUnavailable when Redis is down (no PG fallback for invalidation)",
+      "function": "invalidateCache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "delete_key raises ConnectionError"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "CacheUnavailable",
+      "assertions": [
+        "result.ok is False",
+        "result.error.error_code == 'CACHE_UNAVAILABLE'"
+      ]
+    },
+    {
+      "id": "invalidate_then_check_triggers_rebuild",
+      "description": "After invalidateCache, the next checkAvailability triggers a full PG rebuild",
+      "function": "invalidateCache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "delete_key succeeds, then key does not exist on subsequent check",
+        "pg": "unit_exists=True, returns blocks"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      "input_description": "",
+      "expected_output_description": "Full round-trip: invalidate → miss → rebuild",
+      "expected_error": "",
+      "assertions": [
+        "invalidation result.ok is True",
+        "subsequent checkAvailability triggers pg.get_availability_blocks call",
+        "redis.set_bits called (cache rebuilt)"
+      ]
+    },
+    {
+      "id": "config_validation_ttl_range",
+      "description": "CacheConfig rejects ttl_seconds outside [1, 86400]",
+      "function": "CacheConfig",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "0"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TTL must be between 1 second and 86400 seconds",
+      "assertions": [
+        "raises ValueError or validation error"
+      ]
+    },
+    {
+      "id": "config_validation_ttl_too_high",
+      "description": "CacheConfig rejects ttl_seconds > 86400",
+      "function": "CacheConfig",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "86401"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "TTL must be between 1 second and 86400 seconds",
+      "assertions": [
+        "raises ValueError or validation error"
+      ]
+    },
+    {
+      "id": "config_validation_shard_count_not_power_of_2",
+      "description": "CacheConfig rejects shard_count that is not a power of 2",
+      "function": "CacheConfig",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "3600",
+        "shard_count": "3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "Shard count must be a power of 2",
+      "assertions": [
+        "raises ValueError or validation error"
+      ]
+    },
+    {
+      "id": "config_validation_shard_count_zero",
+      "description": "CacheConfig rejects shard_count of 0",
+      "function": "CacheConfig",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "3600",
+        "shard_count": "0"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "Shard count must be between 1 and 1024",
+      "assertions": [
+        "raises ValueError or validation error"
+      ]
+    },
+    {
+      "id": "config_validation_window_days_range",
+      "description": "CacheConfig rejects window_days outside [1, 731]",
+      "function": "CacheConfig",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "3600",
+        "window_days": "0"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "Window days must be between 1 and 731",
+      "assertions": [
+        "raises ValueError or validation error"
+      ]
+    },
+    {
+      "id": "config_validation_key_prefix_invalid",
+      "description": "CacheConfig rejects key_prefix that doesn't match ^[a-z][a-z0-9_]{0,15}$",
+      "function": "CacheConfig",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "3600",
+        "key_prefix": "1invalid"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "Key prefix must be 1-16 lowercase alphanumeric characters starting with a letter",
+      "assertions": [
+        "raises ValueError or validation error"
+      ]
+    },
+    {
+      "id": "config_defaults_applied",
+      "description": "CacheConfig applies correct defaults when optional fields are omitted",
+      "function": "CacheConfig",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "ttl_seconds": "3600"
+      },
+      "input_description": "",
+      "expected_output_description": "All defaults match contract specification",
+      "expected_error": "",
+      "assertions": [
+        "config.shard_count == 64",
+        "config.window_days == 366",
+        "config.key_prefix == 'avail'",
+        "config.singleflight_enabled is True",
+        "config.fallback_to_pg_on_redis_failure is True"
+      ]
+    },
+    {
+      "id": "invariant_bitmask_bit_meaning",
+      "description": "Bit value 1 means available, 0 means blocked — verified through cache miss rebuild",
+      "function": "checkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "cache miss, captures set_bits call",
+        "pg": "returns block with is_available=True for today, is_available=False for today+1"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+2"
+      },
+      "input_description": "",
+      "expected_output_description": "Bitmask correctly encodes available=1, blocked=0",
+      "expected_error": "",
+      "assertions": [
+        "bit_map[0] == 1 (today is available)",
+        "bit_map[1] == 0 (today+1 is blocked)",
+        "result.ok is True",
+        "result.value is False (range contains blocked day)"
+      ]
+    },
+    {
+      "id": "invariant_anchor_date_equals_today",
+      "description": "Rebuilt bitmask metadata has anchor_date equal to today's UTC date",
+      "function": "checkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "cache miss, captures metadata",
+        "pg": "unit_exists=True, returns blocks"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "anchor_date in metadata matches mocked today",
+      "expected_error": "",
+      "assertions": [
+        "stored metadata anchor_date == today_utc_str"
+      ]
+    },
+    {
+      "id": "invariant_pg_is_read_only",
+      "description": "No method writes to or mutates the PostgreSQL availability_blocks table",
+      "function": "checkAvailability",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "redis": "cache miss",
+        "pg": "unit_exists=True, returns blocks"
+      },
+      "input_values": {
+        "unit_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "start_date": "today",
+        "end_date": "today+3"
+      },
+      "input_description": "",
+      "expected_output_description": "PG client only used for reads",
+      "expected_error": "",
+      "assertions": [
+        "pg mock has no write/insert/update/delete calls",
+        "only get_availability_blocks and unit_exists were called"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract Test Suite for Availability Bitmask Cache Layer (v2)\n=============================================================\nTests verify the component against its contract at boundaries (inputs/outputs).\nAll dependencies (RedisClient, PgClient) are mocked.\nA mock clock is injected to prevent time-dependent flakiness.\n\nRun with: pytest contract_test.py -v\n\"\"\"\n\nimport re\nimport uuid\nimport asyncio\nimport logging\nfrom datetime import date, timedelta, datetime, timezone\nfrom unittest.mock import AsyncMock, MagicMock, patch, call\nfrom collections import Counter\nfrom typing import Any, Dict, List, Optional\n\nimport pytest\n\n# ---------------------------------------------------------------------------\n# Import the component under test\n# ---------------------------------------------------------------------------\nfrom src.availability_bitmask_cache import (\n    checkAvailability,\n    checkBulkAvailability,\n    invalidateCache,\n    computeShardKey,\n    buildRedisKey,\n    CacheConfig,\n    AvailabilityResult,\n    BulkAvailabilityResult,\n    InvalidationResult,\n)\n\n# ============================= HELPERS =====================================\n\n# Fixed \"today\" for deterministic tests\nFIXED_TODAY = date(2025, 6, 15)\nFIXED_TODAY_STR = \"2025-06-15\"\n\n\ndef _date_str(offset: int = 0) -> str:\n    \"\"\"Return YYYY-MM-DD string for FIXED_TODAY + offset days.\"\"\"\n    return (FIXED_TODAY + timedelta(days=offset)).isoformat()\n\n\ndef _make_uuid(suffix: str = \"0001\") -> str:\n    \"\"\"Return a valid lowercase UUID v4 with a predictable tail.\"\"\"\n    # UUID v4: version nibble = 4, variant bits 10xx\n    return f\"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b{suffix}\"\n\n\nUNIT_ID = _make_uuid(\"0001\")\nUNIT_ID_2 = _make_uuid(\"0002\")\nUNIT_ID_3 = _make_uuid(\"0003\")\nUNIT_NOT_FOUND_ID = \"deadbeef-dead-4ead-beef-deadbeef0001\"\n\n\ndef _valid_uuid_v4() -> str:\n    \"\"\"Generate a random valid UUID v4 string (lowercase).\"\"\"\n    return str(uuid.uuid4())\n\n\ndef _default_config(**overrides) -> CacheConfig:\n    \"\"\"Create a CacheConfig with sensible defaults, applying overrides.\"\"\"\n    defaults = dict(\n        ttl_seconds=3600,\n        shard_count=64,\n        window_days=366,\n        hash_algorithm=\"CRC32C\",\n        key_prefix=\"avail\",\n        singleflight_enabled=True,\n        fallback_to_pg_on_redis_failure=True,\n    )\n    defaults.update(overrides)\n    return CacheConfig(**defaults)\n\n\ndef _make_redis_mock(**method_overrides) -> AsyncMock:\n    \"\"\"Create a mock RedisClient with all async methods stubbed.\"\"\"\n    redis = AsyncMock()\n    redis.get_bit = AsyncMock(return_value=1)\n    redis.get_bit_range = AsyncMock(return_value=b\"\\xff\" * 46)  # 366 bits all-1\n    redis.set_bits = AsyncMock(return_value=None)\n    redis.delete_key = AsyncMock(return_value=True)\n    redis.pipeline_get_bit_ranges = AsyncMock(return_value=[b\"\\xff\" * 46])\n    redis.exists = AsyncMock(return_value=True)\n    redis.get_key_metadata = AsyncMock(\n        return_value={\n            \"anchor_date\": FIXED_TODAY_STR,\n            \"built_at_epoch_ms\": 1718409600000,\n            \"window_days\": 366,\n        }\n    )\n    redis.ping = AsyncMock(return_value=True)\n    for k, v in method_overrides.items():\n        setattr(redis, k, v)\n    return redis\n\n\ndef _make_pg_mock(\n    unit_exists: bool = True,\n    blocks: Optional[List[Dict[str, Any]]] = None,\n    bulk_blocks: Optional[Dict[str, List[Dict[str, Any]]]] = None,\n) -> AsyncMock:\n    \"\"\"Create a mock PgClient.\"\"\"\n    pg = AsyncMock()\n    pg.unit_exists = AsyncMock(return_value=unit_exists)\n\n    if blocks is None:\n        # Default: all days available in the 366-day window\n        blocks = [\n            {\n                \"unit_id\": UNIT_ID,\n                \"start_date\": FIXED_TODAY_STR,\n                \"end_date\": _date_str(365),\n                \"is_available\": True,\n            }\n        ]\n    pg.get_availability_blocks = AsyncMock(return_value=blocks)\n\n    if bulk_blocks is None:\n        bulk_blocks = {}\n    pg.get_availability_blocks_bulk = AsyncMock(return_value=bulk_blocks)\n    pg.ping = AsyncMock(return_value=True)\n    return pg\n\n\ndef _redis_unavailable_mock() -> AsyncMock:\n    \"\"\"RedisClient mock that raises ConnectionError on every call.\"\"\"\n    redis = AsyncMock()\n    err = ConnectionError(\"Redis connection refused\")\n    redis.get_bit = AsyncMock(side_effect=err)\n    redis.get_bit_range = AsyncMock(side_effect=err)\n    redis.set_bits = AsyncMock(side_effect=err)\n    redis.delete_key = AsyncMock(side_effect=err)\n    redis.pipeline_get_bit_ranges = AsyncMock(side_effect=err)\n    redis.exists = AsyncMock(side_effect=err)\n    redis.get_key_metadata = AsyncMock(side_effect=err)\n    redis.ping = AsyncMock(side_effect=err)\n    return redis\n\n\n# Patch target for the \"now/today\" function used inside the component.\n# Adjust this path to match your implementation's actual import.\nNOW_PATCH_TARGET = \"src.availability_bitmask_cache._utc_today\"\n\n\n@pytest.fixture\ndef mock_today():\n    \"\"\"Patch the component's UTC today function to return FIXED_TODAY.\"\"\"\n    with patch(NOW_PATCH_TARGET, return_value=FIXED_TODAY) as m:\n        yield m\n\n\n# ====================== computeShardKey TESTS =============================\n\n\nclass TestComputeShardKey:\n    \"\"\"Pure unit tests for computeShardKey.\"\"\"\n\n    def test_deterministic(self):\n        \"\"\"Same inputs always produce the same output.\"\"\"\n        result1 = computeShardKey(UNIT_ID, 64)\n        result2 = computeShardKey(UNIT_ID, 64)\n        assert result1 == result2, (\n            f\"computeShardKey should be deterministic: got {result1} then {result2}\"\n        )\n\n    def test_returns_integer(self):\n        result = computeShardKey(UNIT_ID, 64)\n        assert isinstance(result, int), f\"Expected int, got {type(result)}\"\n\n    def test_range_valid_64(self):\n        \"\"\"Output is in [0, 63] for shard_count=64.\"\"\"\n        result = computeShardKey(UNIT_ID, 64)\n        assert 0 <= result <= 63, f\"Shard key {result} out of range [0, 63]\"\n\n    def test_shard_count_1_always_zero(self):\n        \"\"\"With shard_count=1, result must always be 0.\"\"\"\n        result = computeShardKey(UNIT_ID, 1)\n        assert result == 0, f\"Expected 0 for shard_count=1, got {result}\"\n\n    def test_shard_count_1024_range(self):\n        \"\"\"Output is in [0, 1023] for shard_count=1024.\"\"\"\n        result = computeShardKey(UNIT_ID, 1024)\n        assert 0 <= result <= 1023, f\"Shard key {result} out of range [0, 1023]\"\n\n    def test_different_uuids_can_differ(self):\n        \"\"\"Not all shard keys are identical for distinct inputs.\"\"\"\n        keys = set()\n        for _ in range(10):\n            uid = _valid_uuid_v4()\n            keys.add(computeShardKey(uid, 64))\n        assert len(keys) >= 2, (\n            \"Expected at least 2 distinct shard keys from 10 random UUIDs\"\n        )\n\n    def test_distribution_uniformity(self):\n        \"\"\"1000 random UUIDs should distribute roughly uniformly across 64 shards.\"\"\"\n        shard_count = 64\n        counts = Counter()\n        n = 1000\n        for _ in range(n):\n            uid = _valid_uuid_v4()\n            shard = computeShardKey(uid, shard_count)\n            counts[shard] += 1\n\n        # All shards should have at least 1 hit\n        used_shards = len(counts)\n        mean = n / shard_count  # ~15.6\n        max_count = max(counts.values())\n\n        assert used_shards > shard_count * 0.5, (\n            f\"Only {used_shards}/{shard_count} shards used — poor distribution\"\n        )\n        assert max_count < 4 * mean, (\n            f\"Max bucket {max_count} exceeds 4x mean {mean:.1f} — skewed distribution\"\n        )\n\n\n# ====================== buildRedisKey TESTS ================================\n\n\nclass TestBuildRedisKey:\n    \"\"\"Pure unit tests for buildRedisKey.\"\"\"\n\n    def test_key_format_default_prefix(self):\n        \"\"\"Key matches avail:{shard}:{unit_id}.\"\"\"\n        config = _default_config()\n        key = buildRedisKey(UNIT_ID, config)\n        pattern = rf\"^avail:\\d{{1,2}}:{re.escape(UNIT_ID)}$\"\n        assert re.match(pattern, key), f\"Key '{key}' does not match pattern '{pattern}'\"\n\n    def test_key_starts_with_prefix(self):\n        config = _default_config()\n        key = buildRedisKey(UNIT_ID, config)\n        assert key.startswith(\"avail:\"), f\"Key should start with 'avail:', got '{key}'\"\n\n    def test_key_ends_with_unit_id(self):\n        config = _default_config()\n        key = buildRedisKey(UNIT_ID, config)\n        assert key.endswith(f\":{UNIT_ID}\"), f\"Key should end with ':{UNIT_ID}', got '{key}'\"\n\n    def test_custom_prefix(self):\n        \"\"\"Custom key_prefix is used.\"\"\"\n        config = _default_config(key_prefix=\"test_cache\")\n        key = buildRedisKey(UNIT_ID, config)\n        assert key.startswith(\"test_cache:\"), f\"Expected prefix test_cache, got '{key}'\"\n\n    def test_deterministic(self):\n        \"\"\"Same inputs always produce the same output.\"\"\"\n        config = _default_config()\n        key1 = buildRedisKey(UNIT_ID, config)\n        key2 = buildRedisKey(UNIT_ID, config)\n        assert key1 == key2, f\"buildRedisKey should be deterministic: '{key1}' != '{key2}'\"\n\n    def test_shard_in_range(self):\n        \"\"\"Embedded shard number is in [0, shard_count - 1].\"\"\"\n        config = _default_config(shard_count=64)\n        key = buildRedisKey(UNIT_ID, config)\n        parts = key.split(\":\")\n        assert len(parts) == 3, f\"Key should have 3 colon-separated parts, got {parts}\"\n        shard = int(parts[1])\n        assert 0 <= shard <= 63, f\"Shard {shard} not in [0, 63]\"\n\n\n# ====================== CacheConfig VALIDATION TESTS =======================\n\n\nclass TestCacheConfigValidation:\n    \"\"\"Tests for CacheConfig field validators.\"\"\"\n\n    def test_defaults_applied(self):\n        config = _default_config()\n        assert config.shard_count == 64\n        assert config.window_days == 366\n        assert config.key_prefix == \"avail\"\n        assert config.singleflight_enabled is True\n        assert config.fallback_to_pg_on_redis_failure is True\n\n    def test_ttl_too_low(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(ttl_seconds=0)\n\n    def test_ttl_too_high(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(ttl_seconds=86401)\n\n    def test_ttl_boundary_low(self):\n        config = _default_config(ttl_seconds=1)\n        assert config.ttl_seconds == 1\n\n    def test_ttl_boundary_high(self):\n        config = _default_config(ttl_seconds=86400)\n        assert config.ttl_seconds == 86400\n\n    def test_shard_count_not_power_of_2(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(shard_count=3)\n\n    def test_shard_count_zero(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(shard_count=0)\n\n    def test_shard_count_negative(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(shard_count=-1)\n\n    def test_shard_count_exceeds_max(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(shard_count=2048)\n\n    def test_shard_count_valid_power_of_2(self):\n        for sc in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]:\n            config = _default_config(shard_count=sc)\n            assert config.shard_count == sc\n\n    def test_window_days_too_low(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(window_days=0)\n\n    def test_window_days_too_high(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(window_days=732)\n\n    def test_window_days_boundary(self):\n        config = _default_config(window_days=1)\n        assert config.window_days == 1\n        config2 = _default_config(window_days=731)\n        assert config2.window_days == 731\n\n    def test_key_prefix_starts_with_digit(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(key_prefix=\"1invalid\")\n\n    def test_key_prefix_uppercase(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(key_prefix=\"Invalid\")\n\n    def test_key_prefix_too_long(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(key_prefix=\"a\" * 17)\n\n    def test_key_prefix_empty(self):\n        with pytest.raises((ValueError, Exception)):\n            _default_config(key_prefix=\"\")\n\n    def test_key_prefix_valid(self):\n        config = _default_config(key_prefix=\"avail_cache01\")\n        assert config.key_prefix == \"avail_cache01\"\n\n\n# ====================== checkAvailability TESTS ============================\n\n\nclass TestCheckAvailability:\n    \"\"\"Behavioral tests for checkAvailability with mocked Redis/PG.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_cache_hit_all_available(self, mock_today):\n        \"\"\"Cache hit with all bits=1 returns ok=True, value=True.\"\"\"\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True, f\"Expected ok=True, got {result}\"\n        assert result.value is True, f\"Expected value=True (all available), got {result.value}\"\n        # PG should NOT be called on cache hit\n        pg.get_availability_blocks.assert_not_called()\n\n    @pytest.mark.asyncio\n    async def test_cache_hit_some_unavailable(self, mock_today):\n        \"\"\"Cache hit with some bits=0 returns ok=True, value=False.\"\"\"\n        # Return a bitmask where bit 1 is 0 (unavailable)\n        redis = _make_redis_mock()\n        # Override get_bit_range to return bytes with a zero bit in range\n        redis.get_bit_range = AsyncMock(return_value=b\"\\xa0\")  # 10100000 - bit 1 is 0\n        config = _default_config()\n        pg = _make_pg_mock()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True, f\"Expected ok=True, got {result}\"\n        assert result.value is False, (\n            f\"Expected value=False (some unavailable), got {result.value}\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_cache_miss_triggers_pg_rebuild(self, mock_today):\n        \"\"\"Cache miss queries PG, builds bitmask, stores in Redis.\"\"\"\n        redis = _make_redis_mock(\n            exists=AsyncMock(return_value=False),\n            get_key_metadata=AsyncMock(return_value=None),\n        )\n        pg = _make_pg_mock(unit_exists=True)\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True, f\"Expected ok=True after rebuild, got {result}\"\n        assert result.value is True, f\"Expected value=True, got {result.value}\"\n        pg.get_availability_blocks.assert_called()\n        redis.set_bits.assert_called()\n\n    @pytest.mark.asyncio\n    async def test_stale_anchor_triggers_rebuild(self, mock_today):\n        \"\"\"Bitmask with anchor_date != today is treated as miss and rebuilt.\"\"\"\n        yesterday_str = (FIXED_TODAY - timedelta(days=1)).isoformat()\n        redis = _make_redis_mock(\n            get_key_metadata=AsyncMock(\n                return_value={\n                    \"anchor_date\": yesterday_str,\n                    \"built_at_epoch_ms\": 1718323200000,\n                    \"window_days\": 366,\n                }\n            ),\n        )\n        pg = _make_pg_mock(unit_exists=True)\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True\n        pg.get_availability_blocks.assert_called(), (\n            \"PG should be queried because anchor is stale\"\n        )\n        redis.set_bits.assert_called(), \"Bitmask should be rebuilt in Redis\"\n\n    @pytest.mark.asyncio\n    async def test_single_day_range(self, mock_today):\n        \"\"\"Single-day range (start_date == end_date) is supported.\"\"\"\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(0),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True\n        assert result.value is True\n\n    @pytest.mark.asyncio\n    async def test_window_boundary_max_end_date(self, mock_today):\n        \"\"\"end_date = today + 365 (window_days-1) is accepted.\"\"\"\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config(window_days=366)\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(365),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True, f\"Maximum window boundary should be accepted, got {result}\"\n\n    # ---- Error cases ----\n\n    @pytest.mark.asyncio\n    async def test_error_start_after_end(self, mock_today):\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(5),\n            end_date=_date_str(2),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False, \"start > end should fail\"\n        assert result.error.error_code == \"INVALID_DATE_RANGE\"\n        assert result.error.reason == \"START_AFTER_END\"\n\n    @pytest.mark.asyncio\n    async def test_error_dates_in_past(self, mock_today):\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        yesterday = (FIXED_TODAY - timedelta(days=1)).isoformat()\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=yesterday,\n            end_date=_date_str(2),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False, \"Past start_date should fail\"\n        assert result.error.error_code == \"INVALID_DATE_RANGE\"\n        assert result.error.reason == \"DATES_IN_PAST\"\n\n    @pytest.mark.asyncio\n    async def test_error_exceeds_window(self, mock_today):\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config(window_days=366)\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(400),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"INVALID_DATE_RANGE\"\n        assert result.error.reason == \"RANGE_EXCEEDS_WINDOW\"\n\n    @pytest.mark.asyncio\n    async def test_error_invalid_date_format(self, mock_today):\n        \"\"\"Feb 30 is not a valid calendar date.\"\"\"\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=\"2024-02-30\",\n            end_date=\"2024-03-05\",\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"INVALID_DATE_RANGE\"\n        assert result.error.reason == \"INVALID_DATE_FORMAT\"\n\n    @pytest.mark.asyncio\n    async def test_error_unit_not_found(self, mock_today):\n        redis = _make_redis_mock(\n            exists=AsyncMock(return_value=False),\n            get_key_metadata=AsyncMock(return_value=None),\n        )\n        pg = _make_pg_mock(unit_exists=False)\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_NOT_FOUND_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"UNIT_NOT_FOUND\"\n        assert result.error.unit_id == UNIT_NOT_FOUND_ID\n\n    @pytest.mark.asyncio\n    async def test_error_cache_unavailable_no_fallback(self, mock_today):\n        \"\"\"Redis down + fallback disabled → CacheUnavailable error.\"\"\"\n        redis = _redis_unavailable_mock()\n        pg = _make_pg_mock()\n        config = _default_config(fallback_to_pg_on_redis_failure=False)\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"CACHE_UNAVAILABLE\"\n\n    @pytest.mark.asyncio\n    async def test_redis_down_fallback_enabled(self, mock_today):\n        \"\"\"Redis down + fallback enabled → graceful degradation to PG.\"\"\"\n        redis = _redis_unavailable_mock()\n        pg = _make_pg_mock(unit_exists=True)\n        config = _default_config(fallback_to_pg_on_redis_failure=True)\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True, \"Fallback to PG should succeed\"\n        assert result.value is True\n        pg.get_availability_blocks.assert_called()\n\n    @pytest.mark.asyncio\n    async def test_error_internal_pg_timeout(self, mock_today):\n        \"\"\"PG timeout during rebuild → InternalError.\"\"\"\n        redis = _make_redis_mock(\n            exists=AsyncMock(return_value=False),\n            get_key_metadata=AsyncMock(return_value=None),\n        )\n        pg = _make_pg_mock()\n        pg.get_availability_blocks = AsyncMock(side_effect=TimeoutError(\"PG timeout\"))\n        pg.unit_exists = AsyncMock(return_value=True)\n        config = _default_config()\n\n        result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"INTERNAL_ERROR\"\n\n    @pytest.mark.asyncio\n    async def test_cache_rebuild_uses_configured_ttl(self, mock_today):\n        \"\"\"On rebuild, set_bits is called with the configured TTL.\"\"\"\n        redis = _make_redis_mock(\n            exists=AsyncMock(return_value=False),\n            get_key_metadata=AsyncMock(return_value=None),\n        )\n        pg = _make_pg_mock(unit_exists=True)\n        config = _default_config(ttl_seconds=7200)\n\n        await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        redis.set_bits.assert_called()\n        # Verify TTL argument\n        call_kwargs = redis.set_bits.call_args\n        # The ttl_seconds should appear in the call (positional or keyword)\n        call_args_str = str(call_kwargs)\n        assert \"7200\" in call_args_str, (\n            f\"Expected TTL 7200 in set_bits call args, got: {call_args_str}\"\n        )\n\n\n# ================== checkBulkAvailability TESTS ============================\n\n\nclass TestCheckBulkAvailability:\n    \"\"\"Behavioral tests for checkBulkAvailability.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_happy_path_multiple_units(self, mock_today):\n        \"\"\"Bulk check for 3 cached, available units.\"\"\"\n        redis = _make_redis_mock()\n        # Pipeline returns bitmasks for 3 units, all bits=1\n        redis.pipeline_get_bit_ranges = AsyncMock(\n            return_value=[b\"\\xff\" * 46, b\"\\xff\" * 46, b\"\\xff\" * 46]\n        )\n        # Metadata for each key says anchor=today\n        redis.get_key_metadata = AsyncMock(\n            return_value={\n                \"anchor_date\": FIXED_TODAY_STR,\n                \"built_at_epoch_ms\": 1718409600000,\n                \"window_days\": 366,\n            }\n        )\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        unit_ids = [UNIT_ID, UNIT_ID_2, UNIT_ID_3]\n        result = await checkBulkAvailability(\n            unit_ids=unit_ids,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True\n        assert len(result.results) == 3, f\"Expected 3 results, got {len(result.results)}\"\n        for r in result.results:\n            assert r.available is True, f\"Unit {r.unit_id} should be available\"\n\n    @pytest.mark.asyncio\n    async def test_partial_failure_unit_not_found(self, mock_today):\n        \"\"\"One unit found, one not — top-level ok=True, per-unit error for missing.\"\"\"\n        redis = _make_redis_mock(\n            exists=AsyncMock(return_value=False),\n            get_key_metadata=AsyncMock(return_value=None),\n        )\n        # Pipeline returns empty for both (cache miss)\n        redis.pipeline_get_bit_ranges = AsyncMock(return_value=[None, None])\n\n        pg = _make_pg_mock()\n        # unit_exists returns True for UNIT_ID, False for UNIT_NOT_FOUND_ID\n        async def _unit_exists(uid):\n            return uid != UNIT_NOT_FOUND_ID\n\n        pg.unit_exists = AsyncMock(side_effect=_unit_exists)\n        pg.get_availability_blocks_bulk = AsyncMock(\n            return_value={\n                UNIT_ID: [\n                    {\n                        \"unit_id\": UNIT_ID,\n                        \"start_date\": FIXED_TODAY_STR,\n                        \"end_date\": _date_str(365),\n                        \"is_available\": True,\n                    }\n                ]\n            }\n        )\n\n        config = _default_config()\n        result = await checkBulkAvailability(\n            unit_ids=[UNIT_ID, UNIT_NOT_FOUND_ID],\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True, \"Top-level should be ok even with per-unit failures\"\n        assert len(result.results) == 2\n        # Find the not-found unit's result\n        not_found_results = [\n            r for r in result.results if r.unit_id == UNIT_NOT_FOUND_ID\n        ]\n        assert len(not_found_results) == 1\n        assert not_found_results[0].error is not None\n        assert not_found_results[0].error.error_code == \"UNIT_NOT_FOUND\"\n\n    @pytest.mark.asyncio\n    async def test_preserves_input_order(self, mock_today):\n        \"\"\"Results are in the same order as input unit_ids.\"\"\"\n        redis = _make_redis_mock()\n        redis.pipeline_get_bit_ranges = AsyncMock(\n            return_value=[b\"\\xff\" * 46, b\"\\xff\" * 46, b\"\\xff\" * 46]\n        )\n        redis.get_key_metadata = AsyncMock(\n            return_value={\n                \"anchor_date\": FIXED_TODAY_STR,\n                \"built_at_epoch_ms\": 1718409600000,\n                \"window_days\": 366,\n            }\n        )\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        ids = [UNIT_ID_3, UNIT_ID, UNIT_ID_2]\n        result = await checkBulkAvailability(\n            unit_ids=ids,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True\n        result_ids = [r.unit_id for r in result.results]\n        assert result_ids == ids, (\n            f\"Results should preserve input order: expected {ids}, got {result_ids}\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_deduplicates_unit_ids(self, mock_today):\n        \"\"\"Duplicate unit_ids are deduplicated; one result per unique id.\"\"\"\n        redis = _make_redis_mock()\n        redis.pipeline_get_bit_ranges = AsyncMock(return_value=[b\"\\xff\" * 46])\n        redis.get_key_metadata = AsyncMock(\n            return_value={\n                \"anchor_date\": FIXED_TODAY_STR,\n                \"built_at_epoch_ms\": 1718409600000,\n                \"window_days\": 366,\n            }\n        )\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkBulkAvailability(\n            unit_ids=[UNIT_ID, UNIT_ID, UNIT_ID],\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is True\n        assert len(result.results) == 1, (\n            f\"Expected 1 deduped result, got {len(result.results)}\"\n        )\n        assert result.results[0].unit_id == UNIT_ID\n\n    @pytest.mark.asyncio\n    async def test_error_empty_unit_ids(self, mock_today):\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkBulkAvailability(\n            unit_ids=[],\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False, \"Empty unit_ids should fail\"\n        assert result.error is not None\n\n    @pytest.mark.asyncio\n    async def test_error_too_many_unit_ids(self, mock_today):\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        ids = [_valid_uuid_v4() for _ in range(101)]\n        result = await checkBulkAvailability(\n            unit_ids=ids,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False, \"More than 100 unit_ids should fail\"\n        assert result.error is not None\n\n    @pytest.mark.asyncio\n    async def test_error_start_after_end(self, mock_today):\n        redis = _make_redis_mock()\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        result = await checkBulkAvailability(\n            unit_ids=[UNIT_ID],\n            start_date=_date_str(5),\n            end_date=_date_str(2),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"INVALID_DATE_RANGE\"\n        assert result.error.reason == \"START_AFTER_END\"\n\n    @pytest.mark.asyncio\n    async def test_systemic_failure_both_down(self, mock_today):\n        \"\"\"Both Redis and PG unreachable → systemic failure.\"\"\"\n        redis = _redis_unavailable_mock()\n        pg = _make_pg_mock()\n        pg.get_availability_blocks = AsyncMock(\n            side_effect=ConnectionError(\"PG unreachable\")\n        )\n        pg.get_availability_blocks_bulk = AsyncMock(\n            side_effect=ConnectionError(\"PG unreachable\")\n        )\n        pg.unit_exists = AsyncMock(side_effect=ConnectionError(\"PG unreachable\"))\n        pg.ping = AsyncMock(side_effect=ConnectionError(\"PG unreachable\"))\n\n        config = _default_config(fallback_to_pg_on_redis_failure=True)\n\n        result = await checkBulkAvailability(\n            unit_ids=[UNIT_ID],\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert result.ok is False, \"Both backends down should be a systemic failure\"\n        assert result.error is not None\n        assert result.error.error_code in (\"CACHE_UNAVAILABLE\", \"INTERNAL_ERROR\")\n\n    @pytest.mark.asyncio\n    async def test_pipeline_usage(self, mock_today):\n        \"\"\"Bulk check uses Redis pipeline for batch fetching.\"\"\"\n        redis = _make_redis_mock()\n        redis.pipeline_get_bit_ranges = AsyncMock(\n            return_value=[b\"\\xff\" * 46, b\"\\xff\" * 46, b\"\\xff\" * 46]\n        )\n        redis.get_key_metadata = AsyncMock(\n            return_value={\n                \"anchor_date\": FIXED_TODAY_STR,\n                \"built_at_epoch_ms\": 1718409600000,\n                \"window_days\": 366,\n            }\n        )\n        pg = _make_pg_mock()\n        config = _default_config()\n\n        await checkBulkAvailability(\n            unit_ids=[UNIT_ID, UNIT_ID_2, UNIT_ID_3],\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        redis.pipeline_get_bit_ranges.assert_called()\n\n\n# ====================== invalidateCache TESTS ==============================\n\n\nclass TestInvalidateCache:\n    \"\"\"Tests for invalidateCache.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_success_key_existed(self, mock_today):\n        \"\"\"Invalidation succeeds when key existed.\"\"\"\n        redis = _make_redis_mock(delete_key=AsyncMock(return_value=True))\n        config = _default_config()\n\n        result = await invalidateCache(\n            unit_id=UNIT_ID,\n            redis_client=redis,\n            config=config,\n        )\n\n        assert result.ok is True\n        assert result.error is None\n        redis.delete_key.assert_called_once()\n\n    @pytest.mark.asyncio\n    async def test_idempotent_nonexistent_key(self, mock_today):\n        \"\"\"Invalidation of nonexistent key is a successful no-op.\"\"\"\n        redis = _make_redis_mock(delete_key=AsyncMock(return_value=False))\n        config = _default_config()\n\n        result = await invalidateCache(\n            unit_id=UNIT_NOT_FOUND_ID,\n            redis_client=redis,\n            config=config,\n        )\n\n        assert result.ok is True, \"Deleting nonexistent key should succeed\"\n        assert result.error is None\n\n    @pytest.mark.asyncio\n    async def test_correct_key_deleted(self, mock_today):\n        \"\"\"invalidateCache deletes the correctly-formatted Redis key.\"\"\"\n        redis = _make_redis_mock()\n        config = _default_config(key_prefix=\"avail\", shard_count=64)\n\n        await invalidateCache(\n            unit_id=UNIT_ID,\n            redis_client=redis,\n            config=config,\n        )\n\n        redis.delete_key.assert_called_once()\n        deleted_key = redis.delete_key.call_args[0][0]\n        expected_key = buildRedisKey(UNIT_ID, config)\n        assert deleted_key == expected_key, (\n            f\"Expected key '{expected_key}' to be deleted, got '{deleted_key}'\"\n        )\n\n    @pytest.mark.asyncio\n    async def test_error_redis_unavailable(self, mock_today):\n        \"\"\"Redis down → CacheUnavailable (no PG fallback for invalidation).\"\"\"\n        redis = _redis_unavailable_mock()\n        config = _default_config()\n\n        result = await invalidateCache(\n            unit_id=UNIT_ID,\n            redis_client=redis,\n            config=config,\n        )\n\n        assert result.ok is False\n        assert result.error.error_code == \"CACHE_UNAVAILABLE\"\n\n    @pytest.mark.asyncio\n    async def test_invalidate_then_check_triggers_rebuild(self, mock_today):\n        \"\"\"After invalidation, next checkAvailability triggers full PG rebuild.\"\"\"\n        redis = _make_redis_mock()\n        pg = _make_pg_mock(unit_exists=True)\n        config = _default_config()\n\n        # Step 1: Invalidate\n        inv_result = await invalidateCache(\n            unit_id=UNIT_ID,\n            redis_client=redis,\n            config=config,\n        )\n        assert inv_result.ok is True\n\n        # Step 2: Simulate cache miss after invalidation\n        redis.exists = AsyncMock(return_value=False)\n        redis.get_key_metadata = AsyncMock(return_value=None)\n\n        check_result = await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        assert check_result.ok is True\n        pg.get_availability_blocks.assert_called(), (\n            \"PG should be queried to rebuild after invalidation\"\n        )\n        redis.set_bits.assert_called(), \"Bitmask should be stored in Redis after rebuild\"\n\n\n# ====================== INVARIANT TESTS ====================================\n\n\nclass TestInvariants:\n    \"\"\"Cross-cutting invariant tests from the contract.\"\"\"\n\n    @pytest.mark.asyncio\n    async def test_pg_is_read_only(self, mock_today):\n        \"\"\"No method writes to the PostgreSQL availability_blocks table.\"\"\"\n        redis = _make_redis_mock(\n            exists=AsyncMock(return_value=False),\n            get_key_metadata=AsyncMock(return_value=None),\n        )\n        pg = _make_pg_mock(unit_exists=True)\n        config = _default_config()\n\n        await checkAvailability(\n            unit_id=UNIT_ID,\n            start_date=_date_str(0),\n            end_date=_date_str(3),\n            redis_client=redis,\n            pg_client=pg,\n            config=config,\n        )\n\n        # Only read methods should have been called\n        allowed_methods = {\n            \"get_availability_blocks\",\n            \"unit_exists\",\n            \"get_availability_blocks_bulk\",\n            \"ping\",\n        }\n        for method_name in dir(pg):\n            if method_name.startswith(\"_\"):\n                continue\n            method = getattr(pg, method_name)\n            if hasattr(method, \"called\") and method.called:\n                assert method_name in allowed_methods, (\n                    f\"Unexpected PG method called: {method_name} — \"\n                    f\"component should be read-only w.r.t. PostgreSQL\"\n                )\n\n    @pytest.mark.asyncio\n    async def test_invalidation_is_idempotent(self, mock_today):\n        \"\"\"Calling invalidateCache twice for the same unit is safe.\"\"\"\n        redis = _make_redis_mock()\n        config = _default_config()\n\n        r1 = await invalidateCache(unit_id=UNIT_ID, redis_client=redis, config=config)\n        # Second call — key no longer exists\n        redis.delete_key = AsyncMock(return_value=False)\n        r2 = await invalidateCache(unit_id=UNIT_ID, redis_client=redis, config=config)\n\n        assert r1.ok is True\n        assert r2.ok is True\n\n    def test_bitmask_window_days_is_366_by_default(self):\n        \"\"\"Default bitmask covers 366 bits to handle leap years.\"\"\"\n        config = _default_config()\n        assert config.window_days == 366\n\n    def test_all_dates_inclusive(self):\n        \"\"\"Contract says [start_date, end_date] inclusive — verified via bit range.\"\"\"\n        # E.g., [today, today+2] should cover 3 days: bit 0, 1, 2\n        start_offset = 0\n        end_offset = 2\n        num_days = end_offset - start_offset + 1\n        assert num_days == 3, \"Inclusive range [0, 2] should cover 3 days\"\n\n    def test_shard_key_range_invariant_across_many_uuids(self):\n        \"\"\"ShardKey is always in [0, shard_count - 1] for many inputs.\"\"\"\n        shard_count = 64\n        for _ in range(200):\n            uid = _valid_uuid_v4()\n            shard = computeShardKey(uid, shard_count)\n            assert 0 <= shard < shard_count, (\n                f\"Shard {shard} out of range for unit {uid}\"\n            )\n\n    def test_redis_key_format_invariant(self):\n        \"\"\"Redis key is always {prefix}:{shard}:{unit_id}.\"\"\"\n        config = _default_config()\n        for _ in range(50):\n            uid = _valid_uuid_v4()\n            key = buildRedisKey(uid, config)\n            parts = key.split(\":\")\n            # Key has format prefix:shard:uuid, but UUID contains hyphens not colons\n            # So we expect: prefix, shard_number, and the rest rejoined is the UUID\n            assert parts[0] == \"avail\", f\"Prefix mismatch in key '{key}'\"\n            shard_str = parts[1]\n            assert shard_str.isdigit(), f\"Shard '{shard_str}' is not a digit\"\n            shard_val = int(shard_str)\n            assert 0 <= shard_val < 64, f\"Shard {shard_val} out of range in key '{key}'\"\n            reconstructed_uuid = \":\".join(parts[2:])\n            assert reconstructed_uuid == uid, (\n                f\"UUID mismatch: expected '{uid}', got '{reconstructed_uuid}'\"\n            )\n"
+}

@@ -1,0 +1,1132 @@
+{
+  "component_id": "availability_api",
+  "name": "Availability HTTP API & Server",
+  "description": "Oak HTTP server exposing availability REST endpoints. GET /availability/:unit_id?start=&end= checks availability for a date range. PUT /availability/:unit_id updates availability (block/unblock dates). GET /availability/bulk?unit_ids=&start=&end= bulk-checks up to 100 units. GET /health returns server health. Uses Zod schemas as single source of truth for validation and TypeScript types. Date-only strings (YYYY-MM-DD) interpreted as UTC with half-open intervals [start, end). Consistent error envelope {error: {code, message, details?}}. PUT returns 200 (idempotent). Health returns 503 during shutdown for load balancer draining. Dependency injection via AvailabilityService interface for testability.",
+  "version": 1,
+  "types": [
+    {
+      "name": "UnitId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a rentable unit. Must match UUID v4 format [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}."
+    },
+    {
+      "name": "DateString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Date-only string in YYYY-MM-DD format, interpreted as UTC midnight. Must match regex ^\\d{4}-\\d{2}-\\d{2}$ and represent a valid calendar date."
+    },
+    {
+      "name": "BlockType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "OWNER_BLOCK",
+        "MAINTENANCE",
+        "BOOKING",
+        "SEASONAL_CLOSURE",
+        "OTHER"
+      ],
+      "inner_types": [],
+      "description": "The reason a date range is blocked for a unit."
+    },
+    {
+      "name": "HttpMethod",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "GET",
+        "PUT"
+      ],
+      "inner_types": [],
+      "description": "HTTP methods used by this API."
+    },
+    {
+      "name": "HttpStatusCode",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "HTTP numeric status code (e.g. 200, 400, 404, 500, 503)."
+    },
+    {
+      "name": "DateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string."
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range. Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string."
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A half-open date interval [start, end). start is inclusive, end is exclusive. Both are YYYY-MM-DD date strings in UTC."
+    },
+    {
+      "name": "ErrorDetail",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "code",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Machine-readable error code, e.g. INVALID_DATE_FORMAT, UNIT_NOT_FOUND, VALIDATION_ERROR, INTERNAL_ERROR, BULK_LIMIT_EXCEEDED.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        },
+        {
+          "name": "details",
+          "type_ref": "any",
+          "required": false,
+          "default": "",
+          "description": "Optional additional structured details (e.g. Zod issue array, field-level errors).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured error detail within the API error envelope."
+    },
+    {
+      "name": "ApiErrorEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error",
+          "type_ref": "ErrorDetail",
+          "required": true,
+          "default": "",
+          "description": "The structured error detail object.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Consistent JSON error response envelope. All error responses from this API use this shape. Readonly."
+    },
+    {
+      "name": "AvailabilityCheckParams",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "UUID of the unit to check.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start of the date range to check.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end of the date range to check.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated parameters for GET /availability/:unit_id?start=&end=. Derived from Zod AvailabilityCheckParamsSchema via z.infer<>."
+    },
+    {
+      "name": "AvailabilityCheckResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "available",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the unit is available for every date in [start, end).",
+          "validators": []
+        },
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit that was checked.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date that was checked.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date that was checked.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for GET /availability/:unit_id. Readonly. Indicates whether the unit is fully available across the requested [start, end) range."
+    },
+    {
+      "name": "AvailabilityUpdateParams",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "UUID of the unit to update.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unit_id must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated path parameters for PUT /availability/:unit_id. Derived from Zod AvailabilityUpdateParamsSchema via z.infer<>."
+    },
+    {
+      "name": "AvailabilityUpdateBody",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to update.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to update.",
+          "validators": []
+        },
+        {
+          "name": "block_type",
+          "type_ref": "BlockType",
+          "required": true,
+          "default": "",
+          "description": "The reason for blocking. Required even when unblocking, to identify which block record to remove.",
+          "validators": []
+        },
+        {
+          "name": "blocked",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True to mark the range as blocked/unavailable, false to unblock/mark available.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated request body for PUT /availability/:unit_id. Derived from Zod AvailabilityUpdateBodySchema via z.infer<>."
+    },
+    {
+      "name": "AvailabilityUpdateResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "success",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the availability state was successfully applied.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for PUT /availability/:unit_id. Readonly. Always returns HTTP 200 because PUT is idempotent (state set, not created)."
+    },
+    {
+      "name": "BulkAvailabilityQueryParams",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_ids",
+          "type_ref": "UnitIdList",
+          "required": true,
+          "default": "",
+          "description": "Comma-separated list of unit UUIDs, parsed into an array. Maximum 100 entries.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..100",
+              "error_message": "unit_ids must contain between 1 and 100 UUIDs."
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to check.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated query parameters for GET /availability/bulk?unit_ids=id1,id2&start=&end=. Derived from Zod BulkAvailabilityQuerySchema via z.infer<>."
+    },
+    {
+      "name": "UnitIdList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "UnitId",
+      "variants": [],
+      "inner_types": [],
+      "description": "A list of UnitId values. Maximum 100 items for bulk queries."
+    },
+    {
+      "name": "BulkAvailabilityEntry",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit that was checked.",
+          "validators": []
+        },
+        {
+          "name": "available",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the unit is available for every date in [start, end).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single unit's availability result within a bulk response. Readonly."
+    },
+    {
+      "name": "BulkAvailabilityEntryList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "BulkAvailabilityEntry",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of per-unit availability entries in a bulk response."
+    },
+    {
+      "name": "BulkAvailabilityResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "results",
+          "type_ref": "BulkAvailabilityEntryList",
+          "required": true,
+          "default": "",
+          "description": "One entry per requested unit_id, in the same order as the request.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for GET /availability/bulk. Readonly."
+    },
+    {
+      "name": "HealthStatus",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "status",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Either 'ok' or 'shutting_down'.",
+          "validators": []
+        },
+        {
+          "name": "uptime_seconds",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Server uptime in seconds since start.",
+          "validators": []
+        },
+        {
+          "name": "version",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Application version string.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for GET /health. Readonly. Returns HTTP 200 when healthy, HTTP 503 during graceful shutdown to support load balancer draining."
+    },
+    {
+      "name": "ServerConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "port",
+          "type_ref": "int",
+          "required": true,
+          "default": "8000",
+          "description": "TCP port to listen on.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..65535",
+              "error_message": "Port must be between 1 and 65535."
+            }
+          ]
+        },
+        {
+          "name": "hostname",
+          "type_ref": "str",
+          "required": true,
+          "default": "0.0.0.0",
+          "description": "Hostname/IP to bind to.",
+          "validators": []
+        },
+        {
+          "name": "shutdown_timeout_ms",
+          "type_ref": "int",
+          "required": true,
+          "default": "30000",
+          "description": "Maximum milliseconds to wait for in-flight requests during graceful shutdown.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..300000",
+              "error_message": "Shutdown timeout must be between 0 and 300000 ms."
+            }
+          ]
+        },
+        {
+          "name": "availability_service",
+          "type_ref": "AvailabilityServiceInterface",
+          "required": true,
+          "default": "",
+          "description": "Injected service dependency implementing the AvailabilityService interface.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Configuration for server startup. Passed to createServer factory."
+    },
+    {
+      "name": "AvailabilityServiceInterface",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "checkAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unitId: UnitId, start: DateString, end: DateString) => Promise<AvailabilityCheckResult>. Throws UnitNotFoundError if unit does not exist.",
+          "validators": []
+        },
+        {
+          "name": "updateAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unitId: UnitId, body: AvailabilityUpdateBody) => Promise<AvailabilityUpdateResult>. Throws UnitNotFoundError if unit does not exist.",
+          "validators": []
+        },
+        {
+          "name": "bulkCheckAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unitIds: UnitId[], start: DateString, end: DateString) => Promise<BulkAvailabilityResult>. Unknown unit_ids are returned with available: false rather than throwing.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Interface (TypeScript interface) for the availability domain service. Injected into the router factory function to decouple HTTP layer from business logic. Enables testing route handlers without mocking Oak internals."
+    },
+    {
+      "name": "ServerHandle",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: () => Promise<void>. Starts listening on the configured port. Resolves once the server is accepting connections.",
+          "validators": []
+        },
+        {
+          "name": "stop",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: () => Promise<void>. Initiates graceful shutdown: sets health to 503, stops accepting new connections, waits for in-flight requests up to shutdown_timeout_ms, then closes. Uses AbortController internally.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Handle returned by createServer. Provides start/stop lifecycle methods."
+    },
+    {
+      "name": "ValidationResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "ValidationSuccess",
+        "ValidationFailure"
+      ],
+      "description": "Result of validateRequest helper. Either a successful parse with typed data, or a structured 400 error envelope."
+    },
+    {
+      "name": "ValidationSuccess",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "success",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true for successful validation.",
+          "validators": []
+        },
+        {
+          "name": "data",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The validated and typed data matching the Zod schema.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Successful validation result from validateRequest. Contains the parsed and typed data."
+    },
+    {
+      "name": "ValidationFailure",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "success",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always false for failed validation.",
+          "validators": []
+        },
+        {
+          "name": "error_response",
+          "type_ref": "ApiErrorEnvelope",
+          "required": true,
+          "default": "",
+          "description": "Structured error envelope with code VALIDATION_ERROR, message, and Zod issues in details.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Failed validation result from validateRequest. Contains a structured ApiErrorEnvelope ready for 400 response."
+    },
+    {
+      "name": "RequestLogEntry",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "method",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "HTTP method of the request.",
+          "validators": []
+        },
+        {
+          "name": "path",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Request path.",
+          "validators": []
+        },
+        {
+          "name": "status",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "HTTP response status code.",
+          "validators": []
+        },
+        {
+          "name": "duration_ms",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Request-response duration in milliseconds.",
+          "validators": []
+        },
+        {
+          "name": "timestamp",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "ISO 8601 timestamp of the request.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured log entry emitted by the request logger middleware."
+    }
+  ],
+  "functions": [
+    {
+      "name": "validateRequest",
+      "description": "Generic request validation helper that uses Zod .safeParse() on input data against a given schema. Returns either the successfully parsed typed data or a structured ApiErrorEnvelope suitable for a 400 response. This is the single entry point for all request validation in schemas.ts.",
+      "inputs": [
+        {
+          "name": "schema",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "A Zod schema object (ZodType) to validate against.",
+          "validators": []
+        },
+        {
+          "name": "data",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The raw input data to validate (from path params, query params, or request body).",
+          "validators": []
+        }
+      ],
+      "output_type": "ValidationResult",
+      "error_cases": [],
+      "preconditions": [
+        "schema must be a valid Zod schema with a .safeParse() method.",
+        "data must not be undefined (null is acceptable as Zod will report it as an error)."
+      ],
+      "postconditions": [
+        "If success is true, data conforms to the schema's inferred TypeScript type.",
+        "If success is false, error_response.error.code is 'VALIDATION_ERROR'.",
+        "If success is false, error_response.error.details contains the Zod issues array.",
+        "Function never throws; all validation failures are returned as ValidationFailure."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handleCheckAvailability",
+      "description": "Route handler for GET /availability/:unit_id?start=&end=. Validates path param (unit_id as UUID v4) and query params (start, end as YYYY-MM-DD). Calls AvailabilityService.checkAvailability. Returns 200 with AvailabilityCheckResult on success. Date range is interpreted as half-open interval [start, end).",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw unit_id path parameter from the URL.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw start query parameter.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw end query parameter.",
+          "validators": []
+        }
+      ],
+      "output_type": "AvailabilityCheckResult",
+      "error_cases": [
+        {
+          "name": "invalid_unit_id",
+          "condition": "unit_id path parameter is not a valid UUID v4 string.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end query parameter is missing, not a valid YYYY-MM-DD string, or does not represent a valid calendar date.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "end_not_after_start",
+          "condition": "end date is less than or equal to start date.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR",
+            "message": "end must be strictly after start."
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "The unit_id does not correspond to any known unit in the system.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "404",
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "An unexpected error occurs in the service layer (database timeout, Redis failure, etc.).",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "Server is running and accepting requests (not in shutdown state).",
+        "AvailabilityService has been injected into the router."
+      ],
+      "postconditions": [
+        "Response status is 200 with AvailabilityCheckResult body on success.",
+        "Response unit_id, start, end echo back the validated input values.",
+        "available is true only if every date in [start, end) is unblocked."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handleUpdateAvailability",
+      "description": "Route handler for PUT /availability/:unit_id. Validates path param (unit_id as UUID v4) and JSON body (start, end, block_type, blocked). Calls AvailabilityService.updateAvailability. Returns 200 with AvailabilityUpdateResult. PUT is idempotent: setting the same state twice produces the same result. Never returns 201.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw unit_id path parameter from the URL.",
+          "validators": []
+        },
+        {
+          "name": "body",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Raw JSON request body containing start, end, block_type, and blocked fields.",
+          "validators": []
+        }
+      ],
+      "output_type": "AvailabilityUpdateResult",
+      "error_cases": [
+        {
+          "name": "invalid_unit_id",
+          "condition": "unit_id path parameter is not a valid UUID v4 string.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_body",
+          "condition": "Request body is missing, not valid JSON, or fails Zod schema validation (missing fields, wrong types, invalid date format, invalid block_type).",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end in the body is not a valid YYYY-MM-DD string or not a valid calendar date.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "end_not_after_start",
+          "condition": "end date is less than or equal to start date in the body.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR",
+            "message": "end must be strictly after start."
+          }
+        },
+        {
+          "name": "invalid_block_type",
+          "condition": "block_type is not one of the valid BlockType enum values.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR",
+            "message": "block_type must be one of: OWNER_BLOCK, MAINTENANCE, BOOKING, SEASONAL_CLOSURE, OTHER."
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "The unit_id does not correspond to any known unit in the system.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "404",
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "An unexpected error occurs in the service layer.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "Server is running and accepting requests (not in shutdown state).",
+        "AvailabilityService has been injected into the router.",
+        "Request Content-Type is application/json."
+      ],
+      "postconditions": [
+        "Response status is 200 with {success: true} on success.",
+        "The availability state for the unit's [start, end) range reflects the requested blocked/unblocked state.",
+        "Bitmask cache for the affected unit has been invalidated.",
+        "Repeated identical PUTs produce the same 200 response (idempotent)."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handleBulkCheckAvailability",
+      "description": "Route handler for GET /availability/bulk?unit_ids=id1,id2&start=&end=. Validates query params: unit_ids as comma-separated UUID v4 list (max 100), start and end as YYYY-MM-DD. Calls AvailabilityService.bulkCheckAvailability. Returns 200 with BulkAvailabilityResult. Unknown unit_ids are returned with available: false (not 404).",
+      "inputs": [
+        {
+          "name": "unit_ids",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw comma-separated unit_ids query parameter string.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw start query parameter.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw end query parameter.",
+          "validators": []
+        }
+      ],
+      "output_type": "BulkAvailabilityResult",
+      "error_cases": [
+        {
+          "name": "missing_unit_ids",
+          "condition": "unit_ids query parameter is missing or empty.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR",
+            "message": "unit_ids query parameter is required."
+          }
+        },
+        {
+          "name": "invalid_unit_id_format",
+          "condition": "One or more values in the comma-separated unit_ids list is not a valid UUID v4.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "bulk_limit_exceeded",
+          "condition": "More than 100 unit_ids are provided in the query parameter.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "BULK_LIMIT_EXCEEDED",
+            "message": "Maximum 100 unit_ids per bulk request."
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end query parameter is missing, not a valid YYYY-MM-DD string, or not a valid calendar date.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "end_not_after_start",
+          "condition": "end date is less than or equal to start date.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR",
+            "message": "end must be strictly after start."
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "An unexpected error occurs in the service layer.",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "Server is running and accepting requests (not in shutdown state).",
+        "AvailabilityService has been injected into the router."
+      ],
+      "postconditions": [
+        "Response status is 200 with BulkAvailabilityResult body.",
+        "results array has exactly one entry per unique requested unit_id.",
+        "results are in the same order as the input unit_ids.",
+        "Unknown unit_ids appear in results with available: false.",
+        "Duplicate unit_ids in input are deduplicated in results."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handleHealthCheck",
+      "description": "Route handler for GET /health. Returns HealthStatus with current server state. Returns HTTP 200 with status 'ok' when healthy. Returns HTTP 503 with status 'shutting_down' during graceful shutdown to enable load balancer draining.",
+      "inputs": [],
+      "output_type": "HealthStatus",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "If server is healthy, response status is 200 and body.status is 'ok'.",
+        "If server is shutting down, response status is 503 and body.status is 'shutting_down'.",
+        "uptime_seconds is a non-negative number reflecting time since server start.",
+        "version is a non-empty string."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createRouter",
+      "description": "Factory function in routes.ts that creates an Oak Router with all availability routes and the health endpoint. Accepts an AvailabilityServiceInterface via dependency injection, enabling testability without mocking Oak internals. Registers: GET /availability/bulk, GET /availability/:unit_id, PUT /availability/:unit_id, GET /health. The /bulk route is registered before /:unit_id to avoid path parameter collision.",
+      "inputs": [
+        {
+          "name": "service",
+          "type_ref": "AvailabilityServiceInterface",
+          "required": true,
+          "default": "",
+          "description": "The injected availability service implementing the domain logic interface.",
+          "validators": []
+        }
+      ],
+      "output_type": "any",
+      "error_cases": [],
+      "preconditions": [
+        "service must implement all three methods of AvailabilityServiceInterface.",
+        "service methods must return Promises that resolve to the documented types."
+      ],
+      "postconditions": [
+        "Returns an Oak Router instance with all four routes registered.",
+        "GET /availability/bulk is registered before GET /availability/:unit_id to prevent path collision.",
+        "Each route handler validates inputs before calling the service.",
+        "Each route handler catches service errors and maps them to appropriate HTTP status codes and ApiErrorEnvelope responses."
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createServer",
+      "description": "Server lifecycle factory in server.ts. Creates and configures the Oak Application with middleware stack (error handler → request logger → router) and returns a ServerHandle with start() and stop() methods. Uses AbortController internally for graceful shutdown. Registers SIGINT and SIGTERM signal handlers that call stop().",
+      "inputs": [
+        {
+          "name": "config",
+          "type_ref": "ServerConfig",
+          "required": true,
+          "default": "",
+          "description": "Server configuration including port, hostname, shutdown timeout, and injected availability service.",
+          "validators": []
+        }
+      ],
+      "output_type": "ServerHandle",
+      "error_cases": [
+        {
+          "name": "port_in_use",
+          "condition": "The configured port is already bound by another process.",
+          "error_type": "str",
+          "error_data": {
+            "message": "Failed to start server: port already in use."
+          }
+        },
+        {
+          "name": "invalid_config",
+          "condition": "ServerConfig fails validation (e.g. port out of range, missing service).",
+          "error_type": "str",
+          "error_data": {
+            "message": "Invalid server configuration."
+          }
+        }
+      ],
+      "preconditions": [
+        "config.port is a valid port number (1-65535).",
+        "config.availability_service implements AvailabilityServiceInterface.",
+        "No other server is already listening on the same port."
+      ],
+      "postconditions": [
+        "Returns a ServerHandle with start() and stop() async methods.",
+        "start() resolves once the server is accepting connections on config.port.",
+        "stop() triggers graceful shutdown: health returns 503, new connections are rejected, in-flight requests drain up to shutdown_timeout_ms, then the server closes.",
+        "SIGINT and SIGTERM signal handlers are registered to call stop().",
+        "Middleware is applied in order: error handler (outermost) → request logger → router (innermost)."
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Binds a TCP listener on the configured port and hostname.",
+        "Registers process signal handlers for SIGINT and SIGTERM.",
+        "Emits structured request log entries to stdout for each handled request."
+      ]
+    }
+  ],
+  "dependencies": [],
+  "dependency_contracts": {},
+  "invariants": [
+    "All dates are YYYY-MM-DD strings interpreted as UTC midnight; no time or timezone components.",
+    "All date ranges are half-open intervals: [start, end) where start is inclusive and end is exclusive.",
+    "start must be strictly before end in all date range inputs.",
+    "All error responses use the ApiErrorEnvelope shape: {error: {code: string, message: string, details?: unknown}}.",
+    "PUT /availability/:unit_id always returns HTTP 200 on success (idempotent state set), never 201.",
+    "GET /health returns HTTP 200 with status 'ok' when healthy and HTTP 503 with status 'shutting_down' during graceful shutdown.",
+    "Bulk queries are capped at 100 unit_ids maximum.",
+    "Unknown unit_ids in bulk queries return {available: false} rather than causing a 404 error.",
+    "Zod schemas in schemas.ts are the single source of truth for both runtime validation and TypeScript types (via z.infer<>).",
+    "UnitId is a branded UUID v4 string; all unit_id parameters must be valid UUID v4.",
+    "BlockType must be one of: OWNER_BLOCK, MAINTENANCE, BOOKING, SEASONAL_CLOSURE, OTHER.",
+    "The router registers GET /availability/bulk before GET /availability/:unit_id to prevent path parameter collision.",
+    "The middleware stack order is: error handler (outermost) → request logger → router (innermost).",
+    "Graceful shutdown waits up to shutdown_timeout_ms for in-flight requests before force-closing.",
+    "All response types (AvailabilityCheckResult, AvailabilityUpdateResult, BulkAvailabilityResult, HealthStatus) are Readonly.",
+    "validateRequest never throws; all validation failures are returned as structured ValidationFailure values."
+  ],
+  "requires": []
+}

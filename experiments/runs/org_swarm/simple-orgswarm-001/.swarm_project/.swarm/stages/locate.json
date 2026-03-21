@@ -1,0 +1,18 @@
+{
+  "files": [
+    {
+      "path": "anonymous_identity.py",
+      "relevance": "new",
+      "reasoning": "Core module to create containing the SSOServer, Client, SiteVerifier classes, and SignedToken dataclass. This implements the entire anonymous identity system with credential hashing, site-specific token derivation, Ed25519 signing, and routing key resolution."
+    },
+    {
+      "path": "test_anonymous_identity.py",
+      "relevance": "new",
+      "reasoning": "Test module to create covering all 7 required properties: unlinkability, no collision across users, signature verification, routing key resolution, SSO cannot derive site tokens, site cannot derive tokens for other sites, and round-trip flow tests."
+    }
+  ],
+  "confidence": 0.97,
+  "search_strategy": "The file listing is empty, indicating this is a greenfield project. The architecture plan specifies exactly two new files to create: anonymous_identity.py and test_anonymous_identity.py. No existing files need to be read for context since this is a standalone module.",
+  "consternation": "",
+  "escalation": ""
+}

@@ -1,0 +1,103 @@
+{
+  "task_summary": "Define the interface contract for the 'Availability HTTP API & Server' component (availability_api) — an Oak HTTP server on Deno 2.x exposing REST endpoints for availability checking and updating. The contract must specify TypeScript types, Zod validation schemas, request/response shapes, error handling conventions, and server lifecycle (startup, shutdown, health check). The component uses bitmask caching (Redis) backed by PostgreSQL, serves as the lowest-dependency service in the booking flow, and must conform to project standards (ISO 8601 dates in UTC, UUIDs for entity IDs, JSON REST, files < 300 lines).",
+  "findings": [
+    {
+      "topic": "Oak HTTP framework patterns (Deno 2.x)",
+      "finding": "Oak follows Koa-style middleware composition. Best practice is to layer middleware in order: error-handling (outermost catch-all), request-logging, request-id injection, then route handlers. Oak's `Application.listen()` returns a promise; graceful shutdown is achieved by using `AbortController` passed to `app.listen({ signal })` — when aborted, the server stops accepting connections and drains in-flight requests. Oak v17+ (Deno 2.x compatible) uses `ctx.response.body` for JSON serialization and `ctx.response.status` for status codes.",
+      "source": "Oak documentation and Deno 2.x migration guides",
+      "relevance": "Directly governs server startup/shutdown and middleware architecture for this component",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Zod validation for HTTP request schemas",
+      "finding": "Zod is the de-facto validation library for TypeScript. Best practice: define one Zod schema per request shape, derive TypeScript types with `z.infer<>`, and use `.safeParse()` (not `.parse()`) in handlers to avoid thrown exceptions and instead return structured 400 errors. Common pattern: create a `validateRequest` middleware or helper that takes a schema, parses, and either passes validated data forward or short-circuits with a 400 response containing `{ error: string, details: ZodIssue[] }`. Zod supports `z.string().uuid()` for UUID validation and `z.string().datetime()` for ISO 8601 date strings — both directly applicable.",
+      "source": "Zod documentation, community Oak+Zod integration examples",
+      "relevance": "Core to input validation strategy; Zod schemas double as the contract definition",
+      "confidence": 0.95
+    },
+    {
+      "topic": "REST API design for availability/booking systems",
+      "finding": "Established patterns: (1) GET for idempotent reads, PUT for full-state updates (not PATCH) is correct when the client specifies the complete blocked/available state for a range. (2) Bulk endpoints should cap the number of IDs (e.g., max 100 unit_ids) to prevent abuse and unbounded memory use. (3) Date ranges should be half-open intervals [start, end) to avoid off-by-one errors — this is the standard in calendar/booking systems. (4) Response envelopes should include the echoed query parameters so clients can correlate async/parallel responses. (5) Idempotent PUT operations should return 200 (not 201) since they set state rather than create a new resource.",
+      "source": "Google API Design Guide, Booking.com engineering blog, Airbnb availability API patterns",
+      "relevance": "Directly shapes endpoint semantics and response format",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Error response conventions for JSON REST APIs",
+      "finding": "Best practice is a consistent error envelope: `{ error: { code: string, message: string, details?: unknown } }` with appropriate HTTP status codes. Key mappings: 400 for validation failures (bad dates, malformed UUIDs, missing required params), 404 for unknown unit_id, 422 for semantically invalid but syntactically correct input (e.g., end before start), 500 for unexpected server errors. The `code` field should be a machine-readable string constant (e.g., 'INVALID_DATE_RANGE', 'UNIT_NOT_FOUND') distinct from the human-readable `message`. This enables stable client error handling without parsing message strings.",
+      "source": "RFC 7807 (Problem Details for HTTP APIs), Stripe API error conventions",
+      "relevance": "Defines the error contract that all consumers depend on",
+      "confidence": 0.93
+    },
+    {
+      "topic": "TypeScript type design patterns for domain models",
+      "finding": "Use branded/opaque types for UnitId (`type UnitId = string & { readonly __brand: unique symbol }`) to prevent accidental mixing of different UUID-typed fields. Use `Readonly<>` on response types to signal immutability. Prefer discriminated unions for result types (e.g., `AvailabilityResult = { available: true } | { available: false, conflicts: DateRange[] }`). Keep domain types in a shared `types.ts` file, Zod schemas in a separate `schemas.ts` — this separates validation (runtime) from typing (compile-time) and keeps files under 300 lines.",
+      "source": "TypeScript handbook, Effect-TS patterns, community best practices",
+      "relevance": "Directly governs the type system design for this component's interface",
+      "confidence": 0.88
+    },
+    {
+      "topic": "Health check endpoint best practices",
+      "finding": "GET /health should return 200 `{ status: 'ok', timestamp: string }` for shallow checks (server is running). For deep checks, include dependency status: `{ status: 'ok'|'degraded'|'unhealthy', dependencies: { postgres: 'ok'|'unhealthy', redis: 'ok'|'unhealthy' }, timestamp }`. The shallow check is for load balancer liveness probes; the deep check (optionally at /health/ready or via ?deep=true query param) is for readiness probes. Health endpoints should not require authentication and should have minimal latency (<100ms).",
+      "source": "Kubernetes health check patterns, Microsoft REST API guidelines",
+      "relevance": "Defines the /health endpoint contract and its role in deployment orchestration",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Date handling edge cases in availability systems",
+      "finding": "Common pitfalls: (1) Not enforcing UTC — clients sending local dates causes off-by-one availability errors across timezones. Require ISO 8601 with 'Z' suffix or date-only strings (YYYY-MM-DD) interpreted as UTC. (2) Not validating that `start < end` — allowing zero-length or negative ranges. (3) Not capping the maximum date range to prevent bitmask overflow (if bitmask is 365 bits, reject ranges > 365 days). (4) Inclusive vs exclusive end dates — must be documented clearly. (5) Not handling leap years in bitmask offset calculations. For availability specifically, date-only (YYYY-MM-DD) is preferred over datetime since availability is typically per-night/per-day.",
+      "source": "Booking system post-mortems, bitmask availability implementation guides",
+      "relevance": "Critical for preventing the most common bugs in availability systems",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Bulk endpoint design and query string array conventions",
+      "finding": "For GET with multiple IDs, comma-separated in a single query param (`?unit_ids=id1,id2,id3`) is the most widely adopted pattern and simpler to implement than repeated params (`?unit_id=id1&unit_id=id2`). Must validate: (1) at least one ID provided, (2) each ID is a valid UUID, (3) cap maximum IDs (suggest 50-100) to bound response time and memory. Response should be an array maintaining input order, with each entry including the unit_id so clients don't depend on positional matching. For units not found, include them in results with an error field rather than omitting — this prevents silent data loss.",
+      "source": "Google API Design Guide, JSON:API specification patterns",
+      "relevance": "Directly shapes the bulk availability endpoint contract",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Serialization and naming conventions for JSON REST APIs",
+      "finding": "snake_case for JSON field names is the project convention (unit_id, block_type, etc.) and aligns with PostgreSQL column naming. ISO 8601 date strings (YYYY-MM-DD) for date fields. Booleans should be named as adjectives/states (available, blocked, success) not verbs. Response should always include a top-level structure (not a bare array) for forward-compatible extensibility. Use `Content-Type: application/json` explicitly. Numeric fields like counts should be integers not strings.",
+      "source": "Google JSON Style Guide, project operating procedures",
+      "relevance": "Ensures consistency with other services in the system",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Graceful shutdown patterns in Deno/Oak",
+      "finding": "The recommended pattern: (1) Listen for SIGINT and SIGTERM via `Deno.addSignalListener`. (2) Trigger the `AbortController.abort()` passed to `app.listen()`. (3) Close database connection pools and Redis connections in a shutdown hook. (4) Set a shutdown timeout (e.g., 10s) after which `Deno.exit(1)` is forced. (5) During shutdown, the /health endpoint should return 503 to signal the load balancer to stop routing traffic. This prevents request loss during deployments.",
+      "source": "Deno runtime documentation, 12-factor app methodology",
+      "relevance": "Defines the server lifecycle contract for this component",
+      "confidence": 0.9
+    }
+  ],
+  "recommended_approach": "Define the interface contract across four files, each under 300 lines, following composition-over-inheritance:\n\n1. **`types.ts`** — Pure TypeScript domain types: `UnitId` (branded UUID string), `DateString` (YYYY-MM-DD), `BlockType` enum/union, `AvailabilityCheckResult`, `AvailabilityUpdateResult`, `BulkAvailabilityResult`, `HealthStatus`, and `ApiError` envelope. All response types are `Readonly<>`.\n\n2. **`schemas.ts`** — Zod schemas mirroring each request shape: `AvailabilityCheckParamsSchema` (path: unit_id UUID, query: start/end YYYY-MM-DD), `AvailabilityUpdateParamsSchema` + `AvailabilityUpdateBodySchema` (with block_type and blocked boolean), `BulkAvailabilityQuerySchema` (comma-separated UUIDs, max 100, plus start/end). Export inferred types via `z.infer<>`. Include a `validateRequest` helper that uses `.safeParse()` and returns structured 400 errors.\n\n3. **`routes.ts`** — Oak `Router` definition with three route handlers plus `/health`. Each handler: validate → call service interface → serialize response. Define the service dependency as an interface (`AvailabilityService`) injected via factory function, enabling testability without mocks of Oak internals.\n\n4. **`server.ts`** — Server lifecycle: `createServer(config: ServerConfig): { start(): Promise<void>, stop(): Promise<void> }`. Uses `AbortController` for graceful shutdown, registers signal handlers, wires middleware (error handler → request logger → router).\n\nKey decisions:\n- Use date-only strings (YYYY-MM-DD) not datetimes, interpreted as UTC\n- Half-open intervals [start, end) for date ranges\n- Cap bulk queries at 100 unit_ids\n- Consistent error envelope: `{ error: { code: string, message: string, details?: unknown } }`\n- PUT returns 200 (idempotent state set), not 201\n- Health endpoint returns 503 during shutdown for load balancer draining\n- All Zod schemas serve as the single source of truth for both validation and TypeScript types",
+  "alternatives_considered": [
+    "Using PATCH instead of PUT for availability updates — rejected because the client specifies complete state (blocked: true/false) for a range, which is PUT semantics. PATCH would imply partial update of an existing resource.",
+    "Using datetime (ISO 8601 with time) instead of date-only strings — rejected because availability is inherently per-day (per-night) and time components introduce timezone confusion and bitmask alignment issues.",
+    "Using repeated query params (?unit_id=x&unit_id=y) for bulk endpoint — rejected in favor of comma-separated single param which is simpler to parse, more widely supported by HTTP clients, and matches the project's existing patterns.",
+    "Returning 404 for unknown units in bulk endpoint — rejected in favor of including them in results array with an error/not_found field, so clients get a complete response and can distinguish 'not found' from 'network error'.",
+    "Using class-based route handlers — rejected per project preference for composition over inheritance. Factory functions with injected service interfaces are more testable.",
+    "Putting all code in a single file — rejected because it would exceed 300-line limit and conflate concerns (types, validation, routing, server lifecycle)."
+  ],
+  "risks": [
+    "Bitmask size constraint: If the bitmask is fixed at 365/366 bits, date ranges exceeding one year will fail. The contract must document the maximum supported range and return a clear 400 error.",
+    "Bulk endpoint abuse: Without a cap on unit_ids, a single request could trigger hundreds of Redis/Postgres lookups. The 100-ID cap must be enforced at the validation layer.",
+    "Date boundary ambiguity: Half-open vs closed intervals must be explicitly documented. If consumers assume [start, end] (inclusive) but the API uses [start, end), off-by-one errors will propagate through the booking flow.",
+    "Cache-write race condition: Two concurrent PUT requests for the same unit could leave Redis and Postgres inconsistent. The interface contract should document that cache invalidation is eventual, not that the API is linearizable.",
+    "Health check masking failures: A shallow /health returning 200 while Postgres is down will cause the service to receive traffic it can't serve. The readiness check must include dependency status.",
+    "Breaking change risk: Adding fields to response types is non-breaking, but changing field semantics (e.g., redefining 'available' to exclude soft-blocks) would break consumers silently. The contract must pin field semantics clearly."
+  ],
+  "compliance_notes": [
+    "All dates must be ISO 8601 format (YYYY-MM-DD), interpreted as UTC — per project operating procedures.",
+    "All entity identifiers (unit_id) must be UUIDs validated at the boundary — per project operating procedures.",
+    "Services communicate via HTTP REST APIs with JSON — per project operating procedures.",
+    "Type annotations required on all public functions — per project operating procedures.",
+    "Each file must stay under 300 lines — per project operating procedures.",
+    "Prefer stdlib over third-party libraries; Zod is an exception justified by its role as the standard TypeScript validation library and its ability to serve as single source of truth for types + validation.",
+    "All functions must have at least one test; integration boundaries must have contract tests validating request/response shapes — per project verification requirements.",
+    "Tests must be runnable without external services (mock DB/Redis) — per project verification requirements.",
+    "Prefer composition over inheritance — per project standards; service dependencies injected via interfaces/factory functions."
+  ]
+}

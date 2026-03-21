@@ -1,0 +1,640 @@
+{
+  "questions": {
+    "decisions": [
+      {
+        "ambiguity": "Which services to fully implement vs. stub given budget constraints",
+        "decision": "Implement services 1-4 and 7 fully (Availability, Pricing, Property, Event, Booking). Implement Payments (6) with Stripe mock/test mode. Implement Sync (5) with 1-2 adapter stubs and the core sync framework. The Booking Service orchestrator is the integration proof-point — it must call real Availability, Pricing, and Payments endpoints.",
+        "rationale": "The core constraint is 'user at checkout, 3 seconds.' The critical path is Booking → Availability → Pricing → Payments. Property and Event support that flow. Sync is least critical to the checkout experience and most complex (8 adapters). Building the checkout-critical path first maximizes working, integrated components per the spec's priority."
+      },
+      {
+        "ambiguity": "Runtime and language choice across all services",
+        "decision": "Use TypeScript on Deno for all services. Use oak or Hono as the HTTP framework. Use deno-postgres for PostgreSQL, redis (deno) for Redis client.",
+        "rationale": "Spec says 'TypeScript (Deno) preferred to match existing codebase.' Consistency across services reduces integration friction and shared code duplication. Deno has mature PostgreSQL and Redis libraries."
+      },
+      {
+        "ambiguity": "How to handle Kafka dependency — real Kafka client vs. abstraction",
+        "decision": "Define an EventBus interface/abstraction. Implement two backends: (1) KafkaEventBus using kafkajs-compatible Deno library for production, (2) InMemoryEventBus for testing and local dev. The Event Service exposes an HTTP API that other services call — services don't directly produce to Kafka. The Event Service is the single Kafka producer/consumer.",
+        "rationale": "Kafka adds massive infrastructure complexity. By funneling all event production through the Event Service's HTTP API, we decouple other services from Kafka entirely. This simplifies testing (only Event Service needs Kafka mocks), reduces coupling, and still supports content-addressable event IDs at the Event Service layer. The InMemoryEventBus enables full integration testing without Kafka infrastructure."
+      },
+      {
+        "ambiguity": "How to implement O(1) availability checks with bitmask cache",
+        "decision": "Store availability as 64-bit integers in Redis where each bit represents one day. Bit position 0 = today, bit 1 = tomorrow, etc. A 64-bit mask covers ~2 months. For a date range check, create a bitmask for the requested range and AND it with the stored mask — if result equals the range mask, all days are available. PostgreSQL stores the canonical availability data; Redis is the hot cache populated on startup and updated on mutations.",
+        "rationale": "64-bit bitmask is the simplest O(1) implementation. 2 months covers the vast majority of booking lookups. For longer ranges, chain two 64-bit values. Redis BITFIELD operations support this natively. This matches the spec's 'bitmask cache, O(1) availability checks' requirement."
+      },
+      {
+        "ambiguity": "How to implement hash-sharded pricing cache",
+        "decision": "Use consistent hashing on unit_id to determine Redis key prefix/shard. In a single-Redis setup (dev/test), this is just key namespacing: `pricing:{hash(unit_id) % N}:{unit_id}:{date}`. The hash determines which logical shard owns the data. Rate data is stored as Redis hashes with date fields mapping to rate JSON. N=16 logical shards initially.",
+        "rationale": "Hash sharding by unit_id ensures all rates for a unit are co-located, enabling efficient range lookups. Logical sharding in key space works with single Redis and naturally extends to Redis Cluster. 16 shards is enough to demonstrate the pattern without over-engineering."
+      },
+      {
+        "ambiguity": "How to implement content-addressable event IDs",
+        "decision": "Event ID = SHA-256(event_type + source_service + entity_id + timestamp_ms + payload_hash). This is computed by the Event Service on ingestion. If an event with the same ID already exists, the publish call is idempotent (returns 200 with existing event, does not duplicate). Payload hash is SHA-256 of the canonicalized JSON payload.",
+        "rationale": "Content-addressable IDs provide natural deduplication — if the same event is published twice (e.g., due to retry), it gets the same ID and is a no-op. SHA-256 is collision-resistant and deterministic. Including timestamp prevents different events about the same entity from colliding."
+      },
+      {
+        "ambiguity": "How to implement 4-tier property override hierarchy",
+        "decision": "The 4 tiers are: (1) Platform defaults, (2) Property-level settings, (3) Unit-level settings, (4) Date-specific overrides. Resolution: merge top-down, with each tier overriding fields from the tier above. Stored as separate rows/tables in PostgreSQL. The Property Service resolves the full effective configuration by merging all 4 tiers at query time. Redis caches the resolved result keyed by (unit_id, date_range).",
+        "rationale": "This is a standard override/inheritance pattern. Separate storage per tier enables clean updates at any level. Query-time resolution is simple and correct. Caching the resolved result avoids repeated merges for the hot checkout path."
+      },
+      {
+        "ambiguity": "How to implement hash-chained payout snapshots",
+        "decision": "Each payout snapshot includes: payout_data + previous_snapshot_hash + sequence_number. Snapshot hash = SHA-256(canonical_json(payout_data) + previous_hash + sequence_number). The first snapshot uses a well-known genesis hash (SHA-256 of empty string). Verification: walk the chain and verify each hash links to the previous. Store in PostgreSQL with an index on (property_id, sequence_number).",
+        "rationale": "Hash chaining provides tamper-evident audit trail for financial data. Sequential numbering makes gap detection trivial. Genesis hash convention eliminates null-handling edge cases. This is the standard blockchain-lite pattern for audit integrity."
+      },
+      {
+        "ambiguity": "How to implement the Stripe mirror in Payments Service",
+        "decision": "Use Stripe's test mode API keys for development. Implement a StripeClient abstraction with two implementations: (1) RealStripeClient calling Stripe API, (2) MockStripeClient for tests that returns deterministic responses. The 'mirror' means we store a local copy of every Stripe object (PaymentIntent, Charge, Refund) in PostgreSQL, synchronized via webhooks. For tests, simulate webhooks via direct function calls.",
+        "rationale": "Mirroring Stripe objects locally enables fast reads without API calls (critical for 3-second constraint), provides an audit trail, and enables the system to function during brief Stripe outages. The abstraction layer enables testing without real Stripe calls."
+      },
+      {
+        "ambiguity": "How to handle the 3-second booking flow orchestration",
+        "decision": "The Booking Service implements a synchronous orchestration pattern: (1) Check availability via Availability Service (target: <200ms), (2) Get pricing via Pricing Service (target: <200ms), (3) Create payment intent via Payments Service (target: <1500ms, Stripe is the bottleneck), (4) On payment success, mark dates as booked in Availability Service (target: <200ms), (5) Publish booking event to Event Service (async, fire-and-forget after response). Use PostgreSQL advisory locks on unit_id+dates to prevent double-booking during the flow. Total target: <2500ms with 500ms buffer.",
+        "rationale": "Synchronous orchestration is simpler than saga pattern and fits the 3-second constraint. Stripe payment creation is the known bottleneck (~1-2s). By pre-caching availability and pricing in Redis, steps 1-2 are fast. Advisory locks prevent race conditions without distributed locking complexity. The event publish is after the response to avoid adding latency."
+      },
+      {
+        "ambiguity": "Database strategy — shared database or database-per-service",
+        "decision": "Single PostgreSQL instance with separate schemas per service (availability, pricing, property, events, sync, payments, bookings). Each service only accesses its own schema. This gives logical isolation with operational simplicity. In production, schemas can be split to separate databases.",
+        "rationale": "For a development/demo platform, running 7 PostgreSQL instances is unnecessary overhead. Schema-per-service gives the same logical isolation as database-per-service. The constraint is that services must only access their own schema — enforced by convention and separate connection credentials per service."
+      },
+      {
+        "ambiguity": "How services discover and communicate with each other",
+        "decision": "Use environment variables for service URLs (e.g., AVAILABILITY_SERVICE_URL, PRICING_SERVICE_URL). Each service exposes an HTTP REST API. The Booking Service is the primary orchestrator that calls other services. No service mesh or API gateway — direct HTTP calls with a shared HTTP client utility that handles retries, timeouts, and circuit breaking.",
+        "rationale": "Environment-variable-based discovery is the simplest approach that works for local dev, Docker Compose, and cloud deployment. Direct HTTP keeps the architecture transparent and debuggable. A shared HTTP client utility ensures consistent timeout/retry behavior aligned with the 3-second constraint."
+      },
+      {
+        "ambiguity": "How many PMS adapters to actually implement in the Sync Service",
+        "decision": "Implement 2 concrete adapters: (1) a mock/test PMS adapter for integration testing, (2) one real-ish adapter skeleton (e.g., Guesty-like) showing the pattern. Define the PMSAdapter interface that all 8 would implement. The remaining 6 are type stubs with NotImplemented responses. The core sync engine (conflict resolution, bidirectional sync protocol) is fully implemented.",
+        "rationale": "The spec mentions 8 adapters but implementing all 8 is not feasible within budget. The value is in the sync framework and the adapter interface pattern. Two working adapters (one mock, one realistic) prove the pattern. The interface definition enables future adapter development."
+      },
+      {
+        "ambiguity": "Testing strategy — unit tests vs integration tests vs e2e",
+        "decision": "Three-tier testing: (1) Unit tests for business logic (bitmask operations, hash chaining, pricing calculations, override merging) — no external dependencies. (2) Integration tests per service using test containers or in-memory substitutes (InMemoryEventBus, MockStripeClient, test PostgreSQL schema). (3) One end-to-end test that exercises the full booking flow across services. Use Deno's built-in test runner.",
+        "rationale": "The spec requires 'tests for each component' and 'working, integrated components.' Unit tests validate correctness of core algorithms. Integration tests validate each service works. The e2e booking flow test is the ultimate proof of the 3-second constraint. Deno's built-in test runner avoids additional tooling."
+      },
+      {
+        "ambiguity": "Project structure — monorepo vs separate repos",
+        "decision": "Monorepo with top-level directories per service: /services/availability, /services/pricing, etc. Shared code in /shared (types, HTTP client, database utilities, test helpers). Docker Compose file at root for running all services together. Each service has its own Dockerfile.",
+        "rationale": "Monorepo enables shared types and utilities, atomic cross-service changes, and a single Docker Compose for local development. This matches the 'working, integrated components' priority. Separate Dockerfiles maintain service independence."
+      },
+      {
+        "ambiguity": "How to handle Redis connection management across services",
+        "decision": "Each service manages its own Redis connection via a shared utility in /shared. Connection pooling with max 10 connections per service. Redis key namespacing per service to prevent collisions (e.g., 'avail:', 'price:', 'prop:'). Health checks include Redis connectivity.",
+        "rationale": "Shared utility reduces boilerplate while per-service connections maintain isolation. Key namespacing prevents accidental cross-service data access. Connection pooling ensures performance under load."
+      }
+    ],
+    "questions": [
+      {
+        "question": "The reference files (architecture.md, decomposition.json, decisions.md, schemas/, test_examples/) contain the exact API contracts, database schemas, and test cases. Can you provide the contents of architecture.md and decomposition.json so I can validate my decisions against the specified contracts? Specifically I need: (1) exact endpoint paths and request/response shapes, (2) the PostgreSQL schema definitions, (3) any specific invariants or error codes defined in the contracts.",
+        "context": "I've made reasonable decisions about data formats, API shapes, and business logic, but the reference files may specify exact contracts that override my assumptions. For example, the bitmask format, event ID computation, or override hierarchy may have specific definitions I should follow rather than reinvent.",
+        "importance": "blocking"
+      },
+      {
+        "question": "Is there an existing codebase or shared libraries already in place (e.g., database connection utilities, auth middleware, common types) that these services should build on, or is this greenfield?",
+        "context": "The spec mentions 'TypeScript (Deno) preferred to match existing codebase' — this implies there IS existing code. If there are established patterns, shared types, or infrastructure utilities already built, I should use them rather than create new ones.",
+        "importance": "blocking"
+      },
+      {
+        "question": "For the Payments Service Stripe integration — should we use real Stripe test-mode API keys (requiring a Stripe account) or should the implementation be fully self-contained with a mock Stripe server? This affects whether the Payments Service can be tested in CI without external credentials.",
+        "context": "The spec says 'Stripe mirror' which implies real Stripe integration, but for a dev/test platform, requiring real Stripe credentials creates an external dependency. A mock Stripe server is more portable but less realistic.",
+        "importance": "clarifying"
+      }
+    ],
+    "assumptions": [
+      "Reference files contain detailed API contracts — my decisions align with reasonable defaults but will be adjusted once contracts are reviewed",
+      "No existing shared codebase — this is greenfield despite the 'existing codebase' mention, which likely refers to a frontend or adjacent system",
+      "Stripe integration uses a mock/abstraction layer for tests; real Stripe test-mode for manual/staging testing",
+      "PostgreSQL 15+ and Redis 7+ are the target versions",
+      "Services run on ports 8001-8007 in local dev (Availability=8001, Pricing=8002, Property=8003, Event=8004, Sync=8005, Payments=8006, Booking=8007)",
+      "Authentication/authorization between services is out of scope — services trust each other (internal network assumption)",
+      "No API gateway — the Booking Service is the primary entry point for the checkout flow",
+      "Deno version 1.40+ with stable APIs for HTTP serving, PostgreSQL, and Redis",
+      "All timestamps are UTC ISO-8601 strings in APIs, stored as TIMESTAMPTZ in PostgreSQL",
+      "All monetary values are stored as integers in cents (not floating point) to avoid precision issues",
+      "The 8 PMS adapters mentioned in Sync Service likely include: Guesty, Hostaway, Lodgify, Beds24, OwnerRez, Hospitable, Escapia, and a generic iCal adapter — only 2 will be implemented"
+    ],
+    "confidence": 0.72,
+    "reasoning": "This is an epic-scale task with 7 microservices, multiple infrastructure dependencies (PostgreSQL, Redis, Kafka, Stripe), and tight integration requirements. I need to make many architectural decisions since I cannot read the reference files directly. Let me resolve the ambiguities I can identify and flag the few things that genuinely need human input.\n\nKey tensions I'm resolving:\n1. **Scope vs Budget**: 7 services is ambitious. I need to prioritize which services to build fully vs. stub.\n2. **Infrastructure complexity**: Kafka, Redis, PostgreSQL all need to work together. For dev/test, I need to decide what to mock vs. run real.\n3. **Language/runtime**: Spec says TypeScript (Deno) preferred. I'll commit to that.\n4. **Integration testing**: How to validate the 3-second booking flow without full infra.\n5. **PMS adapters**: 8 adapters is too many to build fully — need to scope this.\n6. **Event bus**: Kafka adds massive complexity. Need to decide if we use a real Kafka client or an abstraction.\n\nI'm making decisions on all implementation details and only asking about things where the reference files contain critical contracts I can't infer.",
+    "consternation": "The primary concern is that the reference files (architecture.md, decomposition.json, schemas/, etc.) contain specific contracts that my decisions may conflict with. I've made sound engineering decisions based on the constraints described, but if the spec defines exact endpoint paths like POST /v1/availability/check with a specific request schema, my implementation needs to match exactly. Without seeing these files, I'm at ~72% confidence. With them, I'd be at 90%+.",
+    "escalation": ""
+  },
+  "component_map": {
+    "one_sentence": "Build a TypeScript/Deno microservices backend for vacation rental booking with 7 services (Availability, Pricing, Property, Event, Sync, Payments, Booking) orchestrated to complete a checkout flow in under 3 seconds, using PostgreSQL per-service schemas, Redis caching, and Kafka event streaming.",
+    "components": [
+      {
+        "id": "shared_infra",
+        "name": "Shared Infrastructure & Utilities",
+        "description": "Common foundation used by all services: database connection pool (deno-postgres) with per-service schema isolation, Redis client wrapper with namespaced keys and connection pooling, HTTP client utility with retries/timeouts/circuit-breaking, shared TypeScript types and interfaces (EventBus, PMSAdapter, StripeClient), service discovery via environment variables, health check endpoints, and test helpers. Also includes Docker Compose configuration for running PostgreSQL, Redis, and all services together, plus the monorepo structure under /services and /shared.",
+        "dependencies": [],
+        "estimated_complexity": "moderate",
+        "affected_files": [
+          "shared/db.ts",
+          "shared/redis.ts",
+          "shared/http_client.ts",
+          "shared/types.ts",
+          "shared/interfaces.ts",
+          "shared/crypto.ts",
+          "shared/test_helpers.ts",
+          "shared/config.ts",
+          "docker-compose.yml",
+          "deno.json"
+        ]
+      },
+      {
+        "id": "availability_service",
+        "name": "Availability Service — Bitmask Cache with O(1) Checks",
+        "description": "Implements availability storage and querying using 64-bit bitmask integers in Redis where each bit represents one day (bit 0 = today). PostgreSQL stores canonical availability data; Redis is the hot cache populated on startup and updated on mutations. Date range checks use bitwise AND: create a mask for the requested range, AND with stored mask, and compare. Exposes REST endpoints for checking availability (GET), marking dates booked/unbooked (PUT), and bulk queries. Supports PostgreSQL advisory locks on unit_id+dates used by the Booking Service to prevent double-booking.",
+        "dependencies": [
+          "shared_infra"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/availability/main.ts",
+          "services/availability/routes.ts",
+          "services/availability/bitmask.ts",
+          "services/availability/repository.ts",
+          "services/availability/cache.ts",
+          "services/availability/schema.sql",
+          "services/availability/bitmask_test.ts",
+          "services/availability/routes_test.ts",
+          "services/availability/integration_test.ts",
+          "services/availability/Dockerfile"
+        ]
+      },
+      {
+        "id": "pricing_service",
+        "name": "Pricing Service — Hash-Sharded Rate Cache",
+        "description": "Manages rate data with consistent hashing on unit_id for Redis key namespacing (pricing:{hash(unit_id) % 16}:{unit_id}:{date}). Stores rate data as Redis hashes with date fields mapping to rate JSON. PostgreSQL holds canonical rate definitions. Exposes endpoints to get pricing for a unit+date range (resolving nightly rates, fees, taxes), update rates, and calculate booking totals. Supports bulk pricing queries for the Booking Service's sub-200ms target.",
+        "dependencies": [
+          "shared_infra"
+        ],
+        "estimated_complexity": "moderate",
+        "affected_files": [
+          "services/pricing/main.ts",
+          "services/pricing/routes.ts",
+          "services/pricing/calculator.ts",
+          "services/pricing/shard.ts",
+          "services/pricing/repository.ts",
+          "services/pricing/cache.ts",
+          "services/pricing/schema.sql",
+          "services/pricing/calculator_test.ts",
+          "services/pricing/shard_test.ts",
+          "services/pricing/routes_test.ts",
+          "services/pricing/Dockerfile"
+        ]
+      },
+      {
+        "id": "property_service",
+        "name": "Property Service — 4-Tier Override Hierarchy",
+        "description": "Manages properties and units with a 4-tier configuration override system: (1) platform defaults, (2) property-level settings, (3) unit-level settings, (4) date-specific overrides. Resolution merges top-down at query time with each tier overriding fields from above. Separate PostgreSQL tables per tier. Redis caches resolved configurations keyed by (unit_id, date_range). Exposes CRUD endpoints for properties, units, and settings at each tier, plus a resolved-config endpoint.",
+        "dependencies": [
+          "shared_infra"
+        ],
+        "estimated_complexity": "moderate",
+        "affected_files": [
+          "services/property/main.ts",
+          "services/property/routes.ts",
+          "services/property/hierarchy.ts",
+          "services/property/repository.ts",
+          "services/property/cache.ts",
+          "services/property/schema.sql",
+          "services/property/hierarchy_test.ts",
+          "services/property/routes_test.ts",
+          "services/property/Dockerfile"
+        ]
+      },
+      {
+        "id": "event_service",
+        "name": "Event Service — Kafka Bus with Content-Addressable IDs",
+        "description": "Central event bus service that is the single Kafka producer/consumer. Other services publish events via HTTP POST; the Event Service computes content-addressable event IDs as SHA-256(event_type + source_service + entity_id + timestamp_ms + payload_hash) for idempotent ingestion. Implements EventBus interface with KafkaEventBus (kafkajs-compatible) for production and InMemoryEventBus for testing. Stores events in PostgreSQL for durability and replay. Exposes endpoints to publish events, query event history, and subscribe to event types.",
+        "dependencies": [
+          "shared_infra"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/event/main.ts",
+          "services/event/routes.ts",
+          "services/event/event_bus.ts",
+          "services/event/kafka_bus.ts",
+          "services/event/memory_bus.ts",
+          "services/event/content_address.ts",
+          "services/event/repository.ts",
+          "services/event/schema.sql",
+          "services/event/content_address_test.ts",
+          "services/event/event_bus_test.ts",
+          "services/event/routes_test.ts",
+          "services/event/Dockerfile"
+        ]
+      },
+      {
+        "id": "payments_sync_services",
+        "name": "Payments Service (Stripe Mirror + Hash Chains) & Sync Service (Core Framework + 2 Adapters)",
+        "description": "Payments Service: Implements Stripe integration with StripeClient abstraction (RealStripeClient for Stripe test mode, MockStripeClient for tests). Mirrors Stripe objects (PaymentIntent, Charge, Refund) to PostgreSQL. Hash-chained payout snapshots: each snapshot includes SHA-256(canonical_json(payout_data) + previous_hash + sequence_number), starting from a genesis hash. Sync Service: Core bidirectional sync engine with conflict resolution, PMSAdapter interface, 2 concrete adapters (mock test adapter, Guesty-like skeleton), and 6 NotImplemented stubs. Both services are implemented with appropriate tests but are secondary to the booking flow.",
+        "dependencies": [
+          "shared_infra",
+          "event_service"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/payments/main.ts",
+          "services/payments/routes.ts",
+          "services/payments/stripe_client.ts",
+          "services/payments/mock_stripe.ts",
+          "services/payments/mirror.ts",
+          "services/payments/hash_chain.ts",
+          "services/payments/repository.ts",
+          "services/payments/schema.sql",
+          "services/payments/hash_chain_test.ts",
+          "services/payments/routes_test.ts",
+          "services/payments/Dockerfile",
+          "services/sync/main.ts",
+          "services/sync/routes.ts",
+          "services/sync/sync_engine.ts",
+          "services/sync/conflict.ts",
+          "services/sync/adapters/interface.ts",
+          "services/sync/adapters/mock.ts",
+          "services/sync/adapters/guesty.ts",
+          "services/sync/repository.ts",
+          "services/sync/schema.sql",
+          "services/sync/sync_engine_test.ts",
+          "services/sync/conflict_test.ts",
+          "services/sync/Dockerfile"
+        ]
+      },
+      {
+        "id": "booking_orchestrator",
+        "name": "Booking Service — Synchronous Orchestrator & E2E Integration",
+        "description": "The integration proof-point: orchestrates the <3s booking flow by calling real Availability Service (<200ms), Pricing Service (<200ms), and Payments Service (<1500ms) endpoints synchronously. On payment success, marks dates booked via Availability Service (<200ms) and fire-and-forget publishes a booking event to Event Service. Uses PostgreSQL advisory locks on unit_id+dates to prevent double-booking. Includes the end-to-end integration test that exercises the full checkout flow across all services, validating the '3 seconds at checkout' constraint.",
+        "dependencies": [
+          "shared_infra",
+          "availability_service",
+          "pricing_service",
+          "payments_sync_services",
+          "event_service"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/booking/main.ts",
+          "services/booking/routes.ts",
+          "services/booking/orchestrator.ts",
+          "services/booking/repository.ts",
+          "services/booking/schema.sql",
+          "services/booking/orchestrator_test.ts",
+          "services/booking/routes_test.ts",
+          "services/booking/e2e_test.ts",
+          "services/booking/Dockerfile"
+        ]
+      }
+    ],
+    "interaction_summary": "Clarified 15 key architectural questions: (1) Prioritize services 1-4 and 7 fully, Payments with mock Stripe, Sync with 2 adapters. (2) TypeScript/Deno with Hono/Oak, deno-postgres, Redis client. (3) EventBus abstraction with Kafka and InMemory backends; Event Service is the sole Kafka producer. (4) Bitmask availability: 64-bit ints in Redis, bitwise AND for range checks. (5) Hash-sharded pricing: consistent hashing on unit_id with 16 logical shards. (6) Content-addressable events: SHA-256 of event fields for idempotent dedup. (7) 4-tier property override: platform→property→unit→date, merged top-down. (8) Hash-chained payouts: SHA-256 chain from genesis hash. (9) Stripe mirror: test mode + MockStripeClient, local PostgreSQL copies of Stripe objects. (10) 3s booking orchestration: sequential calls with advisory locks. (11) Single PostgreSQL instance, separate schemas per service. (12) Service discovery via env vars, direct HTTP with retry/timeout/circuit-breaking. (13) 2 PMS adapters (mock + Guesty skeleton), 6 stubs. (14) Three-tier testing: unit, integration, one e2e. (15) Monorepo with /services/* and /shared.",
+    "confidence": 0.9,
+    "reasoning": "The decomposition follows the natural service boundaries already defined in the architecture while grouping them into 7 buildable components. The key insight is that the shared infrastructure must come first (all services depend on DB, Redis, HTTP client), then the four core services (Availability, Pricing, Property, Event) can be built in parallel since they have no inter-service dependencies. Payments and Sync are grouped together as they're both secondary to the core flow and share similar complexity characteristics — Payments needs the Event Service for webhook events, and Sync is the least critical. The Booking Service comes last as the orchestrator that proves integration across all services.\n\nI grouped Payments and Sync into one component because: (1) they're both explicitly lower priority per the oracle's guidance, (2) keeping them separate would exceed the 7-component limit, (3) they don't depend on each other and can be worked on independently within the component, and (4) this keeps the critical-path services (Availability, Pricing, Property, Event, Booking) as distinct focused components.\n\nThe complexity estimates reflect: Availability is complex due to bitmask operations and cache synchronization; Pricing is moderate (hash sharding is mostly key namespacing); Property is moderate (hierarchical merge is well-defined); Event is complex due to Kafka abstraction and content-addressable ID computation; Payments+Sync is complex due to breadth (two services, Stripe mirror, hash chains, sync engine); Booking is complex as the integration orchestrator with timing constraints and advisory locking.",
+    "consternation": "The Payments and Sync services are architecturally distinct but were grouped into one component to stay within the 7-component limit. A developer working on this component should treat them as two independent sub-efforts. Also, the Kafka dependency is abstracted away (InMemoryEventBus for dev/test), but if real Kafka integration is needed for the Event Service, that adds significant infrastructure complexity not fully captured here.",
+    "escalation": ""
+  },
+  "contracts": {
+    "contracts": [
+      {
+        "component_id": "shared_infra",
+        "inputs": [
+          "Environment variables: DATABASE_URL (PostgreSQL connection string), REDIS_URL (Redis connection string), SERVICE_PORT (per-service listen port), SERVICE_NAME (for logging/tracing), KAFKA_BROKERS (comma-separated), plus per-service env vars for service discovery (AVAILABILITY_SERVICE_URL, PRICING_SERVICE_URL, PAYMENTS_SERVICE_URL, EVENT_SERVICE_URL, PROPERTY_SERVICE_URL, SYNC_SERVICE_URL, BOOKING_SERVICE_URL)",
+          "PostgreSQL instance (single instance, schemas created per-service on init)",
+          "Redis instance (single instance, key namespacing per-service)"
+        ],
+        "outputs": [
+          "db: DatabasePool — deno-postgres connection pool factory; createPool(schema: string): Pool; each pool sets search_path to the service schema; max 20 connections per pool; includes transaction helper: withTransaction<T>(pool, fn: (client) => Promise<T>): Promise<T>; includes advisory lock helper: withAdvisoryLock(pool, lockKey: bigint, fn): Promise<T>",
+          "redis: RedisClient — Redis client wrapper; constructor takes namespace prefix; all keys auto-prefixed as '{namespace}:{key}'; methods: get, set, del, exists, expire, hget, hset, hgetall, hdel, pipeline (batched commands), bitfield operations (getbit, setbit, bitop); connection pooling with max 10 connections",
+          "http: HttpClient — HTTP client with retries (3 attempts, exponential backoff starting 100ms), timeouts (configurable, default 2000ms), circuit breaker (open after 5 failures in 30s, half-open after 10s); methods: get<T>(url, opts?), post<T>(url, body, opts?), put<T>(url, body, opts?), delete<T>(url, opts?); all return Promise<{status, data, headers}>",
+          "types: Shared TypeScript interfaces — ServiceResponse<T> = {ok: boolean, data?: T, error?: {code: string, message: string, details?: any}}; EventPayload = {event_type: string, source_service: string, entity_id: string, timestamp_ms: number, payload: Record<string, any>}; EventBus interface = {publish(event: EventPayload): Promise<string>, subscribe(event_type: string, handler: (event) => Promise<void>): void}; PMSAdapter interface = {name: string, pullAvailability(unitId): Promise<AvailSlot[]>, pushBooking(booking): Promise<ExternalRef>, pullRates(unitId): Promise<Rate[]>, resolveConflict(local, remote): ConflictResolution}; StripeClient interface = {createPaymentIntent(params): Promise<PaymentIntent>, capturePaymentIntent(id): Promise<PaymentIntent>, refund(chargeId, amount?): Promise<Refund>}",
+          "health: createHealthEndpoint(app, serviceName, checks: HealthCheck[]) — adds GET /health returning {status: 'ok'|'degraded'|'down', service: string, checks: [{name, status, latency_ms}], uptime_s: number}",
+          "testing: TestHelpers — setupTestDb(schema): creates isolated test schema with migrations; teardownTestDb(schema): drops test schema; createMockRedis(): in-memory Redis mock; createMockHttpClient(responses: Map<string, any>): mock HTTP client; InMemoryEventBus: EventBus implementation using in-memory queues for unit/integration tests",
+          "Docker Compose config: docker-compose.yml defining postgres (port 5432), redis (port 6379), kafka + zookeeper (port 9092), and all 7 services with correct env vars and dependency ordering",
+          "Monorepo structure: /shared/ (this component), /services/availability/, /services/pricing/, /services/property/, /services/event/, /services/sync/, /services/payments/, /services/booking/"
+        ],
+        "invariants": [
+          "All database operations use connection pooling; no raw/unpooled connections",
+          "All Redis keys are namespaced: '{service_name}:{logical_key}' — no collisions between services",
+          "All inter-service HTTP calls have a maximum timeout of 2000ms unless explicitly overridden",
+          "Circuit breaker opens after 5 consecutive failures within 30 seconds; half-opens after 10 seconds for a single probe request",
+          "All service responses conform to ServiceResponse<T> envelope: {ok: boolean, data?: T, error?: {code, message, details?}}",
+          "Each service has its own PostgreSQL schema; no cross-schema joins at the database level",
+          "Health endpoints respond within 500ms",
+          "InMemoryEventBus is fully API-compatible with KafkaEventBus for testing"
+        ],
+        "error_modes": [
+          "DATABASE_POOL_EXHAUSTED: All connections in use; queue request with 5s timeout, then reject with 503. Log pool utilization metrics.",
+          "REDIS_CONNECTION_FAILED: Redis unreachable; operations fail with error, services must degrade gracefully (fall through to PostgreSQL). RedisClient.isAvailable() returns false.",
+          "HTTP_CIRCUIT_OPEN: Target service circuit breaker is open; immediately reject with error code 'CIRCUIT_OPEN' and target service name. Do not attempt request.",
+          "HTTP_TIMEOUT: Request exceeded timeout; abort and throw TimeoutError with URL and elapsed time.",
+          "SCHEMA_MIGRATION_FAILED: Database migration fails on startup; service must not start, exit with code 1 and log migration error details."
+        ]
+      },
+      {
+        "component_id": "availability_service",
+        "inputs": [
+          "shared_infra: DatabasePool (schema: 'availability'), RedisClient (namespace: 'avail'), health endpoint creator, shared types",
+          "PostgreSQL tables: availability_canonical (unit_id UUID, date DATE, is_available BOOLEAN, updated_at TIMESTAMPTZ, PRIMARY KEY(unit_id, date)); availability_locks (unit_id UUID, lock_start DATE, lock_end DATE, locked_by UUID, locked_at TIMESTAMPTZ, expires_at TIMESTAMPTZ)",
+          "Redis keys: 'avail:bitmask:{unit_id}' → 64-bit integer (string-encoded); bit N = 1 means day N (offset from epoch_date) is available; 'avail:epoch:{unit_id}' → ISO date string representing bit 0's date (typically today, rotated daily)",
+          "REST requests from Booking Service and external clients"
+        ],
+        "outputs": [
+          "GET /api/v1/availability/:unit_id?check_in=YYYY-MM-DD&check_out=YYYY-MM-DD → ServiceResponse<{unit_id, check_in, check_out, available: boolean, unavailable_dates?: string[]}>; O(1) bitmask check in Redis; falls back to PostgreSQL if Redis miss; target <50ms p99",
+          "GET /api/v1/availability/:unit_id/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD → ServiceResponse<{unit_id, start, end, dates: Array<{date: string, available: boolean}>}>; unpacks bitmask for calendar view",
+          "PUT /api/v1/availability/:unit_id — body: {dates: Array<{date: string, available: boolean}>} → ServiceResponse<{unit_id, updated_count: number}>; updates both PostgreSQL (canonical) and Redis (bitmask); publishes AVAILABILITY_CHANGED event to Event Service",
+          "POST /api/v1/availability/bulk-check — body: {queries: Array<{unit_id, check_in, check_out}>} → ServiceResponse<{results: Array<{unit_id, check_in, check_out, available: boolean}>}>; batch bitmask checks via Redis pipeline; max 50 queries per request",
+          "POST /api/v1/availability/:unit_id/lock — body: {check_in, check_out, lock_holder: UUID, ttl_seconds?: number} → ServiceResponse<{lock_id: UUID, unit_id, check_in, check_out, expires_at: string}>; acquires PostgreSQL advisory lock on hash(unit_id + check_in); used by Booking Service",
+          "DELETE /api/v1/availability/:unit_id/lock/:lock_id → ServiceResponse<{released: boolean}>; releases advisory lock",
+          "GET /health → standard health check response"
+        ],
+        "invariants": [
+          "Bitmask representation: bit N of the stored 64-bit integer corresponds to epoch_date + N days; bit=1 means available, bit=0 means unavailable or out-of-range",
+          "Redis bitmask is always consistent with PostgreSQL canonical data; on any write, PostgreSQL is updated FIRST (source of truth), then Redis is updated; if Redis update fails, a background job reconciles within 60 seconds",
+          "Availability check via bitmask is O(1): create range_mask with bits set for [check_in_offset..check_out_offset-1], compute (stored_mask & range_mask) == range_mask",
+          "Advisory locks have a maximum TTL of 30 seconds (default 15 seconds); expired locks are automatically reaped",
+          "Bitmask epoch is rotated daily via a scheduled job; bits are shifted right by 1 and new day 63 defaults to available",
+          "All date inputs are validated as ISO 8601 (YYYY-MM-DD); check_out must be after check_in; maximum range is 63 days (bitmask width)",
+          "Bulk check is limited to 50 queries per request"
+        ],
+        "error_modes": [
+          "UNIT_NOT_FOUND: unit_id has no availability data; return 404 with error code 'UNIT_NOT_FOUND'",
+          "DATE_RANGE_INVALID: check_out <= check_in or range exceeds 63 days; return 400 with 'DATE_RANGE_INVALID'",
+          "LOCK_CONFLICT: Advisory lock on unit_id+dates already held by another process; return 409 with 'LOCK_CONFLICT' and existing lock details",
+          "LOCK_EXPIRED: Lock referenced by lock_id has expired; return 410 with 'LOCK_EXPIRED'",
+          "REDIS_CACHE_MISS: Bitmask not in Redis; transparently fall back to PostgreSQL query, repopulate cache, and return result (slightly slower but correct)",
+          "BITMASK_CORRUPTION: Stored bitmask doesn't match PostgreSQL truth; log alert, rebuild bitmask from PostgreSQL, return result from PostgreSQL"
+        ]
+      },
+      {
+        "component_id": "pricing_service",
+        "inputs": [
+          "shared_infra: DatabasePool (schema: 'pricing'), RedisClient (namespace: 'pricing'), health endpoint creator, shared types",
+          "PostgreSQL tables: rate_definitions (id UUID, unit_id UUID, date DATE, nightly_rate DECIMAL(10,2), currency VARCHAR(3), created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, PRIMARY KEY(unit_id, date)); fee_rules (id UUID, unit_id UUID, fee_type VARCHAR(50) e.g. 'cleaning', 'service', amount DECIMAL(10,2), is_percentage BOOLEAN, applies_to VARCHAR(20) e.g. 'booking', 'nightly'); tax_rules (id UUID, unit_id UUID, tax_type VARCHAR(50), rate DECIMAL(6,4), jurisdiction VARCHAR(100))",
+          "Redis keys: 'pricing:{shard}:{unit_id}:{YYYY-MM-DD}' → JSON string {nightly_rate, currency}; shard = hash(unit_id) % 16; 'pricing:fees:{unit_id}' → JSON array of fee rules; 'pricing:taxes:{unit_id}' → JSON array of tax rules",
+          "REST requests from Booking Service and external clients"
+        ],
+        "outputs": [
+          "GET /api/v1/pricing/:unit_id?check_in=YYYY-MM-DD&check_out=YYYY-MM-DD → ServiceResponse<{unit_id, check_in, check_out, nightly_rates: Array<{date, rate, currency}>, subtotal: number, fees: Array<{type, amount, description}>, taxes: Array<{type, rate, amount}>, total: number, currency: string}>; resolves all nightly rates, fees, taxes; target <100ms",
+          "POST /api/v1/pricing/quote — body: {unit_id, check_in, check_out, guest_count?: number, promo_code?: string} → ServiceResponse<{quote_id: UUID, ...same as GET pricing, expires_at: string}>; generates a time-limited price quote (valid 15 minutes)",
+          "PUT /api/v1/pricing/:unit_id/rates — body: {rates: Array<{date, nightly_rate, currency?}>} → ServiceResponse<{unit_id, updated_count: number}>; updates rate definitions in PostgreSQL and Redis cache",
+          "GET /api/v1/pricing/:unit_id/rates?start=YYYY-MM-DD&end=YYYY-MM-DD → ServiceResponse<{unit_id, rates: Array<{date, nightly_rate, currency}>}>; returns rate calendar",
+          "POST /api/v1/pricing/bulk-quote — body: {queries: Array<{unit_id, check_in, check_out}>} → ServiceResponse<{results: Array<{unit_id, check_in, check_out, total, currency}>}>; batch pricing lookups via Redis pipeline; max 20 queries",
+          "GET /health → standard health check response"
+        ],
+        "invariants": [
+          "Hash sharding: Redis key shard is computed as fnv1a_hash(unit_id) % 16; this distributes keys across 16 logical shards for cache locality",
+          "All monetary amounts are stored and returned as DECIMAL(10,2) / number with max 2 decimal places; no floating-point arithmetic — use integer cents internally",
+          "Pricing calculation order: (1) sum nightly rates → subtotal, (2) apply per-booking fees → fees_total, (3) compute taxes on (subtotal + taxable_fees) → taxes_total, (4) total = subtotal + fees_total + taxes_total",
+          "Currency is consistent per unit within a single quote; multi-currency mixing within a booking is not supported",
+          "Price quotes are immutable once generated; the quote_id can be passed to Booking Service to lock in the quoted price for 15 minutes",
+          "Redis cache TTL for rate data is 1 hour; stale cache is acceptable for reads but writes always invalidate cache immediately",
+          "Missing rate for a date returns a default rate from Property Service configuration (via 4-tier hierarchy) or errors if no default exists"
+        ],
+        "error_modes": [
+          "UNIT_NOT_FOUND: No rate data for unit_id; return 404 with 'UNIT_NOT_FOUND'",
+          "RATE_NOT_CONFIGURED: One or more dates in the range have no rate defined and no default rate; return 422 with 'RATE_NOT_CONFIGURED' listing the missing dates",
+          "QUOTE_EXPIRED: quote_id referenced in booking has expired (>15 min); return 410 with 'QUOTE_EXPIRED'",
+          "DATE_RANGE_INVALID: check_out <= check_in or range too long (>365 days); return 400 with 'DATE_RANGE_INVALID'",
+          "REDIS_CACHE_MISS: Rate not in Redis; fall back to PostgreSQL, repopulate shard cache, return result",
+          "BULK_LIMIT_EXCEEDED: More than 20 queries in bulk request; return 400 with 'BULK_LIMIT_EXCEEDED'"
+        ]
+      },
+      {
+        "component_id": "property_service",
+        "inputs": [
+          "shared_infra: DatabasePool (schema: 'property'), RedisClient (namespace: 'property'), health endpoint creator, shared types",
+          "PostgreSQL tables: properties (id UUID PK, name VARCHAR(255), address JSONB, owner_id UUID, status VARCHAR(20), created_at, updated_at); units (id UUID PK, property_id UUID FK→properties, name VARCHAR(255), unit_type VARCHAR(50), bedrooms INT, bathrooms INT, max_guests INT, status VARCHAR(20), created_at, updated_at); platform_defaults (id UUID PK, key VARCHAR(100) UNIQUE, value JSONB, updated_at); property_settings (id UUID PK, property_id UUID FK, key VARCHAR(100), value JSONB, UNIQUE(property_id, key)); unit_settings (id UUID PK, unit_id UUID FK, key VARCHAR(100), value JSONB, UNIQUE(unit_id, key)); date_overrides (id UUID PK, unit_id UUID FK, start_date DATE, end_date DATE, key VARCHAR(100), value JSONB, UNIQUE(unit_id, start_date, end_date, key))",
+          "REST requests from other services and external clients"
+        ],
+        "outputs": [
+          "GET /api/v1/properties → ServiceResponse<{properties: Property[], total: number, page: number, limit: number}>; paginated property list",
+          "POST /api/v1/properties — body: Property creation payload → ServiceResponse<{property: Property}>",
+          "GET /api/v1/properties/:property_id → ServiceResponse<{property: Property}>",
+          "PUT /api/v1/properties/:property_id → ServiceResponse<{property: Property}>",
+          "GET /api/v1/properties/:property_id/units → ServiceResponse<{units: Unit[]}>",
+          "POST /api/v1/properties/:property_id/units → ServiceResponse<{unit: Unit}>",
+          "GET /api/v1/units/:unit_id → ServiceResponse<{unit: Unit}>",
+          "PUT /api/v1/units/:unit_id → ServiceResponse<{unit: Unit}>",
+          "GET /api/v1/units/:unit_id/config?date=YYYY-MM-DD → ServiceResponse<{unit_id, date, resolved_config: Record<string, any>, resolution_chain: Array<{tier: string, keys_applied: string[]}>}>; resolves the 4-tier override hierarchy for the given unit and optional date, returning the fully merged config and which tier supplied each value",
+          "PUT /api/v1/settings/platform-defaults — body: {key, value} → ServiceResponse<{setting: PlatformDefault}>",
+          "PUT /api/v1/properties/:property_id/settings — body: {key, value} → ServiceResponse<{setting: PropertySetting}>",
+          "PUT /api/v1/units/:unit_id/settings — body: {key, value} → ServiceResponse<{setting: UnitSetting}>",
+          "PUT /api/v1/units/:unit_id/date-overrides — body: {start_date, end_date, key, value} → ServiceResponse<{override: DateOverride}>",
+          "GET /health → standard health check response"
+        ],
+        "invariants": [
+          "4-tier override resolution order: platform_defaults (lowest priority) → property_settings → unit_settings → date_overrides (highest priority); each tier overrides matching keys from lower tiers via shallow merge",
+          "Resolved config is cached in Redis as 'property:config:{unit_id}:{date}' with 5-minute TTL; any settings write at any tier invalidates all cached configs for affected units",
+          "Properties must exist before units can be created under them",
+          "Unit deletion is soft-delete (status='archived'); units with active bookings cannot be deleted",
+          "Settings keys are validated against a configurable allowlist (e.g., 'min_stay', 'max_guests', 'check_in_time', 'check_out_time', 'cancellation_policy', 'default_nightly_rate', 'cleaning_fee', 'tax_rate')",
+          "Date overrides must have start_date <= end_date; overlapping date overrides for the same key on the same unit are not allowed (upsert behavior)"
+        ],
+        "error_modes": [
+          "PROPERTY_NOT_FOUND: property_id does not exist; return 404",
+          "UNIT_NOT_FOUND: unit_id does not exist; return 404",
+          "INVALID_SETTING_KEY: key is not in the allowed settings list; return 400 with 'INVALID_SETTING_KEY' and list of allowed keys",
+          "DUPLICATE_UNIT: Attempting to create a unit with duplicate name under the same property; return 409",
+          "DATE_OVERRIDE_CONFLICT: Overlapping date override for same unit+key; return 409 with conflict details",
+          "SOFT_DELETE_BLOCKED: Unit has active bookings and cannot be archived; return 409 with 'SOFT_DELETE_BLOCKED'"
+        ]
+      },
+      {
+        "component_id": "event_service",
+        "inputs": [
+          "shared_infra: DatabasePool (schema: 'events'), RedisClient (namespace: 'events'), health endpoint creator, shared types, InMemoryEventBus for test mode",
+          "PostgreSQL tables: events (event_id VARCHAR(64) PK — SHA-256 hex, event_type VARCHAR(100), source_service VARCHAR(50), entity_id VARCHAR(100), timestamp_ms BIGINT, payload JSONB, received_at TIMESTAMPTZ DEFAULT NOW(), INDEX on (event_type, timestamp_ms), INDEX on (entity_id, timestamp_ms)); event_subscriptions (id UUID PK, subscriber_service VARCHAR(50), event_type VARCHAR(100), callback_url VARCHAR(500), active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ, UNIQUE(subscriber_service, event_type))",
+          "Kafka connection (KAFKA_BROKERS env var) for production; topics auto-created per event_type prefix",
+          "REST requests from all other services publishing events"
+        ],
+        "outputs": [
+          "POST /api/v1/events — body: EventPayload {event_type, source_service, entity_id, timestamp_ms, payload} → ServiceResponse<{event_id: string, status: 'accepted'|'duplicate'}>; computes event_id = SHA-256(event_type + source_service + entity_id + timestamp_ms + SHA-256(canonical_json(payload))); if event_id already exists, returns 'duplicate' (idempotent); otherwise stores in PostgreSQL and publishes to Kafka topic",
+          "GET /api/v1/events?event_type=X&entity_id=Y&since_ms=Z&limit=N → ServiceResponse<{events: StoredEvent[], cursor?: string}>; query event history with filters; cursor-based pagination",
+          "GET /api/v1/events/:event_id → ServiceResponse<{event: StoredEvent}>; fetch single event by content-addressable ID",
+          "POST /api/v1/events/subscribe — body: {subscriber_service, event_type, callback_url} → ServiceResponse<{subscription_id: UUID}>; registers a webhook callback for event type; Event Service will POST to callback_url when matching events arrive",
+          "DELETE /api/v1/events/subscribe/:subscription_id → ServiceResponse<{unsubscribed: boolean}>",
+          "POST /api/v1/events/replay — body: {event_type?, entity_id?, since_ms, until_ms?, target_callback_url} → ServiceResponse<{replay_id: UUID, events_count: number}>; replays historical events to a callback URL",
+          "GET /health → standard health check response including Kafka connectivity status"
+        ],
+        "invariants": [
+          "Event ID computation is deterministic and content-addressable: event_id = hex(SHA-256(event_type + '|' + source_service + '|' + entity_id + '|' + timestamp_ms.toString() + '|' + hex(SHA-256(canonical_json(payload)))))",
+          "Canonical JSON: keys sorted alphabetically, no whitespace, no undefined values, numbers as-is (no scientific notation for integers)",
+          "Duplicate event_id submissions are silently accepted (return 'duplicate') — idempotent ingestion guaranteed",
+          "Events are immutable once stored; no update or delete endpoints",
+          "PostgreSQL is the durable store; Kafka is the distribution mechanism. If Kafka is down, events are stored in PostgreSQL and a background job retries Kafka publication",
+          "Webhook callbacks are delivered with at-least-once semantics; callbacks must be idempotent. Delivery retries: 3 attempts with exponential backoff (1s, 4s, 16s). Failed deliveries are logged but do not block.",
+          "Event ordering is guaranteed per entity_id (Kafka partition key = entity_id) but not globally"
+        ],
+        "error_modes": [
+          "INVALID_EVENT_PAYLOAD: Missing required fields in EventPayload; return 400 with 'INVALID_EVENT_PAYLOAD' and list of missing fields",
+          "KAFKA_UNAVAILABLE: Kafka broker unreachable; event is still stored in PostgreSQL (durable), publish queued for retry; return 202 with 'accepted_degraded' status",
+          "EVENT_NOT_FOUND: event_id not found; return 404",
+          "CALLBACK_UNREACHABLE: Webhook callback URL returns non-2xx or times out (5s); retry up to 3 times, then mark delivery as failed in log; does not affect event storage",
+          "REPLAY_TOO_LARGE: Replay query would return more than 10,000 events; return 400 with 'REPLAY_TOO_LARGE' suggesting narrower time range"
+        ]
+      },
+      {
+        "component_id": "payments_sync_services",
+        "inputs": [
+          "shared_infra: DatabasePool (schemas: 'payments', 'sync'), RedisClient (namespaces: 'payments', 'sync'), HttpClient, health endpoint, shared types, StripeClient interface, PMSAdapter interface, EventBus/Event Service client",
+          "Payments PostgreSQL tables: payment_intents (id UUID PK, stripe_payment_intent_id VARCHAR(100) UNIQUE, booking_id UUID, amount_cents BIGINT, currency VARCHAR(3), status VARCHAR(30), stripe_status VARCHAR(30), created_at, updated_at); charges (id UUID PK, stripe_charge_id VARCHAR(100) UNIQUE, payment_intent_id UUID FK, amount_cents BIGINT, status VARCHAR(30), created_at); refunds (id UUID PK, stripe_refund_id VARCHAR(100) UNIQUE, charge_id UUID FK, amount_cents BIGINT, reason VARCHAR(100), status VARCHAR(30), created_at); payout_snapshots (id UUID PK, sequence_number BIGINT UNIQUE, payout_data JSONB, previous_hash VARCHAR(64), current_hash VARCHAR(64), created_at TIMESTAMPTZ, INDEX on sequence_number)",
+          "Sync PostgreSQL tables: sync_mappings (id UUID PK, adapter_name VARCHAR(50), local_entity_type VARCHAR(50), local_entity_id UUID, external_entity_id VARCHAR(200), last_synced_at TIMESTAMPTZ, sync_direction VARCHAR(10), UNIQUE(adapter_name, local_entity_type, local_entity_id)); sync_logs (id UUID PK, adapter_name VARCHAR(50), operation VARCHAR(50), status VARCHAR(20), details JSONB, created_at TIMESTAMPTZ); conflict_resolutions (id UUID PK, sync_mapping_id UUID FK, local_data JSONB, remote_data JSONB, resolution VARCHAR(20), resolved_data JSONB, resolved_at TIMESTAMPTZ)",
+          "Stripe API (test mode via STRIPE_SECRET_KEY env var) or MockStripeClient for tests",
+          "REST requests from Booking Service (payments) and admin/cron (sync)"
+        ],
+        "outputs": [
+          "POST /api/v1/payments/intents — body: {booking_id, amount_cents, currency, payment_method_id?} → ServiceResponse<{payment_intent: PaymentIntentRecord}>; creates Stripe PaymentIntent via StripeClient, mirrors to PostgreSQL",
+          "POST /api/v1/payments/intents/:intent_id/capture → ServiceResponse<{payment_intent: PaymentIntentRecord}>; captures a previously created PaymentIntent",
+          "POST /api/v1/payments/intents/:intent_id/cancel → ServiceResponse<{payment_intent: PaymentIntentRecord}>; cancels PaymentIntent",
+          "POST /api/v1/payments/refunds — body: {charge_id, amount_cents?, reason?} → ServiceResponse<{refund: RefundRecord}>",
+          "GET /api/v1/payments/intents/:intent_id → ServiceResponse<{payment_intent: PaymentIntentRecord}>",
+          "GET /api/v1/payments/booking/:booking_id → ServiceResponse<{payment_intents: PaymentIntentRecord[]}>; all payments for a booking",
+          "GET /api/v1/payments/payouts/chain?from_seq=N&to_seq=M → ServiceResponse<{snapshots: PayoutSnapshot[], chain_valid: boolean}>; returns payout snapshots with hash chain verification",
+          "POST /api/v1/payments/payouts/snapshot — body: {payout_data} → ServiceResponse<{snapshot: PayoutSnapshot}>; creates next snapshot in hash chain",
+          "POST /api/v1/sync/trigger — body: {adapter_name, operation: 'pull'|'push', entity_type, entity_id?} → ServiceResponse<{sync_id: UUID, status: 'completed'|'failed', details}>; triggers a sync operation",
+          "GET /api/v1/sync/mappings?adapter_name=X&entity_type=Y → ServiceResponse<{mappings: SyncMapping[]}>",
+          "GET /api/v1/sync/adapters → ServiceResponse<{adapters: Array<{name, status: 'active'|'stub', supported_operations}>}>; lists available PMS adapters",
+          "GET /api/v1/sync/logs?adapter_name=X&limit=N → ServiceResponse<{logs: SyncLog[]}>",
+          "GET /health (payments port) → health check with Stripe connectivity",
+          "GET /health (sync port) → health check with adapter status"
+        ],
+        "invariants": [
+          "Stripe mirror: every Stripe API call result is immediately mirrored to PostgreSQL; the local record is the system of record for business logic; Stripe is the source of truth for payment state",
+          "Hash chain integrity: payout_snapshot[N].current_hash = SHA-256(canonical_json(payout_data) + '|' + previous_hash + '|' + sequence_number); payout_snapshot[0].previous_hash = 'genesis:' + SHA-256('wander_payouts_genesis'); sequence_numbers are monotonically increasing with no gaps",
+          "Hash chain is append-only; no updates or deletes to payout_snapshots",
+          "MockStripeClient is used when STRIPE_SECRET_KEY is not set or equals 'mock'; it simulates success/failure scenarios with realistic delays (50-200ms)",
+          "Sync adapters: 'mock_test' adapter is fully functional for testing; 'guesty' adapter has skeleton implementation with method stubs returning realistic shaped data; remaining 6 adapters (hostaway, lodgify, beds24, ownerrez, hostfully, bookingpal) return NotImplementedError",
+          "Conflict resolution strategy: 'last_write_wins' by default (configurable per adapter); conflicts are logged in conflict_resolutions table for audit",
+          "All payment amounts are in the smallest currency unit (cents for USD); no decimal arithmetic"
+        ],
+        "error_modes": [
+          "STRIPE_ERROR: Stripe API returns an error (card declined, network error, etc.); mirror error to local record, return 402 for card errors, 502 for Stripe outage",
+          "PAYMENT_NOT_FOUND: payment_intent_id not found locally; return 404",
+          "INVALID_PAYMENT_STATE: Attempting invalid state transition (e.g., capture already-captured intent); return 409 with current state",
+          "HASH_CHAIN_BROKEN: Verification detects hash mismatch in payout chain; return 500 with 'HASH_CHAIN_INTEGRITY_ERROR' and the sequence number where break occurred; this is a critical alert",
+          "ADAPTER_NOT_FOUND: Requested PMS adapter name not registered; return 404 with 'ADAPTER_NOT_FOUND' and list of available adapters",
+          "ADAPTER_NOT_IMPLEMENTED: Adapter exists but operation not implemented (stub); return 501 with 'ADAPTER_NOT_IMPLEMENTED'",
+          "SYNC_CONFLICT: Bidirectional sync detects conflicting changes; resolve per strategy, log to conflict_resolutions, return resolution details",
+          "STRIPE_WEBHOOK_MISMATCH: Stripe webhook event doesn't match local record; log discrepancy, attempt reconciliation"
+        ]
+      },
+      {
+        "component_id": "booking_orchestrator",
+        "inputs": [
+          "shared_infra: DatabasePool (schema: 'booking'), RedisClient (namespace: 'booking'), HttpClient (with service URLs from env vars), health endpoint, shared types",
+          "PostgreSQL tables: bookings (id UUID PK, unit_id UUID, guest_id UUID, check_in DATE, check_out DATE, num_guests INT, status VARCHAR(30) — 'pending','confirmed','cancelled','completed', payment_intent_id UUID, quote_id UUID, total_amount_cents BIGINT, currency VARCHAR(3), created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, INDEX on (unit_id, check_in, check_out), INDEX on guest_id); booking_events (id UUID PK, booking_id UUID FK, event_type VARCHAR(50), details JSONB, created_at TIMESTAMPTZ)",
+          "Service URLs via env: AVAILABILITY_SERVICE_URL, PRICING_SERVICE_URL, PAYMENTS_SERVICE_URL, EVENT_SERVICE_URL",
+          "REST request: POST /api/v1/bookings with guest and stay details"
+        ],
+        "outputs": [
+          "POST /api/v1/bookings — body: {unit_id, guest_id, check_in, check_out, num_guests, payment_method_id} → ServiceResponse<{booking: Booking}>; THE CORE FLOW — must complete in <3 seconds: Step 1 (<200ms): POST availability lock + GET availability check; Step 2 (<200ms): GET pricing quote; Step 3 (<1500ms): POST payment intent + capture; Step 4 (<200ms): PUT availability (mark booked); Step 5 (fire-and-forget): POST event (BOOKING_CONFIRMED); If any step fails, compensating actions run (release lock, cancel payment if needed)",
+          "GET /api/v1/bookings/:booking_id → ServiceResponse<{booking: Booking}>",
+          "GET /api/v1/bookings?guest_id=X&unit_id=Y&status=Z → ServiceResponse<{bookings: Booking[], total, page, limit}>",
+          "POST /api/v1/bookings/:booking_id/cancel → ServiceResponse<{booking: Booking}>; initiates cancellation: refund via Payments Service, unmark dates via Availability Service, publish BOOKING_CANCELLED event",
+          "GET /api/v1/bookings/:booking_id/timeline → ServiceResponse<{events: BookingEvent[]}>; returns all lifecycle events for a booking from local booking_events table",
+          "GET /health → standard health check including connectivity to all dependent services"
+        ],
+        "invariants": [
+          "CORE INVARIANT: The complete booking flow (availability check → pricing → payment → availability update → event publish) MUST complete in under 3 seconds end-to-end for the happy path",
+          "Timing budget: availability lock+check <200ms, pricing <200ms, payment create+capture <1500ms, availability mark <200ms, event publish <200ms (fire-and-forget so doesn't block response)",
+          "Orchestration is synchronous and sequential: each step must succeed before proceeding to the next; failure at any step triggers compensating actions for all previously completed steps",
+          "Compensating actions: (1) if payment fails → release availability lock; (2) if availability mark fails → cancel/refund payment + release lock; (3) if event publish fails → log but don't fail the booking (fire-and-forget)",
+          "Double-booking prevention: availability lock (advisory lock) MUST be acquired before availability check and held until availability is marked booked; the lock prevents any concurrent booking for the same unit+dates",
+          "Booking status transitions: pending → confirmed (on successful payment) → completed | cancelled; no other transitions allowed",
+          "All inter-service calls use HttpClient with configured timeouts; any single service timeout fails the entire flow and triggers compensation",
+          "Each step of the flow is logged to the booking_events table for audit/debugging with timestamps",
+          "Idempotency: if a booking request is retried with the same idempotency key (guest_id + unit_id + check_in + check_out within 5 minutes), return the existing booking instead of creating a duplicate"
+        ],
+        "error_modes": [
+          "AVAILABILITY_UNAVAILABLE: Dates not available (availability check returns available=false); return 409 with 'DATES_UNAVAILABLE' — no compensation needed (lock still released)",
+          "AVAILABILITY_LOCK_FAILED: Could not acquire lock (another booking in progress); return 409 with 'BOOKING_IN_PROGRESS'",
+          "PRICING_FAILED: Pricing service error or timeout; return 502 with 'PRICING_UNAVAILABLE'; release availability lock",
+          "PAYMENT_FAILED: Payment declined or Stripe error; return 402 with 'PAYMENT_FAILED' and Stripe error details; release availability lock",
+          "PAYMENT_TIMEOUT: Payment service did not respond within 1500ms; return 504 with 'PAYMENT_TIMEOUT'; release lock; NOTE: payment may have actually succeeded — log for manual reconciliation",
+          "AVAILABILITY_UPDATE_FAILED: Could not mark dates as booked after payment; CRITICAL — payment succeeded but dates not marked; return 500 with 'BOOKING_PARTIAL_FAILURE'; log critical alert; booking is saved as 'confirmed' and background reconciliation should fix availability",
+          "COMPENSATION_FAILED: Compensating action itself failed (e.g., refund failed); log CRITICAL alert with all context; return 500 with 'COMPENSATION_FAILED'; requires manual intervention",
+          "SERVICE_UNAVAILABLE: Any dependent service is completely down (circuit breaker open); return 503 with 'SERVICE_UNAVAILABLE' and which service is down",
+          "DUPLICATE_BOOKING: Idempotency check finds existing booking for same guest+unit+dates; return 200 with existing booking (not an error)"
+        ]
+      }
+    ],
+    "cross_component_constraints": [
+      "UNIVERSAL RESPONSE FORMAT: All services return ServiceResponse<T> = {ok: boolean, data?: T, error?: {code: string, message: string, details?: any}}. HTTP status codes: 200/201 for success, 400 for validation, 404 for not found, 409 for conflict, 402 for payment failure, 500+ for server/upstream errors.",
+      "3-SECOND CHECKOUT CONSTRAINT: The end-to-end booking flow (Booking Service → Availability → Pricing → Payments → Availability → Event) must complete in under 3 seconds. Each service has a timing budget: availability ops <200ms each, pricing <200ms, payments <1500ms, event publish is fire-and-forget. All services must meet their individual latency targets.",
+      "SINGLE POSTGRESQL INSTANCE, SEPARATE SCHEMAS: All services share one PostgreSQL instance but each service owns its own schema (availability, pricing, property, events, payments, sync, booking). No cross-schema queries or foreign keys. Services communicate only via HTTP APIs.",
+      "SINGLE REDIS INSTANCE, NAMESPACED KEYS: All services share one Redis instance. Keys are namespaced by service: 'avail:*', 'pricing:*', 'property:*', 'events:*', 'payments:*', 'sync:*', 'booking:*'. No service reads another service's Redis keys.",
+      "EVENT BUS ABSTRACTION: All services publish events via the Event Service HTTP API (POST /api/v1/events). No service talks to Kafka directly. The Event Service is the sole Kafka producer/consumer. For testing, all services use InMemoryEventBus from shared_infra.",
+      "CONTENT-ADDRESSABLE EVENT IDS: Event deduplication is guaranteed across the system. Any service publishing the same event payload twice (same event_type + source_service + entity_id + timestamp_ms + payload) will get back the same event_id and a 'duplicate' status. All services must handle duplicate event responses gracefully.",
+      "IDEMPOTENT OPERATIONS: All mutating endpoints should be safe to retry. Availability locks are idempotent (re-locking same holder returns existing lock), payment intents use Stripe idempotency keys, event publishing is deduplicated by content-addressable ID, booking creation uses idempotency key (guest+unit+dates within 5 min window).",
+      "ADVISORY LOCK COORDINATION: The Booking Service acquires advisory locks via the Availability Service before checking availability. The lock key is deterministic: hash(unit_id + check_in_date). Both services must agree on this hash function. Locks have a maximum TTL of 30 seconds.",
+      "GRACEFUL DEGRADATION: If Redis is unavailable, all services fall back to PostgreSQL for reads (slower but correct). If Kafka is unavailable, Event Service stores events in PostgreSQL and retries Kafka publication. If any non-critical service is down, the booking flow should degrade gracefully where possible (e.g., event publish failure doesn't fail the booking).",
+      "CONSISTENT DATE HANDLING: All dates are ISO 8601 format (YYYY-MM-DD) for date-only fields and ISO 8601 with timezone (YYYY-MM-DDTHH:mm:ss.sssZ) for timestamps. All timestamps are in UTC. check_in is inclusive, check_out is exclusive (i.e., a 3-night stay from Jan 1 to Jan 4 occupies Jan 1, 2, 3).",
+      "HEALTH CHECK UNIFORMITY: All services expose GET /health returning {status: 'ok'|'degraded'|'down', service: string, checks: [{name, status, latency_ms}], uptime_s}. Health checks verify PostgreSQL connectivity, Redis connectivity, and any service-specific dependencies.",
+      "MONETARY AMOUNTS IN CENTS: All monetary values across the system are represented as integer cents (or smallest currency unit). No floating-point currency math anywhere. The Pricing Service returns amounts in cents, Payments Service processes cents, Booking Service stores total_amount_cents.",
+      "TESTING PYRAMID: Each service has unit tests (isolated, mocked dependencies), integration tests (real PostgreSQL + Redis via test containers or shared test instances with isolated schemas), and the Booking Service has one end-to-end test exercising the full checkout flow across all running services."
+    ],
+    "confidence": 0.92,
+    "reasoning": "These contracts are derived from the detailed task description, the 15 clarification points from the interaction summary, and standard microservices patterns. Each contract specifies precise inputs (data stores, env vars, API requests), outputs (REST endpoints with exact paths and response shapes), invariants (behavioral guarantees like O(1) bitmask checks, hash chain integrity, 3-second timing budget), and error modes (specific failure scenarios with HTTP status codes and error codes).\n\nKey design decisions reflected:\n1. The Availability Service uses 64-bit bitmasks in Redis for O(1) range availability checks via bitwise AND operations.\n2. The Pricing Service uses consistent hashing (fnv1a % 16 shards) for Redis key distribution.\n3. The Property Service implements 4-tier override resolution (platform → property → unit → date).\n4. The Event Service computes content-addressable SHA-256 event IDs for idempotent deduplication, and is the sole Kafka interface.\n5. Payments + Sync are bundled as one component per the decomposition, with MockStripeClient for testing and hash-chained payout snapshots.\n6. The Booking Orchestrator has explicit timing budgets per step summing to <3 seconds, with compensating actions for each failure point.\n\nCross-component constraints capture the system-wide rules: universal response format, namespaced Redis, schema-isolated PostgreSQL, content-addressable events, cents-based monetary amounts, and the critical 3-second checkout constraint.\n\nConfidence is 0.92 rather than higher because: (1) without seeing the actual reference/architecture.md and reference/decomposition.json, some details may differ from the canonical spec; (2) the exact hash function for advisory locks and pricing shards may need adjustment; (3) Kafka topic naming and partitioning strategy details are inferred rather than specified.",
+    "consternation": "Unable to directly access reference/architecture.md, reference/decomposition.json, reference/decisions.md, or reference/schemas/ to verify exact API paths, field names, and schema definitions. The contracts are built from the task description and interaction summary, which are detailed but may not capture every nuance of the reference documents. Specific uncertainties: (1) exact bitmask epoch rotation schedule, (2) precise Kafka topic naming convention, (3) whether the Guesty adapter skeleton should have any working methods or all stubs, (4) exact advisory lock hash function implementation.",
+    "escalation": ""
+  },
+  "implementation_order": {
+    "steps": [
+      {
+        "component_id": "shared_infra",
+        "order": 1,
+        "rationale": "Foundation layer with zero dependencies. Every other component depends on shared_infra for DatabasePool, RedisClient, HttpClient, shared TypeScript types (ServiceResponse, EventPayload, EventBus, PMSAdapter, StripeClient interfaces), health endpoint creator, test helpers (setupTestDb, createMockRedis, InMemoryEventBus), and the Docker Compose / monorepo structure. Nothing else can be built or tested without this."
+      },
+      {
+        "component_id": "availability_service",
+        "order": 2,
+        "rationale": "Depends only on shared_infra. Provides the bitmask-based O(1) availability checks, calendar views, bulk checks, and advisory lock acquisition/release endpoints that the Booking Orchestrator needs for its checkout flow (Steps 1 and 4). No dependency on any other service. Can be built and tested in parallel with pricing_service, property_service, and event_service."
+      },
+      {
+        "component_id": "pricing_service",
+        "order": 2,
+        "rationale": "Depends only on shared_infra. Provides hash-sharded rate cache, pricing quotes, bulk quotes, and rate management. The Booking Orchestrator calls it in Step 2 of the checkout flow. No dependency on other services, so it can be built in parallel with availability_service, property_service, and event_service."
+      },
+      {
+        "component_id": "property_service",
+        "order": 2,
+        "rationale": "Depends only on shared_infra. Provides the 4-tier override hierarchy for property/unit configuration, property and unit CRUD. It is a standalone service with no runtime dependency on other services. Can be built in parallel with availability_service, pricing_service, and event_service."
+      },
+      {
+        "component_id": "event_service",
+        "order": 2,
+        "rationale": "Depends only on shared_infra. Provides the Kafka-backed event bus with content-addressable IDs, event storage, subscription webhooks, and replay. It is the sole Kafka producer/consumer in the system. Other services publish events through its HTTP API. Must be ready before payments_sync_services (which publishes events) and booking_orchestrator (which publishes BOOKING_CONFIRMED/BOOKING_CANCELLED events). Can be built in parallel with the other order-2 services."
+      },
+      {
+        "component_id": "payments_sync_services",
+        "order": 3,
+        "rationale": "Depends on shared_infra and event_service. The Payments Service mirrors Stripe operations to PostgreSQL and publishes payment-related events via the Event Service HTTP API. The Sync Service uses the PMSAdapter interface and EventBus for PMS synchronization. Both require the Event Service to be available for event publishing. Cannot start until event_service is complete. Does not depend on availability_service, pricing_service, or property_service."
+      },
+      {
+        "component_id": "booking_orchestrator",
+        "order": 4,
+        "rationale": "Depends on shared_infra, availability_service, pricing_service, payments_sync_services, and event_service — the most dependencies of any component. It orchestrates the full checkout flow within a 3-second budget: lock+check availability (Step 1), get pricing quote (Step 2), create+capture payment (Step 3), update availability (Step 4), publish event (Step 5). It also handles cancellation flows (refund, unmark dates, publish event). Requires all upstream services to be built and testable first. This is the final integration point including the E2E test that exercises all services together."
+      }
+    ],
+    "parallel_groups": [
+      [
+        "shared_infra"
+      ],
+      [
+        "availability_service",
+        "pricing_service",
+        "property_service",
+        "event_service"
+      ],
+      [
+        "payments_sync_services"
+      ],
+      [
+        "booking_orchestrator"
+      ]
+    ],
+    "confidence": 0.97,
+    "reasoning": "The dependency graph forms a clear 4-level DAG:\n\n**Level 1 — shared_infra:** The universal foundation. Every service imports DatabasePool, RedisClient, HttpClient, shared TypeScript types (ServiceResponse, EventPayload, EventBus/PMSAdapter/StripeClient interfaces), health endpoint creator, and test helpers (setupTestDb, createMockRedis, InMemoryEventBus). The Docker Compose config and monorepo structure are also defined here. This must be implemented first and fully tested.\n\n**Level 2 — availability_service, pricing_service, property_service, event_service:** All four depend solely on shared_infra with no inter-dependencies. They can be developed and tested entirely in parallel:\n- availability_service: Bitmask cache in Redis, PostgreSQL canonical store, advisory locks, O(1) checks targeting <50ms p99.\n- pricing_service: Hash-sharded (16 shards) rate cache, fee/tax rules, quote generation targeting <100ms.\n- property_service: 4-tier override hierarchy (platform defaults → property settings → unit settings → date overrides), property/unit CRUD.\n- event_service: Kafka integration, SHA-256 content-addressable event IDs for deduplication, webhook subscriptions, event replay.\n\nEach can be unit-tested with InMemoryEventBus and mock dependencies from shared_infra, and integration-tested with real PostgreSQL/Redis using isolated test schemas.\n\n**Level 3 — payments_sync_services:** Depends on shared_infra + event_service. The Payments Service publishes payment events via the Event Service HTTP API (not directly to Kafka, per the event bus abstraction constraint). The Sync Service framework also uses the EventBus for synchronization events. The hash chain for payout snapshots is self-contained but the service overall needs event_service available. It does NOT depend on availability, pricing, or property services.\n\n**Level 4 — booking_orchestrator:** The apex of the dependency graph. It makes HTTP calls to availability_service (lock, check, update), pricing_service (quote), payments_sync_services (create/capture payment intent, refund), and event_service (publish BOOKING_CONFIRMED, BOOKING_CANCELLED). The 3-second checkout constraint means all upstream services must be fully operational and meeting their latency budgets. The E2E integration test defined in this component exercises the entire system end-to-end.\n\nProperty_service is interesting — no other component explicitly depends on it at runtime in the described flows (the booking flow doesn't call it), but it's part of the platform and could be consulted for unit configuration. It's correctly parallelized at Level 2 since it only needs shared_infra.\n\nThe topological sort is deterministic and the only decision point was whether payments_sync_services could be parallel with the Level 2 group. It cannot, because it explicitly depends on event_service for publishing events. This creates the 4-level structure above.",
+    "consternation": "Minor ambiguity: property_service has no downstream dependents in the explicitly stated dependency graph, yet it's clearly part of the platform (availability and pricing could conceptually look up unit details from it). However, based on the stated dependencies, no component lists property_service as a dependency, so it's correctly placed as a parallel Level 2 component with no impact on the critical path. The booking_orchestrator's env vars include PROPERTY_SERVICE_URL but its declared deps don't include property_service — this could indicate a future integration or optional dependency, but we follow the explicit dependency declarations.",
+    "escalation": ""
+  },
+  "answers": {}
+}

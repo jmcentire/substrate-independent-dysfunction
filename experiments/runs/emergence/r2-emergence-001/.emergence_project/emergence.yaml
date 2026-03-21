@@ -1,0 +1,5 @@
+backend: anthropic
+budget: 50.0
+model: claude-opus-4-6
+num_agents: 8
+repo: experiments/runs/emergence/r2-emergence-001/output

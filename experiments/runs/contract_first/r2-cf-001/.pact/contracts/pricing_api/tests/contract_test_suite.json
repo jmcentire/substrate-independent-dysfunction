@@ -1,0 +1,1220 @@
+{
+  "component_id": "pricing_api",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "get_quote_happy_single_night",
+      "description": "GET /quote returns a valid quote envelope for a single-night stay with 1 guest",
+      "function": "get_quote",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns valid QuoteResponse for unit-001 with 1 night at 15000 cents USD"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "QuoteResponseEnvelope with 1 nightly_rate line item, num_nights=1, consistent currency, and total = subtotal + fees + taxes + discounts",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.num_nights == 1",
+        "len(nightly_rate line items) == 1",
+        "total = subtotal + fees_total + taxes_total + discounts_total",
+        "meta.currency matches all Money.currency values",
+        "meta.generated_at is ISO 8601 UTC"
+      ]
+    },
+    {
+      "id": "get_quote_happy_multi_night_with_guests",
+      "description": "GET /quote returns a valid quote for a 7-night stay with 4 guests, including fees, taxes, and length-of-stay discount",
+      "function": "get_quote",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse with 7 nights at 20000 cents each, cleaning_fee 10000, tax 12%, 5% weekly discount"
+      },
+      "input_values": {
+        "unit_id": "unit-002",
+        "start": "2025-07-01",
+        "end": "2025-07-08",
+        "guests": "4"
+      },
+      "input_description": "",
+      "expected_output_description": "QuoteResponseEnvelope with 7 nightly_rate line items, fees, taxes, discount, num_nights=7, total arithmetic holds",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.num_nights == 7",
+        "len(nightly_rate line items) == 7",
+        "discounts_total.amount_cents <= 0",
+        "subtotal.amount_cents >= 0",
+        "total = subtotal + fees_total + taxes_total + discounts_total"
+      ]
+    },
+    {
+      "id": "get_quote_error_invalid_date_format",
+      "description": "GET /quote returns 400 INVALID_DATE_FORMAT when start is not YYYY-MM-DD",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "08-01-2025",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_FORMAT",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_DATE_FORMAT'",
+        "error.message is non-empty string"
+      ]
+    },
+    {
+      "id": "get_quote_error_invalid_date_range_start_after_end",
+      "description": "GET /quote returns 400 INVALID_DATE_RANGE when start >= end",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-05",
+        "end": "2025-08-01",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_RANGE",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_quote_error_invalid_date_range_same_day",
+      "description": "GET /quote returns 400 INVALID_DATE_RANGE when start == end",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-01",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_RANGE",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_quote_error_invalid_date_range_exceeds_730",
+      "description": "GET /quote returns 400 INVALID_DATE_RANGE when range exceeds 730 days",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-01-01",
+        "end": "2027-02-01",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_RANGE",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_quote_error_invalid_guests_zero",
+      "description": "GET /quote returns 400 INVALID_GUESTS when guests is 0",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "0"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_GUESTS",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_GUESTS'"
+      ]
+    },
+    {
+      "id": "get_quote_error_invalid_guests_over_100",
+      "description": "GET /quote returns 400 INVALID_GUESTS when guests exceeds 100",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "101"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_GUESTS",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_GUESTS'"
+      ]
+    },
+    {
+      "id": "get_quote_error_missing_query_params",
+      "description": "GET /quote returns 400 MISSING_QUERY_PARAMS when start parameter is missing",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 MISSING_QUERY_PARAMS",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'MISSING_QUERY_PARAMS'"
+      ]
+    },
+    {
+      "id": "get_quote_error_unit_not_found",
+      "description": "GET /quote returns 404 UNIT_NOT_FOUND when unit does not exist",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "raises UnitNotFoundError"
+      },
+      "input_values": {
+        "unit_id": "nonexistent-unit",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "404 UNIT_NOT_FOUND",
+      "assertions": [
+        "response status is 404",
+        "error.code == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "get_quote_error_rates_not_configured",
+      "description": "GET /quote returns 422 RATES_NOT_CONFIGURED when rates are missing for requested range",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "raises RatesNotConfiguredError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 RATES_NOT_CONFIGURED",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'RATES_NOT_CONFIGURED'"
+      ]
+    },
+    {
+      "id": "get_quote_error_engine_error",
+      "description": "GET /quote returns 500 INTERNAL_ERROR when engine raises unexpected exception",
+      "function": "get_quote",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "raises RuntimeError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "get_quote_edge_leap_year",
+      "description": "GET /quote handles Feb 28 to Mar 1 spanning a leap year correctly (1 night)",
+      "function": "get_quote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse for 2 nights"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2028-02-28",
+        "end": "2028-03-01",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "Quote with num_nights=2 (Feb 28 and Feb 29 are nights in 2028 leap year)",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.num_nights == 2",
+        "len(nightly_rate line items) == 2"
+      ]
+    },
+    {
+      "id": "get_quote_edge_year_boundary",
+      "description": "GET /quote handles a stay spanning year boundary (Dec 31 to Jan 2)",
+      "function": "get_quote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse for 2 nights"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-12-31",
+        "end": "2026-01-02",
+        "guests": "2"
+      },
+      "input_description": "",
+      "expected_output_description": "Quote with num_nights=2 spanning Dec 31 and Jan 1",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.num_nights == 2"
+      ]
+    },
+    {
+      "id": "get_quote_edge_max_range_730_days",
+      "description": "GET /quote accepts exactly 730-day range as maximum allowed",
+      "function": "get_quote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse for 730 nights"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-01-01",
+        "end": "2027-01-01",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "Quote with num_nights=730 (boundary of max range)",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.num_nights == 730"
+      ]
+    },
+    {
+      "id": "get_rates_happy_path",
+      "description": "GET /rates returns nightly rates for a 3-night range with mixed rate sources",
+      "function": "get_rates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.get_nightly_rates": "returns 3 NightlyRate entries for Aug 1-3"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-04"
+      },
+      "input_description": "",
+      "expected_output_description": "RatesResponseEnvelope with 3 rate entries sorted by date, each with amount and source",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "len(data.rates) == 3",
+        "rates are sorted by date ascending",
+        "all rates have same currency",
+        "meta.currency matches rate currencies"
+      ]
+    },
+    {
+      "id": "get_rates_error_invalid_date_format",
+      "description": "GET /rates returns 400 INVALID_DATE_FORMAT for malformed end date",
+      "function": "get_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "not-a-date"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_FORMAT",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_DATE_FORMAT'"
+      ]
+    },
+    {
+      "id": "get_rates_error_invalid_date_range",
+      "description": "GET /rates returns 400 INVALID_DATE_RANGE when start >= end",
+      "function": "get_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-05",
+        "end": "2025-08-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_DATE_RANGE",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "get_rates_error_missing_query_params",
+      "description": "GET /rates returns 400 MISSING_QUERY_PARAMS when end is missing",
+      "function": "get_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 MISSING_QUERY_PARAMS",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'MISSING_QUERY_PARAMS'"
+      ]
+    },
+    {
+      "id": "get_rates_error_unit_not_found",
+      "description": "GET /rates returns 404 UNIT_NOT_FOUND for nonexistent unit",
+      "function": "get_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.get_nightly_rates": "raises UnitNotFoundError"
+      },
+      "input_values": {
+        "unit_id": "nonexistent",
+        "start": "2025-08-01",
+        "end": "2025-08-02"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "404 UNIT_NOT_FOUND",
+      "assertions": [
+        "response status is 404",
+        "error.code == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "get_rates_error_rates_not_configured",
+      "description": "GET /rates returns 422 RATES_NOT_CONFIGURED when rates are missing",
+      "function": "get_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.get_nightly_rates": "raises RatesNotConfiguredError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 RATES_NOT_CONFIGURED",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'RATES_NOT_CONFIGURED'"
+      ]
+    },
+    {
+      "id": "get_rates_error_engine_error",
+      "description": "GET /rates returns 500 INTERNAL_ERROR on engine failure",
+      "function": "get_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.get_nightly_rates": "raises RuntimeError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "update_rate_config_happy_base_tier",
+      "description": "PUT /rates updates base tier with a new base_nightly_rate and returns merged config",
+      "function": "update_rate_configuration",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "returns merged RateConfiguration with base_nightly_rate=15000 USD"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"base\", \"base_nightly_rate\": {\"amount_cents\": 15000, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "RateConfigResponseEnvelope with merged effective config reflecting the base tier update",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.unit_id == 'unit-001'",
+        "data.base_nightly_rate.amount_cents == 15000",
+        "all Money objects share same currency",
+        "meta.currency matches data currency"
+      ]
+    },
+    {
+      "id": "update_rate_config_happy_seasonal_tier",
+      "description": "PUT /rates updates seasonal tier with seasonal rules",
+      "function": "update_rate_configuration",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "returns merged config with seasonal rule"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"seasonal\", \"seasonal_rules\": [{\"name\": \"Peak Summer\", \"start_month_day\": \"06-01\", \"end_month_day\": \"08-31\", \"nightly_rate\": {\"amount_cents\": 25000, \"currency\": \"USD\"}}]}"
+      },
+      "input_description": "",
+      "expected_output_description": "RateConfigResponseEnvelope with seasonal rules merged",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.seasonal_rules has 1 entry",
+        "data.seasonal_rules[0].name == 'Peak Summer'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_validation_error",
+      "description": "PUT /rates returns 400 VALIDATION_ERROR when override_tier is missing",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"base_nightly_rate\": {\"amount_cents\": 15000, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_invalid_json",
+      "description": "PUT /rates returns 400 INVALID_JSON for malformed JSON body",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "not valid json {{{"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_JSON",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_JSON'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_unit_not_found",
+      "description": "PUT /rates returns 404 UNIT_NOT_FOUND for non-base tier on nonexistent unit",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "raises UnitNotFoundError"
+      },
+      "input_values": {
+        "unit_id": "nonexistent",
+        "body": "{\"override_tier\": \"seasonal\", \"seasonal_rules\": []}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "404 UNIT_NOT_FOUND",
+      "assertions": [
+        "response status is 404",
+        "error.code == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_currency_mismatch",
+      "description": "PUT /rates returns 409 CURRENCY_MISMATCH when currency differs from existing config",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "raises CurrencyMismatchError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"base\", \"currency\": \"EUR\", \"base_nightly_rate\": {\"amount_cents\": 15000, \"currency\": \"EUR\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "409 CURRENCY_MISMATCH",
+      "assertions": [
+        "response status is 409",
+        "error.code == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_invalid_night_range",
+      "description": "PUT /rates returns 422 INVALID_NIGHT_RANGE when min_nights > max_nights",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "raises InvalidNightRangeError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"base\", \"min_nights\": 10, \"max_nights\": 3}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 INVALID_NIGHT_RANGE",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'INVALID_NIGHT_RANGE'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_overlapping_seasons",
+      "description": "PUT /rates returns 422 OVERLAPPING_SEASONS when seasonal rules have overlapping date ranges",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "raises OverlappingSeasonsError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"seasonal\", \"seasonal_rules\": [{\"name\": \"Summer A\", \"start_month_day\": \"06-01\", \"end_month_day\": \"08-31\", \"nightly_rate\": {\"amount_cents\": 20000, \"currency\": \"USD\"}}, {\"name\": \"Summer B\", \"start_month_day\": \"07-15\", \"end_month_day\": \"09-30\", \"nightly_rate\": {\"amount_cents\": 25000, \"currency\": \"USD\"}}]}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 OVERLAPPING_SEASONS",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'OVERLAPPING_SEASONS'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_negative_rate",
+      "description": "PUT /rates returns 422 NEGATIVE_RATE when nightly rate amount_cents is negative",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "raises NegativeRateError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"base\", \"base_nightly_rate\": {\"amount_cents\": -100, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 NEGATIVE_RATE",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'NEGATIVE_RATE'"
+      ]
+    },
+    {
+      "id": "update_rate_config_error_engine_error",
+      "description": "PUT /rates returns 500 INTERNAL_ERROR on engine failure",
+      "function": "update_rate_configuration",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "raises RuntimeError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"base\", \"base_nightly_rate\": {\"amount_cents\": 15000, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "upsert_fee_happy_flat_fee",
+      "description": "POST /fees upserts a flat cleaning fee and returns the full fee list",
+      "function": "upsert_fee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "returns FeesResponse with cleaning_fee in list"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": {\"amount_cents\": 7500, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "FeesResponseEnvelope with data.fees containing at least the cleaning_fee entry",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.unit_id == 'unit-001'",
+        "cleaning_fee exists in data.fees",
+        "cleaning_fee.amount.amount_cents == 7500"
+      ]
+    },
+    {
+      "id": "upsert_fee_happy_percentage_fee",
+      "description": "POST /fees upserts a percentage-based service fee",
+      "function": "upsert_fee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "returns FeesResponse with service_fee"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"service_fee\", \"label\": \"Service Fee\", \"amount\": {\"amount_cents\": 0, \"currency\": \"USD\"}, \"is_percentage\": true, \"percentage_basis_points\": 1000}"
+      },
+      "input_description": "",
+      "expected_output_description": "FeesResponseEnvelope with service_fee configured as percentage",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "service_fee in data.fees",
+        "service_fee.is_percentage == true",
+        "service_fee.percentage_basis_points == 1000"
+      ]
+    },
+    {
+      "id": "upsert_fee_happy_per_night_per_guest",
+      "description": "POST /fees upserts an extra guest fee that applies per-night for guests above threshold",
+      "function": "upsert_fee",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "returns FeesResponse with extra_guest_fee"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"extra_guest_fee\", \"label\": \"Extra Guest Fee\", \"amount\": {\"amount_cents\": 2500, \"currency\": \"USD\"}, \"applies_per_night\": true, \"applies_per_guest_above\": 2}"
+      },
+      "input_description": "",
+      "expected_output_description": "FeesResponseEnvelope with extra_guest_fee configured with per-night and per-guest-above settings",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "extra_guest_fee in data.fees",
+        "extra_guest_fee.applies_per_night == true",
+        "extra_guest_fee.applies_per_guest_above == 2"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_validation_error",
+      "description": "POST /fees returns 400 VALIDATION_ERROR when fee_type has invalid format",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"Invalid-Fee-Type!\", \"label\": \"Bad Fee\", \"amount\": {\"amount_cents\": 100, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'VALIDATION_ERROR'"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_invalid_json",
+      "description": "POST /fees returns 400 INVALID_JSON for malformed body",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{broken json"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 INVALID_JSON",
+      "assertions": [
+        "response status is 400",
+        "error.code == 'INVALID_JSON'"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_unit_not_found",
+      "description": "POST /fees returns 404 UNIT_NOT_FOUND for nonexistent unit",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "raises UnitNotFoundError"
+      },
+      "input_values": {
+        "unit_id": "nonexistent",
+        "body": "{\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": {\"amount_cents\": 7500, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "404 UNIT_NOT_FOUND",
+      "assertions": [
+        "response status is 404",
+        "error.code == 'UNIT_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_currency_mismatch",
+      "description": "POST /fees returns 409 CURRENCY_MISMATCH when fee currency differs from unit config",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "raises CurrencyMismatchError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": {\"amount_cents\": 7500, \"currency\": \"GBP\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "409 CURRENCY_MISMATCH",
+      "assertions": [
+        "response status is 409",
+        "error.code == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_invalid_percentage_config",
+      "description": "POST /fees returns 422 INVALID_PERCENTAGE_CONFIG when is_percentage is true but basis_points is 0",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "raises InvalidPercentageConfigError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"service_fee\", \"label\": \"Service Fee\", \"amount\": {\"amount_cents\": 0, \"currency\": \"USD\"}, \"is_percentage\": true, \"percentage_basis_points\": 0}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 INVALID_PERCENTAGE_CONFIG",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'INVALID_PERCENTAGE_CONFIG'"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_max_fees_exceeded",
+      "description": "POST /fees returns 422 MAX_FEES_EXCEEDED when adding fee would exceed 50 limit",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "raises MaxFeesExceededError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"custom_fee_51\", \"label\": \"Fee 51\", \"amount\": {\"amount_cents\": 100, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "422 MAX_FEES_EXCEEDED",
+      "assertions": [
+        "response status is 422",
+        "error.code == 'MAX_FEES_EXCEEDED'"
+      ]
+    },
+    {
+      "id": "upsert_fee_error_engine_error",
+      "description": "POST /fees returns 500 INTERNAL_ERROR on engine failure",
+      "function": "upsert_fee",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "raises RuntimeError"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": {\"amount_cents\": 7500, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "500 INTERNAL_ERROR",
+      "assertions": [
+        "response status is 500",
+        "error.code == 'INTERNAL_ERROR'"
+      ]
+    },
+    {
+      "id": "invariant_all_monetary_values_integer_cents",
+      "description": "All monetary amount_cents values across a quote response are integers, never floats",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse with various line items"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-04",
+        "guests": "2"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "all amount_cents values in line_items are int",
+        "subtotal.amount_cents is int",
+        "fees_total.amount_cents is int",
+        "taxes_total.amount_cents is int",
+        "discounts_total.amount_cents is int",
+        "total.amount_cents is int"
+      ]
+    },
+    {
+      "id": "invariant_currency_consistency",
+      "description": "All Money objects in a single response share the same currency code",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse with all USD values"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-04",
+        "guests": "2"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "all Money.currency values equal meta.currency",
+        "no mixed currencies in line_items"
+      ]
+    },
+    {
+      "id": "invariant_quote_total_arithmetic",
+      "description": "Quote total always equals subtotal + fees_total + taxes_total + discounts_total",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse with subtotal, fees, taxes, and discounts"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-08",
+        "guests": "3"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "total.amount_cents == subtotal.amount_cents + fees_total.amount_cents + taxes_total.amount_cents + discounts_total.amount_cents"
+      ]
+    },
+    {
+      "id": "invariant_discounts_non_positive",
+      "description": "discounts_total.amount_cents is always <= 0",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse with weekly discount applied"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-08",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "discounts_total.amount_cents <= 0"
+      ]
+    },
+    {
+      "id": "invariant_success_response_envelope_shape",
+      "description": "All success responses have data field and meta field with currency and generated_at",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns valid QuoteResponse"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response has 'data' key",
+        "response has 'meta' key",
+        "meta has 'currency' key",
+        "meta has 'generated_at' key",
+        "meta.generated_at matches ISO 8601 UTC pattern"
+      ]
+    },
+    {
+      "id": "invariant_error_response_envelope_shape",
+      "description": "All error responses have error field with code and message",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "response has 'error' key",
+        "error has 'code' key",
+        "error has 'message' key",
+        "error.message is non-empty string"
+      ]
+    },
+    {
+      "id": "invariant_date_range_semantics",
+      "description": "start is inclusive (first night) and end is exclusive (checkout) — num_nights equals date difference",
+      "function": "get_quote",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.compute_quote": "returns QuoteResponse with 3 nights"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-04",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "data.num_nights == 3",
+        "data.start == '2025-08-01'",
+        "data.end == '2025-08-04'",
+        "len(nightly_rate line items) == 3"
+      ]
+    },
+    {
+      "id": "upsert_fee_edge_upsert_update_existing",
+      "description": "POST /fees with an existing fee_type updates the fee rather than creating a duplicate",
+      "function": "upsert_fee",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "returns FeesResponse with updated cleaning_fee (no duplicates)"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"cleaning_fee\", \"label\": \"Updated Cleaning Fee\", \"amount\": {\"amount_cents\": 10000, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "FeesResponseEnvelope with exactly one cleaning_fee entry at the new amount",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "exactly one cleaning_fee in data.fees",
+        "cleaning_fee.label == 'Updated Cleaning Fee'",
+        "cleaning_fee.amount.amount_cents == 10000"
+      ]
+    },
+    {
+      "id": "upsert_fee_edge_disabled_fee",
+      "description": "POST /fees upserts a disabled fee — fee should exist in list but with enabled=false",
+      "function": "upsert_fee",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "returns FeesResponse with disabled pet_fee"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"pet_fee\", \"label\": \"Pet Fee\", \"amount\": {\"amount_cents\": 5000, \"currency\": \"USD\"}, \"enabled\": false}"
+      },
+      "input_description": "",
+      "expected_output_description": "FeesResponseEnvelope with pet_fee present but enabled=false",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "pet_fee in data.fees",
+        "pet_fee.enabled == false"
+      ]
+    },
+    {
+      "id": "get_rates_edge_single_night",
+      "description": "GET /rates for exactly one night returns exactly one rate entry",
+      "function": "get_rates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.get_nightly_rates": "returns 1 NightlyRate for Aug 1"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "start": "2025-08-01",
+        "end": "2025-08-02"
+      },
+      "input_description": "",
+      "expected_output_description": "RatesResponseEnvelope with exactly 1 rate entry for Aug 1",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "len(data.rates) == 1",
+        "data.rates[0].date == '2025-08-01'"
+      ]
+    },
+    {
+      "id": "get_quote_edge_empty_unit_id",
+      "description": "GET /quote returns error when unit_id is empty string",
+      "function": "get_quote",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {
+        "unit_id": "",
+        "start": "2025-08-01",
+        "end": "2025-08-02",
+        "guests": "1"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "400 VALIDATION_ERROR or similar",
+      "assertions": [
+        "response status is 400",
+        "error envelope is returned"
+      ]
+    },
+    {
+      "id": "update_rate_config_edge_min_nights_equals_max_nights",
+      "description": "PUT /rates accepts min_nights == max_nights (e.g. fixed-length stay)",
+      "function": "update_rate_configuration",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.update_rate_configuration": "returns merged config with min_nights=7, max_nights=7"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"override_tier\": \"base\", \"min_nights\": 7, \"max_nights\": 7}"
+      },
+      "input_description": "",
+      "expected_output_description": "RateConfigResponseEnvelope with min_nights=7 and max_nights=7",
+      "expected_error": "",
+      "assertions": [
+        "response status is 200",
+        "data.min_nights == 7",
+        "data.max_nights == 7"
+      ]
+    },
+    {
+      "id": "invariant_upsert_fee_idempotent",
+      "description": "Calling upsert_fee twice with same inputs produces the same result (idempotent)",
+      "function": "upsert_fee",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {
+        "pricing_engine.upsert_fee": "returns same FeesResponse on both calls"
+      },
+      "input_values": {
+        "unit_id": "unit-001",
+        "body": "{\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": {\"amount_cents\": 7500, \"currency\": \"USD\"}}"
+      },
+      "input_description": "",
+      "expected_output_description": "",
+      "expected_error": "",
+      "assertions": [
+        "two consecutive calls return equivalent data.fees",
+        "no duplicate fee_type entries"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract tests for pricing_api (v1)\nPricing API Endpoints — Oak HTTP router for rental unit pricing.\n\nTests verify the API's behavior at boundaries (inputs/outputs) with\nthe pricing engine dependency fully mocked.\n\nRun: pytest contract_test.py -v\n\"\"\"\nimport json\nimport re\nfrom datetime import date, timedelta\nfrom unittest.mock import MagicMock, patch, PropertyMock\nfrom copy import deepcopy\n\nimport pytest\n\n# ---------------------------------------------------------------------------\n# Import the component under test\n# ---------------------------------------------------------------------------\nfrom src.pricing_api import (\n    get_quote,\n    get_rates,\n    update_rate_configuration,\n    upsert_fee,\n    PricingEngine,\n    UnitNotFoundError,\n    RatesNotConfiguredError,\n    CurrencyMismatchError,\n    InvalidNightRangeError,\n    OverlappingSeasonsError,\n    NegativeRateError,\n    InvalidPercentageConfigError,\n    MaxFeesExceededError,\n)\n\n\n# ---------------------------------------------------------------------------\n# Helpers & Fixtures\n# ---------------------------------------------------------------------------\n\ndef _money(amount_cents: int, currency: str = \"USD\") -> dict:\n    return {\"amount_cents\": amount_cents, \"currency\": currency}\n\n\ndef _nightly_line_item(dt: str, amount_cents: int, source: str = \"base\") -> dict:\n    return {\n        \"type\": \"nightly_rate\",\n        \"label\": f\"Nightly rate ({dt})\",\n        \"amount\": _money(amount_cents),\n        \"metadata\": {\"date\": dt, \"rate_source\": source},\n    }\n\n\ndef _fee_line_item(fee_type: str, label: str, amount_cents: int, is_pct: bool = False, pct_bp: int = 0) -> dict:\n    return {\n        \"type\": fee_type if fee_type in (\"cleaning_fee\", \"pet_fee\", \"extra_guest_fee\", \"custom_fee\") else \"custom_fee\",\n        \"label\": label,\n        \"amount\": _money(amount_cents),\n        \"metadata\": {\n            \"fee_type\": fee_type,\n            \"fee_label\": label,\n            \"is_percentage\": is_pct,\n            \"percentage_basis_points\": pct_bp,\n        },\n    }\n\n\ndef _tax_line_item(name: str, amount_cents: int, bp: int = 1200) -> dict:\n    return {\n        \"type\": \"tax\",\n        \"label\": name,\n        \"amount\": _money(amount_cents),\n        \"metadata\": {\"tax_name\": name, \"rate_basis_points\": bp},\n    }\n\n\ndef _discount_line_item(min_nights: int, bp: int, amount_cents: int) -> dict:\n    return {\n        \"type\": \"length_of_stay_discount\",\n        \"label\": f\"{bp/100:.1f}% length-of-stay discount\",\n        \"amount\": _money(amount_cents),\n        \"metadata\": {\"min_nights\": min_nights, \"discount_basis_points\": bp},\n    }\n\n\ndef _make_quote_response(\n    unit_id: str,\n    start: str,\n    end: str,\n    guests: int,\n    nightly_cents: int = 15000,\n    cleaning_fee_cents: int = 0,\n    tax_bp: int = 0,\n    discount_bp: int = 0,\n    currency: str = \"USD\",\n):\n    \"\"\"Build a realistic QuoteResponse dict for mocking.\"\"\"\n    d_start = date.fromisoformat(start)\n    d_end = date.fromisoformat(end)\n    num_nights = (d_end - d_start).days\n\n    line_items = []\n    subtotal = 0\n    for i in range(num_nights):\n        dt = (d_start + timedelta(days=i)).isoformat()\n        line_items.append(_nightly_line_item(dt, nightly_cents))\n        subtotal += nightly_cents\n\n    fees_total = 0\n    if cleaning_fee_cents:\n        line_items.append(_fee_line_item(\"cleaning_fee\", \"Cleaning Fee\", cleaning_fee_cents))\n        fees_total += cleaning_fee_cents\n\n    taxes_total = 0\n    if tax_bp:\n        tax_amount = int(subtotal * tax_bp / 10000)\n        line_items.append(_tax_line_item(\"Occupancy Tax\", tax_amount, tax_bp))\n        taxes_total += tax_amount\n\n    discounts_total = 0\n    if discount_bp:\n        disc_amount = -int(subtotal * discount_bp / 10000)\n        line_items.append(_discount_line_item(num_nights, discount_bp, disc_amount))\n        discounts_total += disc_amount\n\n    total = subtotal + fees_total + taxes_total + discounts_total\n\n    return {\n        \"unit_id\": unit_id,\n        \"start\": start,\n        \"end\": end,\n        \"guests\": guests,\n        \"num_nights\": num_nights,\n        \"line_items\": line_items,\n        \"subtotal\": _money(subtotal, currency),\n        \"fees_total\": _money(fees_total, currency),\n        \"taxes_total\": _money(taxes_total, currency),\n        \"discounts_total\": _money(discounts_total, currency),\n        \"total\": _money(total, currency),\n    }\n\n\ndef _make_rates_response(unit_id, start, end, nightly_cents=15000, currency=\"USD\"):\n    d_start = date.fromisoformat(start)\n    d_end = date.fromisoformat(end)\n    rates = []\n    for i in range((d_end - d_start).days):\n        dt = (d_start + timedelta(days=i)).isoformat()\n        rates.append({\"date\": dt, \"amount\": _money(nightly_cents, currency), \"source\": \"base\"})\n    return {\"unit_id\": unit_id, \"start\": start, \"end\": end, \"rates\": rates}\n\n\ndef _make_rate_configuration(\n    unit_id=\"unit-001\",\n    base_cents=15000,\n    currency=\"USD\",\n    seasonal_rules=None,\n    date_specific_rates=None,\n    length_of_stay_discounts=None,\n    min_nights=1,\n    max_nights=730,\n):\n    return {\n        \"unit_id\": unit_id,\n        \"base_nightly_rate\": _money(base_cents, currency),\n        \"seasonal_rules\": seasonal_rules or [],\n        \"date_specific_rates\": date_specific_rates or [],\n        \"length_of_stay_discounts\": length_of_stay_discounts or [],\n        \"currency\": currency,\n        \"min_nights\": min_nights,\n        \"max_nights\": max_nights,\n    }\n\n\ndef _make_fees_response(unit_id, fees):\n    return {\"unit_id\": unit_id, \"fees\": fees}\n\n\ndef _fee_def(fee_type, label, amount_cents, currency=\"USD\", is_pct=False, pct_bp=0,\n             per_night=False, per_guest_above=0, enabled=True):\n    return {\n        \"fee_type\": fee_type,\n        \"label\": label,\n        \"amount\": _money(amount_cents, currency),\n        \"is_percentage\": is_pct,\n        \"percentage_basis_points\": pct_bp,\n        \"applies_per_night\": per_night,\n        \"applies_per_guest_above\": per_guest_above,\n        \"enabled\": enabled,\n    }\n\n\nMETA_PATTERN = re.compile(r\"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$\")\n\n\ndef _response_meta(currency=\"USD\"):\n    return {\"currency\": currency, \"generated_at\": \"2025-08-01T00:00:00.000Z\"}\n\n\n@pytest.fixture\ndef mock_engine():\n    \"\"\"Create a fresh mock PricingEngine for each test.\"\"\"\n    engine = MagicMock(spec=PricingEngine)\n    return engine\n\n\n# ===================================================================\n# GET /pricing/:unit_id/quote\n# ===================================================================\n\n\nclass TestGetQuoteHappyPath:\n    \"\"\"Happy-path tests for get_quote.\"\"\"\n\n    def test_single_night_stay(self, mock_engine):\n        \"\"\"Single-night stay with 1 guest returns correct envelope.\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert result[\"data\"][\"num_nights\"] == 1, \"Expected 1 night for single-night stay\"\n        nightly_items = [li for li in result[\"data\"][\"line_items\"] if li[\"type\"] == \"nightly_rate\"]\n        assert len(nightly_items) == 1, \"Expected exactly 1 nightly_rate line item\"\n        assert \"meta\" in result, \"Response must contain meta field\"\n        assert \"data\" in result, \"Response must contain data field\"\n        mock_engine.compute_quote.assert_called_once()\n\n    def test_multi_night_with_guests_fees_taxes_discount(self, mock_engine):\n        \"\"\"7-night stay with 4 guests including fees, taxes, and discount.\"\"\"\n        quote_data = _make_quote_response(\n            \"unit-002\", \"2025-07-01\", \"2025-07-08\", 4,\n            nightly_cents=20000,\n            cleaning_fee_cents=10000,\n            tax_bp=1200,\n            discount_bp=500,\n        )\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-002\", start=\"2025-07-01\", end=\"2025-07-08\", guests=4)\n\n        data = result[\"data\"]\n        assert data[\"num_nights\"] == 7, \"Expected 7 nights\"\n        nightly_items = [li for li in data[\"line_items\"] if li[\"type\"] == \"nightly_rate\"]\n        assert len(nightly_items) == 7, \"Expected 7 nightly_rate line items\"\n        assert data[\"discounts_total\"][\"amount_cents\"] <= 0, \"Discounts total must be non-positive\"\n        assert data[\"subtotal\"][\"amount_cents\"] >= 0, \"Subtotal must be non-negative\"\n\n        # Arithmetic invariant\n        expected_total = (\n            data[\"subtotal\"][\"amount_cents\"]\n            + data[\"fees_total\"][\"amount_cents\"]\n            + data[\"taxes_total\"][\"amount_cents\"]\n            + data[\"discounts_total\"][\"amount_cents\"]\n        )\n        assert data[\"total\"][\"amount_cents\"] == expected_total, (\n            f\"Total {data['total']['amount_cents']} != \"\n            f\"subtotal({data['subtotal']['amount_cents']}) + fees({data['fees_total']['amount_cents']}) \"\n            f\"+ taxes({data['taxes_total']['amount_cents']}) + discounts({data['discounts_total']['amount_cents']})\"\n        )\n\n\nclass TestGetQuoteErrors:\n    \"\"\"Error-case tests for get_quote covering all 7 error codes.\"\"\"\n\n    def test_invalid_date_format_start(self, mock_engine):\n        \"\"\"start param in wrong format -> 400 INVALID_DATE_FORMAT.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"08-01-2025\", end=\"2025-08-02\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_FORMAT\"\n        assert result.get(\"_http_status\", 400) == 400 or \"error\" in result\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_invalid_date_format_end(self, mock_engine):\n        \"\"\"end param in wrong format -> 400 INVALID_DATE_FORMAT.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"Aug 2 2025\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_FORMAT\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_invalid_date_range_start_after_end(self, mock_engine):\n        \"\"\"start > end -> 400 INVALID_DATE_RANGE.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-05\", end=\"2025-08-01\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_RANGE\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_invalid_date_range_same_day(self, mock_engine):\n        \"\"\"start == end -> 400 INVALID_DATE_RANGE.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-01\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_RANGE\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_invalid_date_range_exceeds_730_days(self, mock_engine):\n        \"\"\"Range > 730 days -> 400 INVALID_DATE_RANGE.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-01-01\", end=\"2027-02-01\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_RANGE\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_invalid_guests_zero(self, mock_engine):\n        \"\"\"guests=0 -> 400 INVALID_GUESTS.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=0)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_GUESTS\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_invalid_guests_over_100(self, mock_engine):\n        \"\"\"guests=101 -> 400 INVALID_GUESTS.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=101)\n\n        assert result[\"error\"][\"code\"] == \"INVALID_GUESTS\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_missing_query_params_no_start(self, mock_engine):\n        \"\"\"Missing start param -> 400 MISSING_QUERY_PARAMS.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=None, end=\"2025-08-02\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"MISSING_QUERY_PARAMS\"\n        mock_engine.compute_quote.assert_not_called()\n\n    def test_unit_not_found(self, mock_engine):\n        \"\"\"Engine raises UnitNotFoundError -> 404 UNIT_NOT_FOUND.\"\"\"\n        mock_engine.compute_quote.side_effect = UnitNotFoundError(\"nonexistent-unit\")\n\n        result = get_quote(mock_engine, unit_id=\"nonexistent-unit\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"UNIT_NOT_FOUND\"\n\n    def test_rates_not_configured(self, mock_engine):\n        \"\"\"Engine raises RatesNotConfiguredError -> 422 RATES_NOT_CONFIGURED.\"\"\"\n        mock_engine.compute_quote.side_effect = RatesNotConfiguredError(\"unit-001\")\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"RATES_NOT_CONFIGURED\"\n\n    def test_engine_error(self, mock_engine):\n        \"\"\"Engine raises RuntimeError -> 500 INTERNAL_ERROR.\"\"\"\n        mock_engine.compute_quote.side_effect = RuntimeError(\"unexpected failure\")\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert result[\"error\"][\"code\"] == \"INTERNAL_ERROR\"\n\n\nclass TestGetQuoteEdgeCases:\n    \"\"\"Edge-case tests for get_quote.\"\"\"\n\n    def test_leap_year_feb28_to_mar1(self, mock_engine):\n        \"\"\"Stay from Feb 28 to Mar 1 in 2028 (leap year) yields 2 nights.\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2028-02-28\", \"2028-03-01\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2028-02-28\", end=\"2028-03-01\", guests=1)\n\n        assert result[\"data\"][\"num_nights\"] == 2, \"2028 is leap year: Feb 28 & Feb 29 = 2 nights\"\n\n    def test_year_boundary_dec31_to_jan2(self, mock_engine):\n        \"\"\"Stay spanning year boundary Dec 31 to Jan 2.\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2025-12-31\", \"2026-01-02\", 2)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-12-31\", end=\"2026-01-02\", guests=2)\n\n        assert result[\"data\"][\"num_nights\"] == 2\n\n    def test_max_range_730_days_accepted(self, mock_engine):\n        \"\"\"Exactly 730-day range should be accepted.\"\"\"\n        start = \"2025-01-01\"\n        end_date = date(2025, 1, 1) + timedelta(days=730)\n        end = end_date.isoformat()\n        quote_data = _make_quote_response(\"unit-001\", start, end, 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=start, end=end, guests=1)\n\n        assert result[\"data\"][\"num_nights\"] == 730\n\n    def test_empty_unit_id_returns_error(self, mock_engine):\n        \"\"\"Empty unit_id should be rejected with a 400 error.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert \"error\" in result, \"Empty unit_id should produce an error response\"\n\n\n# ===================================================================\n# GET /pricing/:unit_id/rates\n# ===================================================================\n\n\nclass TestGetRatesHappyPath:\n    \"\"\"Happy-path tests for get_rates.\"\"\"\n\n    def test_three_night_range(self, mock_engine):\n        \"\"\"3-night range returns 3 rate entries sorted by date.\"\"\"\n        rates_data = _make_rates_response(\"unit-001\", \"2025-08-01\", \"2025-08-04\")\n        mock_engine.get_nightly_rates.return_value = rates_data\n\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-04\")\n\n        data = result[\"data\"]\n        assert len(data[\"rates\"]) == 3, \"Expected 3 rate entries\"\n        dates = [r[\"date\"] for r in data[\"rates\"]]\n        assert dates == sorted(dates), \"Rates must be sorted by date ascending\"\n        currencies = {r[\"amount\"][\"currency\"] for r in data[\"rates\"]}\n        assert len(currencies) == 1, \"All rates must share the same currency\"\n        assert result[\"meta\"][\"currency\"] in currencies\n\n    def test_single_night(self, mock_engine):\n        \"\"\"Single night range returns exactly 1 rate.\"\"\"\n        rates_data = _make_rates_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\")\n        mock_engine.get_nightly_rates.return_value = rates_data\n\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\")\n\n        assert len(result[\"data\"][\"rates\"]) == 1\n        assert result[\"data\"][\"rates\"][0][\"date\"] == \"2025-08-01\"\n\n\nclass TestGetRatesErrors:\n    \"\"\"Error-case tests for get_rates covering all 6 error codes.\"\"\"\n\n    def test_invalid_date_format(self, mock_engine):\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"not-a-date\")\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_FORMAT\"\n        mock_engine.get_nightly_rates.assert_not_called()\n\n    def test_invalid_date_range(self, mock_engine):\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-05\", end=\"2025-08-01\")\n        assert result[\"error\"][\"code\"] == \"INVALID_DATE_RANGE\"\n        mock_engine.get_nightly_rates.assert_not_called()\n\n    def test_missing_query_params(self, mock_engine):\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=None)\n        assert result[\"error\"][\"code\"] == \"MISSING_QUERY_PARAMS\"\n        mock_engine.get_nightly_rates.assert_not_called()\n\n    def test_unit_not_found(self, mock_engine):\n        mock_engine.get_nightly_rates.side_effect = UnitNotFoundError(\"nonexistent\")\n        result = get_rates(mock_engine, unit_id=\"nonexistent\", start=\"2025-08-01\", end=\"2025-08-02\")\n        assert result[\"error\"][\"code\"] == \"UNIT_NOT_FOUND\"\n\n    def test_rates_not_configured(self, mock_engine):\n        mock_engine.get_nightly_rates.side_effect = RatesNotConfiguredError(\"unit-001\")\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\")\n        assert result[\"error\"][\"code\"] == \"RATES_NOT_CONFIGURED\"\n\n    def test_engine_error(self, mock_engine):\n        mock_engine.get_nightly_rates.side_effect = RuntimeError(\"boom\")\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\")\n        assert result[\"error\"][\"code\"] == \"INTERNAL_ERROR\"\n\n\n# ===================================================================\n# PUT /pricing/:unit_id/rates\n# ===================================================================\n\n\nclass TestUpdateRateConfigHappyPath:\n    \"\"\"Happy-path tests for update_rate_configuration.\"\"\"\n\n    def test_update_base_tier(self, mock_engine):\n        \"\"\"Update base tier returns merged config.\"\"\"\n        merged = _make_rate_configuration(base_cents=15000)\n        mock_engine.update_rate_configuration.return_value = merged\n\n        body = {\"override_tier\": \"base\", \"base_nightly_rate\": _money(15000)}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n\n        assert result[\"data\"][\"unit_id\"] == \"unit-001\"\n        assert result[\"data\"][\"base_nightly_rate\"][\"amount_cents\"] == 15000\n        assert \"meta\" in result\n\n    def test_update_seasonal_tier(self, mock_engine):\n        \"\"\"Update seasonal tier with a seasonal rule.\"\"\"\n        seasonal = [{\n            \"name\": \"Peak Summer\",\n            \"start_month_day\": \"06-01\",\n            \"end_month_day\": \"08-31\",\n            \"nightly_rate\": _money(25000),\n        }]\n        merged = _make_rate_configuration(seasonal_rules=seasonal)\n        mock_engine.update_rate_configuration.return_value = merged\n\n        body = {\"override_tier\": \"seasonal\", \"seasonal_rules\": seasonal}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n\n        assert len(result[\"data\"][\"seasonal_rules\"]) == 1\n        assert result[\"data\"][\"seasonal_rules\"][0][\"name\"] == \"Peak Summer\"\n\n    def test_min_nights_equals_max_nights(self, mock_engine):\n        \"\"\"min_nights == max_nights is valid (fixed-length stay).\"\"\"\n        merged = _make_rate_configuration(min_nights=7, max_nights=7)\n        mock_engine.update_rate_configuration.return_value = merged\n\n        body = {\"override_tier\": \"base\", \"min_nights\": 7, \"max_nights\": 7}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n\n        assert result[\"data\"][\"min_nights\"] == 7\n        assert result[\"data\"][\"max_nights\"] == 7\n\n\nclass TestUpdateRateConfigErrors:\n    \"\"\"Error-case tests for update_rate_configuration covering all error codes.\"\"\"\n\n    def test_validation_error_missing_override_tier(self, mock_engine):\n        body = {\"base_nightly_rate\": _money(15000)}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"VALIDATION_ERROR\"\n        mock_engine.update_rate_configuration.assert_not_called()\n\n    def test_invalid_json(self, mock_engine):\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=\"not valid json {{{\")\n        assert result[\"error\"][\"code\"] == \"INVALID_JSON\"\n        mock_engine.update_rate_configuration.assert_not_called()\n\n    def test_unit_not_found(self, mock_engine):\n        mock_engine.update_rate_configuration.side_effect = UnitNotFoundError(\"nonexistent\")\n        body = {\"override_tier\": \"seasonal\", \"seasonal_rules\": []}\n        result = update_rate_configuration(mock_engine, unit_id=\"nonexistent\", body=body)\n        assert result[\"error\"][\"code\"] == \"UNIT_NOT_FOUND\"\n\n    def test_currency_mismatch(self, mock_engine):\n        mock_engine.update_rate_configuration.side_effect = CurrencyMismatchError(\"EUR vs USD\")\n        body = {\"override_tier\": \"base\", \"currency\": \"EUR\", \"base_nightly_rate\": _money(15000, \"EUR\")}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"CURRENCY_MISMATCH\"\n\n    def test_invalid_night_range(self, mock_engine):\n        mock_engine.update_rate_configuration.side_effect = InvalidNightRangeError(\"min > max\")\n        body = {\"override_tier\": \"base\", \"min_nights\": 10, \"max_nights\": 3}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"INVALID_NIGHT_RANGE\"\n\n    def test_overlapping_seasons(self, mock_engine):\n        mock_engine.update_rate_configuration.side_effect = OverlappingSeasonsError(\"overlap\")\n        body = {\n            \"override_tier\": \"seasonal\",\n            \"seasonal_rules\": [\n                {\"name\": \"A\", \"start_month_day\": \"06-01\", \"end_month_day\": \"08-31\", \"nightly_rate\": _money(20000)},\n                {\"name\": \"B\", \"start_month_day\": \"07-15\", \"end_month_day\": \"09-30\", \"nightly_rate\": _money(25000)},\n            ],\n        }\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"OVERLAPPING_SEASONS\"\n\n    def test_negative_rate(self, mock_engine):\n        mock_engine.update_rate_configuration.side_effect = NegativeRateError(\"negative\")\n        body = {\"override_tier\": \"base\", \"base_nightly_rate\": _money(-100)}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"NEGATIVE_RATE\"\n\n    def test_engine_error(self, mock_engine):\n        mock_engine.update_rate_configuration.side_effect = RuntimeError(\"boom\")\n        body = {\"override_tier\": \"base\", \"base_nightly_rate\": _money(15000)}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"INTERNAL_ERROR\"\n\n\n# ===================================================================\n# POST /pricing/:unit_id/fees\n# ===================================================================\n\n\nclass TestUpsertFeeHappyPath:\n    \"\"\"Happy-path tests for upsert_fee.\"\"\"\n\n    def test_flat_cleaning_fee(self, mock_engine):\n        \"\"\"Upsert a flat cleaning fee.\"\"\"\n        fees = [_fee_def(\"cleaning_fee\", \"Cleaning Fee\", 7500)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": _money(7500)}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        data = result[\"data\"]\n        assert data[\"unit_id\"] == \"unit-001\"\n        cleaning = [f for f in data[\"fees\"] if f[\"fee_type\"] == \"cleaning_fee\"]\n        assert len(cleaning) == 1, \"Should contain exactly one cleaning_fee\"\n        assert cleaning[0][\"amount\"][\"amount_cents\"] == 7500\n\n    def test_percentage_service_fee(self, mock_engine):\n        \"\"\"Upsert a percentage-based service fee.\"\"\"\n        fees = [_fee_def(\"service_fee\", \"Service Fee\", 0, is_pct=True, pct_bp=1000)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\n            \"fee_type\": \"service_fee\", \"label\": \"Service Fee\",\n            \"amount\": _money(0), \"is_percentage\": True, \"percentage_basis_points\": 1000,\n        }\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        svc = [f for f in result[\"data\"][\"fees\"] if f[\"fee_type\"] == \"service_fee\"]\n        assert svc[0][\"is_percentage\"] is True\n        assert svc[0][\"percentage_basis_points\"] == 1000\n\n    def test_per_night_per_guest_fee(self, mock_engine):\n        \"\"\"Upsert an extra guest fee that applies per-night above guest threshold.\"\"\"\n        fees = [_fee_def(\"extra_guest_fee\", \"Extra Guest Fee\", 2500, per_night=True, per_guest_above=2)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\n            \"fee_type\": \"extra_guest_fee\", \"label\": \"Extra Guest Fee\",\n            \"amount\": _money(2500), \"applies_per_night\": True, \"applies_per_guest_above\": 2,\n        }\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        egf = [f for f in result[\"data\"][\"fees\"] if f[\"fee_type\"] == \"extra_guest_fee\"]\n        assert egf[0][\"applies_per_night\"] is True\n        assert egf[0][\"applies_per_guest_above\"] == 2\n\n\nclass TestUpsertFeeEdgeCases:\n    \"\"\"Edge-case tests for upsert_fee.\"\"\"\n\n    def test_upsert_update_existing_fee(self, mock_engine):\n        \"\"\"Upserting same fee_type updates rather than duplicating.\"\"\"\n        fees = [_fee_def(\"cleaning_fee\", \"Updated Cleaning Fee\", 10000)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Updated Cleaning Fee\", \"amount\": _money(10000)}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        cleaning_fees = [f for f in result[\"data\"][\"fees\"] if f[\"fee_type\"] == \"cleaning_fee\"]\n        assert len(cleaning_fees) == 1, \"Upsert must not create duplicate entries\"\n        assert cleaning_fees[0][\"label\"] == \"Updated Cleaning Fee\"\n        assert cleaning_fees[0][\"amount\"][\"amount_cents\"] == 10000\n\n    def test_disabled_fee(self, mock_engine):\n        \"\"\"Upserting a disabled fee stores it with enabled=false.\"\"\"\n        fees = [_fee_def(\"pet_fee\", \"Pet Fee\", 5000, enabled=False)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\"fee_type\": \"pet_fee\", \"label\": \"Pet Fee\", \"amount\": _money(5000), \"enabled\": False}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        pet = [f for f in result[\"data\"][\"fees\"] if f[\"fee_type\"] == \"pet_fee\"]\n        assert pet[0][\"enabled\"] is False\n\n\nclass TestUpsertFeeErrors:\n    \"\"\"Error-case tests for upsert_fee covering all 7 error codes.\"\"\"\n\n    def test_validation_error_bad_fee_type(self, mock_engine):\n        body = {\"fee_type\": \"Invalid-Fee-Type!\", \"label\": \"Bad Fee\", \"amount\": _money(100)}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"VALIDATION_ERROR\"\n        mock_engine.upsert_fee.assert_not_called()\n\n    def test_invalid_json(self, mock_engine):\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=\"{broken json\")\n        assert result[\"error\"][\"code\"] == \"INVALID_JSON\"\n        mock_engine.upsert_fee.assert_not_called()\n\n    def test_unit_not_found(self, mock_engine):\n        mock_engine.upsert_fee.side_effect = UnitNotFoundError(\"nonexistent\")\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": _money(7500)}\n        result = upsert_fee(mock_engine, unit_id=\"nonexistent\", body=body)\n        assert result[\"error\"][\"code\"] == \"UNIT_NOT_FOUND\"\n\n    def test_currency_mismatch(self, mock_engine):\n        mock_engine.upsert_fee.side_effect = CurrencyMismatchError(\"GBP vs USD\")\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": _money(7500, \"GBP\")}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"CURRENCY_MISMATCH\"\n\n    def test_invalid_percentage_config(self, mock_engine):\n        mock_engine.upsert_fee.side_effect = InvalidPercentageConfigError(\"bp is 0\")\n        body = {\n            \"fee_type\": \"service_fee\", \"label\": \"Service Fee\", \"amount\": _money(0),\n            \"is_percentage\": True, \"percentage_basis_points\": 0,\n        }\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"INVALID_PERCENTAGE_CONFIG\"\n\n    def test_max_fees_exceeded(self, mock_engine):\n        mock_engine.upsert_fee.side_effect = MaxFeesExceededError(\"max 50\")\n        body = {\"fee_type\": \"custom_fee_51\", \"label\": \"Fee 51\", \"amount\": _money(100)}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"MAX_FEES_EXCEEDED\"\n\n    def test_engine_error(self, mock_engine):\n        mock_engine.upsert_fee.side_effect = RuntimeError(\"boom\")\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": _money(7500)}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n        assert result[\"error\"][\"code\"] == \"INTERNAL_ERROR\"\n\n\n# ===================================================================\n# Contract Invariant Tests\n# ===================================================================\n\n\nclass TestInvariants:\n    \"\"\"Cross-cutting invariant tests from the contract.\"\"\"\n\n    def test_all_monetary_values_are_integer_cents(self, mock_engine):\n        \"\"\"All amount_cents values in a quote must be integers, never floats.\"\"\"\n        quote_data = _make_quote_response(\n            \"unit-001\", \"2025-08-01\", \"2025-08-04\", 2,\n            nightly_cents=15000, cleaning_fee_cents=5000, tax_bp=1000, discount_bp=0,\n        )\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-04\", guests=2)\n        data = result[\"data\"]\n\n        # Check summary amounts\n        for field in (\"subtotal\", \"fees_total\", \"taxes_total\", \"discounts_total\", \"total\"):\n            val = data[field][\"amount_cents\"]\n            assert isinstance(val, int), f\"{field}.amount_cents must be int, got {type(val)}\"\n\n        # Check all line items\n        for li in data[\"line_items\"]:\n            val = li[\"amount\"][\"amount_cents\"]\n            assert isinstance(val, int), f\"Line item {li['label']} amount_cents must be int, got {type(val)}\"\n\n    def test_currency_consistency_in_quote(self, mock_engine):\n        \"\"\"All Money objects in a quote response share the same currency as meta.currency.\"\"\"\n        quote_data = _make_quote_response(\n            \"unit-001\", \"2025-08-01\", \"2025-08-04\", 2,\n            nightly_cents=15000, cleaning_fee_cents=5000, tax_bp=1200,\n        )\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-04\", guests=2)\n        data = result[\"data\"]\n        meta_currency = result[\"meta\"][\"currency\"]\n\n        # Check summary fields\n        for field in (\"subtotal\", \"fees_total\", \"taxes_total\", \"discounts_total\", \"total\"):\n            assert data[field][\"currency\"] == meta_currency, (\n                f\"{field}.currency '{data[field]['currency']}' != meta.currency '{meta_currency}'\"\n            )\n\n        # Check all line items\n        for li in data[\"line_items\"]:\n            assert li[\"amount\"][\"currency\"] == meta_currency, (\n                f\"Line item '{li['label']}' currency mismatch\"\n            )\n\n    def test_quote_total_arithmetic_invariant(self, mock_engine):\n        \"\"\"total = subtotal + fees_total + taxes_total + discounts_total.\"\"\"\n        quote_data = _make_quote_response(\n            \"unit-001\", \"2025-08-01\", \"2025-08-08\", 3,\n            nightly_cents=20000, cleaning_fee_cents=8000, tax_bp=1200, discount_bp=500,\n        )\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-08\", guests=3)\n        data = result[\"data\"]\n\n        computed = (\n            data[\"subtotal\"][\"amount_cents\"]\n            + data[\"fees_total\"][\"amount_cents\"]\n            + data[\"taxes_total\"][\"amount_cents\"]\n            + data[\"discounts_total\"][\"amount_cents\"]\n        )\n        assert data[\"total\"][\"amount_cents\"] == computed, (\n            f\"Total {data['total']['amount_cents']} != computed sum {computed}\"\n        )\n\n    def test_discounts_total_is_non_positive(self, mock_engine):\n        \"\"\"discounts_total.amount_cents must always be <= 0.\"\"\"\n        quote_data = _make_quote_response(\n            \"unit-001\", \"2025-08-01\", \"2025-08-08\", 1,\n            nightly_cents=15000, discount_bp=500,\n        )\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-08\", guests=1)\n\n        assert result[\"data\"][\"discounts_total\"][\"amount_cents\"] <= 0, (\n            \"discounts_total must be non-positive\"\n        )\n\n    def test_success_response_envelope_shape(self, mock_engine):\n        \"\"\"Success responses have data and meta with currency and generated_at.\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert \"data\" in result, \"Success response must have 'data' key\"\n        assert \"meta\" in result, \"Success response must have 'meta' key\"\n        meta = result[\"meta\"]\n        assert \"currency\" in meta, \"meta must have 'currency' key\"\n        assert \"generated_at\" in meta, \"meta must have 'generated_at' key\"\n        assert META_PATTERN.match(meta[\"generated_at\"]), (\n            f\"meta.generated_at '{meta['generated_at']}' must be ISO 8601 UTC\"\n        )\n\n    def test_error_response_envelope_shape(self, mock_engine):\n        \"\"\"Error responses have error with code and message.\"\"\"\n        # Trigger an error by providing empty unit_id\n        result = get_quote(mock_engine, unit_id=\"\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert \"error\" in result, \"Error response must have 'error' key\"\n        err = result[\"error\"]\n        assert \"code\" in err, \"error must have 'code' key\"\n        assert \"message\" in err, \"error must have 'message' key\"\n        assert isinstance(err[\"message\"], str) and len(err[\"message\"]) > 0, (\n            \"error.message must be a non-empty string\"\n        )\n\n    def test_date_range_semantics_inclusive_start_exclusive_end(self, mock_engine):\n        \"\"\"start is inclusive (first night), end is exclusive (checkout). num_nights = end - start.\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2025-08-01\", \"2025-08-04\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-04\", guests=1)\n        data = result[\"data\"]\n\n        assert data[\"num_nights\"] == 3, \"Aug 1 to Aug 4 = 3 nights\"\n        assert data[\"start\"] == \"2025-08-01\"\n        assert data[\"end\"] == \"2025-08-04\"\n        nightly_items = [li for li in data[\"line_items\"] if li[\"type\"] == \"nightly_rate\"]\n        assert len(nightly_items) == 3, \"Must have exactly 3 nightly_rate line items\"\n\n    def test_upsert_fee_idempotent(self, mock_engine):\n        \"\"\"Calling upsert_fee twice with same data yields same result, no duplicates.\"\"\"\n        fees = [_fee_def(\"cleaning_fee\", \"Cleaning Fee\", 7500)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": _money(7500)}\n\n        result1 = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n        result2 = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        # Both calls should produce equivalent fee lists\n        fees1 = result1[\"data\"][\"fees\"]\n        fees2 = result2[\"data\"][\"fees\"]\n        assert len(fees1) == len(fees2), \"Idempotent upsert must not change fee count\"\n\n        cleaning1 = [f for f in fees1 if f[\"fee_type\"] == \"cleaning_fee\"]\n        cleaning2 = [f for f in fees2 if f[\"fee_type\"] == \"cleaning_fee\"]\n        assert len(cleaning1) == 1, \"Must have exactly one cleaning_fee (no duplicates)\"\n        assert len(cleaning2) == 1, \"Must have exactly one cleaning_fee (no duplicates)\"\n        assert cleaning1[0][\"amount\"][\"amount_cents\"] == cleaning2[0][\"amount\"][\"amount_cents\"]\n\n    def test_rates_response_count_matches_date_range(self, mock_engine):\n        \"\"\"GET /rates returns exactly (end - start) entries.\"\"\"\n        rates_data = _make_rates_response(\"unit-001\", \"2025-08-01\", \"2025-08-06\")\n        mock_engine.get_nightly_rates.return_value = rates_data\n\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-06\")\n\n        expected_count = (date(2025, 8, 6) - date(2025, 8, 1)).days\n        assert len(result[\"data\"][\"rates\"]) == expected_count, (\n            f\"Expected {expected_count} rates, got {len(result['data']['rates'])}\"\n        )\n\n\n# ===================================================================\n# Schema / Envelope Shape Validation\n# ===================================================================\n\n\nclass TestEnvelopeSchemas:\n    \"\"\"Verify exact key sets and types in response envelopes.\"\"\"\n\n    def test_quote_response_envelope_keys(self, mock_engine):\n        quote_data = _make_quote_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        assert set(result.keys()) >= {\"data\", \"meta\"}\n        data = result[\"data\"]\n        required_keys = {\"unit_id\", \"start\", \"end\", \"guests\", \"num_nights\",\n                         \"line_items\", \"subtotal\", \"fees_total\", \"taxes_total\",\n                         \"discounts_total\", \"total\"}\n        assert required_keys <= set(data.keys()), f\"Missing keys in data: {required_keys - set(data.keys())}\"\n\n    def test_rates_response_envelope_keys(self, mock_engine):\n        rates_data = _make_rates_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\")\n        mock_engine.get_nightly_rates.return_value = rates_data\n\n        result = get_rates(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\")\n\n        assert set(result.keys()) >= {\"data\", \"meta\"}\n        data = result[\"data\"]\n        assert {\"unit_id\", \"start\", \"end\", \"rates\"} <= set(data.keys())\n\n    def test_rate_config_response_envelope_keys(self, mock_engine):\n        merged = _make_rate_configuration()\n        mock_engine.update_rate_configuration.return_value = merged\n\n        body = {\"override_tier\": \"base\", \"base_nightly_rate\": _money(15000)}\n        result = update_rate_configuration(mock_engine, unit_id=\"unit-001\", body=body)\n\n        assert set(result.keys()) >= {\"data\", \"meta\"}\n        data = result[\"data\"]\n        required = {\"unit_id\", \"base_nightly_rate\", \"seasonal_rules\", \"date_specific_rates\",\n                     \"length_of_stay_discounts\", \"currency\", \"min_nights\", \"max_nights\"}\n        assert required <= set(data.keys()), f\"Missing keys: {required - set(data.keys())}\"\n\n    def test_fees_response_envelope_keys(self, mock_engine):\n        fees = [_fee_def(\"cleaning_fee\", \"Cleaning Fee\", 7500)]\n        mock_engine.upsert_fee.return_value = _make_fees_response(\"unit-001\", fees)\n\n        body = {\"fee_type\": \"cleaning_fee\", \"label\": \"Cleaning Fee\", \"amount\": _money(7500)}\n        result = upsert_fee(mock_engine, unit_id=\"unit-001\", body=body)\n\n        assert set(result.keys()) >= {\"data\", \"meta\"}\n        assert {\"unit_id\", \"fees\"} <= set(result[\"data\"].keys())\n\n    def test_error_envelope_keys(self, mock_engine):\n        \"\"\"Error envelopes have {error: {code, message}}.\"\"\"\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"bad\", end=\"2025-08-02\", guests=1)\n\n        assert \"error\" in result\n        assert {\"code\", \"message\"} <= set(result[\"error\"].keys())\n\n    def test_meta_generated_at_format(self, mock_engine):\n        \"\"\"meta.generated_at must be ISO 8601 UTC ending with Z.\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n\n        ts = result[\"meta\"][\"generated_at\"]\n        assert META_PATTERN.match(ts), f\"generated_at '{ts}' does not match ISO 8601 UTC pattern\"\n\n    def test_money_type_shape(self, mock_engine):\n        \"\"\"Money objects always have amount_cents (int) and currency (3-letter uppercase).\"\"\"\n        quote_data = _make_quote_response(\"unit-001\", \"2025-08-01\", \"2025-08-02\", 1)\n        mock_engine.compute_quote.return_value = quote_data\n\n        result = get_quote(mock_engine, unit_id=\"unit-001\", start=\"2025-08-01\", end=\"2025-08-02\", guests=1)\n        data = result[\"data\"]\n\n        currency_re = re.compile(r\"^[A-Z]{3}$\")\n        for field in (\"subtotal\", \"fees_total\", \"taxes_total\", \"discounts_total\", \"total\"):\n            m = data[field]\n            assert \"amount_cents\" in m, f\"{field} missing amount_cents\"\n            assert \"currency\" in m, f\"{field} missing currency\"\n            assert isinstance(m[\"amount_cents\"], int), f\"{field}.amount_cents must be int\"\n            assert currency_re.match(m[\"currency\"]), f\"{field}.currency '{m['currency']}' invalid\"\n"
+}

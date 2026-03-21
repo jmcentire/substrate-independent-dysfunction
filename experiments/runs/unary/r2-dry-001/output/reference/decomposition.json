@@ -1,0 +1,784 @@
+{
+  "component_map": {
+    "one_sentence": "Build a microservices backend for Wander's booking and property management platform, migrating from monolith to 7 services (Availability, Pricing, Booking, Property, Payments, Sync, Event) with PostgreSQL/Redis/Kafka infrastructure and PMS integrations.",
+    "components": [
+      {
+        "id": "availability_service",
+        "name": "Availability Service",
+        "description": "Fast availability lookups using bitmask-per-month storage (32-bit integers for O(1) operations). Non-authoritative cache with region-sharded Redis Cluster (3 masters, 9 total nodes with replicas). Provides /check, /next-available, /search, /acquire, /release endpoints. Migrates from AvailabilityDay table (38 columns, ~10M rows) to bitmask schema (~30K rows, 97% reduction). PMS is always source of truth; this service is read-through cache with PostgreSQL fallback.",
+        "dependencies": [],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/availability/api.py",
+          "services/availability/bitmask.py",
+          "services/availability/redis_client.py",
+          "services/availability/schema.sql",
+          "services/availability/migration.py"
+        ]
+      },
+      {
+        "id": "pricing_service",
+        "name": "Pricing Service",
+        "description": "Nightly rate cache with hash-sharded Redis (by unit_id). Stores pre-computed rates from PMS and Pricing Intelligence; does NOT compute quotes/discounts/fees (Booking Service owns that). Provides /rate, /calendar, /bulk (with sum/avg/min/max aggregates), /set endpoints. Returns missing_dates for gaps. Migrates from PricingCalendarDay (58 columns) to single pricing table (unit_id, date, rate_cents, currency). 95% storage reduction by removing redundant columns.",
+        "dependencies": [],
+        "estimated_complexity": "moderate",
+        "affected_files": [
+          "services/pricing/api.py",
+          "services/pricing/sharding.py",
+          "services/pricing/schema.sql",
+          "services/pricing/migration.py"
+        ]
+      },
+      {
+        "id": "booking_service",
+        "name": "Booking Service",
+        "description": "Synchronous booking orchestration (<3s flow): authorize payment → verify PMS → create PMS reservation → capture payment → finalize. Owns policy enforcement (min stay, max occupancy), UBR generation (content-addressable, signed tokens), state machine (CONFIRMED/CANCELLED/COMPLETED), and price snapshots (frozen at booking time). Dual-table design: booking (Wander SoR, EXCLUDE constraint for double-booking prevention) and booking_stub (external PMS SoR). Handles 3DS inline with idempotency. Calls Availability (acquire/release), Pricing (rates), Payments (charge/refund), Sync (PMS verification/creation).",
+        "dependencies": [
+          "availability_service",
+          "pricing_service",
+          "payments_service",
+          "sync_service",
+          "property_service"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/booking/api.py",
+          "services/booking/orchestrator.py",
+          "services/booking/ubr.py",
+          "services/booking/policy.py",
+          "services/booking/schema.sql",
+          "services/booking/migration.py"
+        ]
+      },
+      {
+        "id": "property_service",
+        "name": "Property Service",
+        "description": "Property content CMS with 4-tier override hierarchy (PMS=10, PM=20, Wander=30, Admin=40). Field-level overrides as diffs with conflict resolution (KEEP_OVERRIDE, ACCEPT_NEW, ASK). Materialized effective view for reads. Manages properties, addresses (PostGIS for geo), amenities, policies, fees, documents (R2 metadata), PMS mappings. Redis cache for effective data. Provides /properties CRUD, /overrides, /fees, /policies, /sources, /cache/flush, /sync. Migrates from Unit table (~110 columns mixing concerns) to normalized schema (~45 core columns + separate tables).",
+        "dependencies": [],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/property/api.py",
+          "services/property/overrides.py",
+          "services/property/conflicts.py",
+          "services/property/schema.sql",
+          "services/property/migration.py"
+        ]
+      },
+      {
+        "id": "payments_service",
+        "name": "Payments Service",
+        "description": "Stripe orchestration and financial ledger mirror. Stripe is source of truth; this service maintains read-optimized mirror. Manages invoices (with line items), payments, refunds, and payout snapshots (immutable, SHA256 hash-chained for audit). Nightly reconciliation detects drift (orphaned charges, amount mismatches). Webhook handler for Stripe events. Provides /invoices, /refunds, /payouts, /reconciliation endpoints. Dual-write during migration from OsInvoice/OsPayment tables. Refunds use Banker's rounding; currency is always property's native currency (no conversion).",
+        "dependencies": [
+          "booking_service"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/payments/api.py",
+          "services/payments/stripe_client.py",
+          "services/payments/reconciliation.py",
+          "services/payments/payout.py",
+          "services/payments/schema.sql",
+          "services/payments/migration.py"
+        ]
+      },
+      {
+        "id": "sync_service",
+        "name": "Sync Service",
+        "description": "Bidirectional PMS/OTA synchronization with two-layer architecture: Connectors (transport: HTTP/SOAP/iCal with rate limiting, backoff, retries) + Adapters (translation: PMS format ↔ canonical structs). Three independent subsystems: Property, Availability, Pricing. Supports 8 PMSes (Guesty, Hostaway, Streamline, Escapia, OwnerRez, Lodgify, RentalsUnited, TrackPMS). Token bucket rate limiting per credential_id (not global per PMS). Debouncing (5s coalesce) for rapid changes. Reconciliation job (nightly) detects drift. Webhook receiver with HMAC validation. Fee dictionary for external→standard mapping. Provides /webhook, /sync/push, /sync/pull, /sync/reconcile, internal /sync/pms/quote and /sync/pms/reservation for Booking Service.",
+        "dependencies": [
+          "property_service",
+          "availability_service",
+          "pricing_service"
+        ],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/sync/api.py",
+          "services/sync/connectors/http.py",
+          "services/sync/connectors/soap.py",
+          "services/sync/connectors/ical.py",
+          "services/sync/adapters/guesty.py",
+          "services/sync/adapters/hostaway.py",
+          "services/sync/adapters/streamline.py",
+          "services/sync/rate_limiter.py",
+          "services/sync/debouncer.py",
+          "services/sync/reconciliation.py",
+          "services/sync/schema.sql",
+          "services/sync/migration.py"
+        ]
+      },
+      {
+        "id": "event_service",
+        "name": "Event Service",
+        "description": "Central event bus with Kafka backbone. Content-addressable event IDs (SHA256 of event content = automatic idempotency). Classifier deduplicates (Redis, 5min window), validates, routes via bitmask to 5 subsystem topics: Audit (PostgreSQL append-only, 7yr retention, immutable), Alerts (PagerDuty/Slack/Email), Logging (Datadog/CloudWatch/stdout with level filtering), Monitoring (Prometheus/StatsD metrics extraction), Analytics (Amplitude/Segment/BigQuery). YAML routing config (hot-reload via k8s ConfigMap). Handler base class with batching, circuit breakers, retries. Provides /events/audit query endpoints, /events/handlers/status, /events/metrics. SDK for services to emit events (fire-and-forget, async buffered send).",
+        "dependencies": [],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "services/event/api.py",
+          "services/event/classifier.py",
+          "services/event/subsystems/audit.py",
+          "services/event/subsystems/alerts.py",
+          "services/event/subsystems/logging.py",
+          "services/event/subsystems/monitoring.py",
+          "services/event/subsystems/analytics.py",
+          "services/event/handlers/base.py",
+          "services/event/sdk.py",
+          "services/event/schema.sql",
+          "services/event/routing.yaml",
+          "services/event/migration.py"
+        ]
+      },
+      {
+        "id": "infrastructure",
+        "name": "Infrastructure & Data Stores",
+        "description": "Shared infrastructure layer: PostgreSQL 14+ with streaming replication (1 primary, 2 replicas), pgBouncer connection pooling (transaction mode, 5-20 connections per service, max 200 global). Redis Cluster (3 masters, 3 replicas, Sentinel for failover, 30s detection/60s failover). Kafka cluster (32 partitions for events.raw, 16 for audit/log/analytics, 8 for alerts/metrics, 7-day retention for raw events, 1-3 days for subsystem topics). R2 for document storage. PostGIS extension for geo queries. Monitoring: Prometheus metrics, Datadog logs/APM, Grafana dashboards. Kubernetes HPA for consumer auto-scaling (trigger: Kafka lag >10k messages for 5min). Health checks: DB ping every 30s, 3 failures = unhealthy.",
+        "dependencies": [],
+        "estimated_complexity": "complex",
+        "affected_files": [
+          "infrastructure/postgresql/primary.yaml",
+          "infrastructure/postgresql/replicas.yaml",
+          "infrastructure/redis/cluster.yaml",
+          "infrastructure/kafka/cluster.yaml",
+          "infrastructure/kafka/topics.yaml",
+          "infrastructure/k8s/hpa-consumers.yaml",
+          "infrastructure/pgbouncer/config.ini",
+          "infrastructure/monitoring/prometheus.yaml",
+          "infrastructure/monitoring/grafana-dashboards.json"
+        ]
+      }
+    ],
+    "interaction_summary": "User provided comprehensive architecture spec for Wander backend services. I identified 8 logical components: 7 microservices (Availability, Pricing, Booking, Property, Payments, Sync, Event) plus shared Infrastructure. Key architectural decisions clarified: PostgreSQL as source of truth with Redis caches; synchronous booking flow (<3s); non-authoritative Availability/Pricing caches; PMS always source of truth for BRANDED properties; content-addressable events for idempotency; dual-table booking design (Wander SoR vs external SoR); token bucket rate limiting per credential; hash-chained payout snapshots for financial audit. Migration strategy: dual-write period with reconciliation, feature flags for cutover, 90-day retention of old tables. Answered 20+ clarifying questions on Redis sharding (CRC16, 3 masters), Kafka partitioning (String.hashCode, accept hot partitions), PMS verification protocol (5s timeout, 5% price tolerance), date/timezone handling (YYYY-MM-DD, UTC normalization), money representation (cents with Banker's rounding), external ref validation (regex patterns), sync-to-availability boundary (direct API calls + events), dual-write conflict resolution (log + manual review), rate limit scope (per-credential, not global), DB pooling (pgBouncer, 5-20 per service), Kafka scaling (HPA on lag >10k), Redis failover (Sentinel, lazy cache warming), bookability logic (Property structural + Booking transactional), hash chain verification (SHA256, sorted JSON, exclude mutable fields), and tax calculation (Property → Booking → Payments, no storage in Payments).",
+    "confidence": 0.92,
+    "reasoning": "This is a well-specified epic with clear service boundaries, data models, API contracts, and architectural decisions. Complexity is high due to: (1) 7 interdependent services with migration from monolith, (2) PMS integration complexity (8 different APIs with varying capabilities), (3) financial correctness requirements (payment atomicity, hash-chained audit trail), (4) distributed systems challenges (eventual consistency, rate limiting, idempotency), and (5) operational maturity needs (Kafka/Redis Cluster at scale). However, the spec answers most design questions upfront, reducing ambiguity. Main risks: migration coordination (dual-write drift, cutover timing), PMS adapter maintenance (each has unique quirks), and operational burden (Kafka/Redis cluster management). The 8-component split is natural: each service has clear bounded context, minimal cross-cutting concerns, and independent deployment potential. Infrastructure as separate component makes sense given shared nature and ops focus."
+  },
+  "contracts": {
+    "contracts": [
+      {
+        "component_id": "availability_service",
+        "inputs": [
+          "GET /check: unit_id (UUID), start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)",
+          "GET /next-available: unit_id (UUID), nights (int), after (date), limit_months (int)",
+          "GET /search: region or regions (string[]), start_date (date), end_date (date)",
+          "POST /acquire: unit_id (UUID), start_date (date), end_date (date)",
+          "POST /release: unit_id (UUID), start_date (date), end_date (date)",
+          "Sync Service writes via /acquire and /release to mirror PMS state",
+          "Booking Service calls /check before PMS verification and /acquire after payment capture",
+          "Redis read-through cache (bitmask keys: avail:{unit_id}:{YYYY-MM})",
+          "PostgreSQL availability table (unit_id, year_month, days BIT(32), start_free, end_free, max_free)"
+        ],
+        "outputs": [
+          "GET /check → {available: boolean}",
+          "GET /next-available → {found: boolean, start_date: string | null}",
+          "GET /search → {unit_ids: UUID[]}",
+          "POST /acquire → {status: 'acquired'} or 409 CONFLICT",
+          "POST /release → {status: 'released'}",
+          "availability.changed event on every acquire/release: {unit_id, start_date, end_date, blocked: boolean}",
+          "Materialized bitmask cache in Redis with 1hr TTL",
+          "PostgreSQL as source of truth (Redis fallback on cache miss)"
+        ],
+        "invariants": [
+          "Non-authoritative: PMS is always source of truth, this is a cache only",
+          "Bitmask: 32-bit integer per unit-month, bit N (1-31) = day N, 1=blocked, 0=available",
+          "Conflict detection: (days & mask) != 0 → 409 CONFLICT on acquire",
+          "Region-sharded Redis: hash(unit_id) % 3 masters for locality",
+          "O(1) operations via bitwise AND/OR",
+          "EXCLUDE constraint on stay_range for Wander-SoR units only (not stubs)",
+          "Cache miss → query PostgreSQL, populate Redis, return result (p95 <50ms)",
+          "Redis unavailable → fallback to PostgreSQL (slower but correct)",
+          "Idempotent: duplicate acquire/release within 5min window deduplicated",
+          "Date inclusivity: start_date inclusive, end_date inclusive (booking nights = end - start + 1)",
+          "No policy enforcement: min stay, restrictions, padding handled by Booking Service"
+        ],
+        "error_modes": [
+          "409 CONFLICT: dates already blocked (partial or full overlap)",
+          "400 INVALID_DATES: end_date < start_date or dates in past",
+          "503 SERVICE_UNAVAILABLE: PostgreSQL unreachable",
+          "Redis failure → degraded performance but correct results from PostgreSQL",
+          "Cache inconsistency: reconciliation job (nightly) detects drift, PostgreSQL wins"
+        ]
+      },
+      {
+        "component_id": "pricing_service",
+        "inputs": [
+          "GET /rate: unit_id (UUID), start_date (date), end_date (date, optional)",
+          "GET /calendar: unit_id (UUID), month (YYYY-MM)",
+          "POST /bulk: unit_ids (UUID[], max 500), start_date (date), end_date (date)",
+          "POST /set: unit_id (UUID), currency (string), rates (array of {date, rate_cents})",
+          "Sync Service writes via /set with PMS rates",
+          "Pricing Intelligence Service writes via /set with dynamic pricing",
+          "Booking Service reads via /rate and /bulk for quote calculation",
+          "Redis hash-sharded by unit_id: price:{unit_id}:{YYYY-MM-DD} → rate_cents",
+          "PostgreSQL pricing table (unit_id, date, rate_cents, currency) as source of truth"
+        ],
+        "outputs": [
+          "GET /rate → {unit_id, currency, rates: [{date, rate_cents}], missing_dates: []}",
+          "GET /calendar → {unit_id, month, currency, rates: [{day, rate_cents}], missing_days: []}",
+          "POST /bulk → {rates: [{unit_id, currency, sum_cents, avg_cents, min_cents, max_cents, missing_dates}]}",
+          "POST /set → {status: 'updated', count: int}",
+          "pricing.rates_updated event: {unit_id, dates: []}",
+          "Aggregates (sum/avg/min/max) are null if any date missing in bulk response",
+          "Caller decides handling for missing_dates (use rack rate, exclude unit, alert)",
+          "Redis cache with 1hr TTL, invalidated on /set"
+        ],
+        "invariants": [
+          "Non-authoritative: rates written by Sync Service (PMS) and Pricing Intelligence",
+          "Dumb cache: stores numbers only, does NOT compute quotes/discounts/fees/taxes",
+          "Hash-sharded Redis: shard = hash(unit_id) % N for all unit data on one shard",
+          "Currency per property: prices in property's native currency, conversion in UI",
+          "Bulk queries fan-out in parallel to shards, reassemble results",
+          "Missing rate data: return in missing_dates array, emit metric, caller handles",
+          "Cache hit rate target: >95%",
+          "Cache miss → query PostgreSQL, populate Redis, return result (p95 <20ms)",
+          "Redis shard unavailable → query PostgreSQL for that shard's units",
+          "Upsert on conflict: INSERT ... ON CONFLICT (unit_id, date) DO UPDATE"
+        ],
+        "error_modes": [
+          "400 INVALID_INPUT: missing or invalid parameters",
+          "Missing rate data: returned in missing_dates, not an error (target <1% of queries)",
+          "503 SERVICE_UNAVAILABLE: PostgreSQL unreachable",
+          "Redis shard failure → fallback to PostgreSQL for affected units",
+          "Redis write failure → invalidate cache key, continue (DB is truth)"
+        ]
+      },
+      {
+        "component_id": "booking_service",
+        "inputs": [
+          "POST /bookings: idempotency_key, property_id, check_in, check_out, guest_id, guests, payment_method_id, customer_id",
+          "GET /bookings/{id}: booking_id (UUID)",
+          "GET /bookings/ubr/{ubr}: ubr (string)",
+          "GET /bookings: filters (guest_id, property_id, status, check_in_from/to, limit, cursor)",
+          "POST /bookings/{id}/cancel: reason, actor, dry_run (boolean)",
+          "Availability Service: /check and /acquire for date blocking",
+          "Pricing Service: /rate for quote calculation",
+          "Payments Service: /invoices, /invoices/{id}/pay, /refunds",
+          "Sync Service: /sync/pms/quote and /sync/pms/reservation for PMS verification",
+          "Property Service: property config, cancellation policies, fees",
+          "PostgreSQL booking + booking_stub tables (dual design based on SoR)"
+        ],
+        "outputs": [
+          "POST /bookings → 201 {id, ubr, status: 'CONFIRMED', price, pms_confirmation_id, payment_intent_id, confirmed_at}",
+          "POST /bookings (3DS) → 202 {pending_id, requires_action: true, client_secret, expires_at}",
+          "GET /bookings/{id} → 200 {booking details with price breakdown, nightly_rates, fees, taxes, discounts}",
+          "GET /bookings/ubr/{ubr} → same as GET /bookings/{id}",
+          "GET /bookings → {data: [], next_cursor}",
+          "POST /bookings/{id}/cancel → 200 {status: 'CANCELLED', cancellation: {refund_amount_cents, penalty_cents, refund_percent}}",
+          "POST /bookings/{id}/cancel (dry_run) → 200 {dry_run: true, cancellation: {refund_amount_cents, penalty_cents, policy_name}}",
+          "booking.requested event: payment authorized, attempting PMS",
+          "booking.confirmed event: PMS confirmed, payment captured, booking complete",
+          "booking.cancelled event: booking cancelled with refund details",
+          "booking.failed event: booking failed at any step",
+          "UBR token: UBR-{base58(domain + timestamp + nonce + signature[:16])}, SHA256 HMAC signed"
+        ],
+        "invariants": [
+          "Synchronous flow: <3s total (user at checkout with card out)",
+          "Single PostgreSQL transaction + PMS call (no sagas, no distributed transactions)",
+          "Flow: authorize payment → verify PMS → create PMS reservation → capture payment → finalize",
+          "3DS handled inline: Stripe.js popup, user authenticates, frontend retries with same idempotency_key",
+          "Idempotent: same idempotency_key returns same result, payment intent reused if exists",
+          "State machine: CONFIRMED → COMPLETED (with CANCELLED branch)",
+          "Owns policy enforcement: min stay, max occupancy, arrival/departure restrictions, padding",
+          "Price snapshot: frozen at confirmation, full line-item breakdown in booking_price table",
+          "UBR generation: content-addressable, signed with HMAC SHA256, includes property/dates/timestamp/nonce",
+          "Dual-table design: booking (Wander SoR with EXCLUDE constraint), booking_stub (external PMS SoR, no EXCLUDE)",
+          "PMS failure after charge → auto-refund + release availability",
+          "Card on file: store payment_method_id for future charges (damage, extras)"
+        ],
+        "error_modes": [
+          "400 INVALID_REQUEST: missing/invalid fields",
+          "402 PAYMENT_FAILED: payment authorization failed",
+          "404 PROPERTY_NOT_FOUND: property does not exist",
+          "409 DATES_UNAVAILABLE: dates no longer available (Availability conflict or PMS conflict)",
+          "422 PROPERTY_NOT_BOOKABLE: property not accepting bookings",
+          "PMS unavailable (>5s timeout): cancel payment auth, return error, release availability",
+          "PMS price mismatch (>5%): cancel payment auth, return error, alert ops",
+          "Payment capture failure: cancel PMS reservation, return error",
+          "Idempotency replay: return existing booking without side effects"
+        ]
+      },
+      {
+        "component_id": "property_service",
+        "inputs": [
+          "GET /properties/{id}: property_id (UUID)",
+          "GET /properties: filters (organization_id, city, state, status, is_bookable, management_type, pms_type, has_conflicts, q, near, limit, cursor)",
+          "POST /properties/{id}/overrides: field, from_value, to_value, note, actor",
+          "GET /properties/{id}/overrides/conflicts: property_id",
+          "POST /properties/{id}/overrides/conflicts/{conflict_id}/resolve: resolution (KEEP_OVERRIDE, ACCEPT_NEW, NEW_OVERRIDE)",
+          "GET /properties/{id}/fees: property_id",
+          "GET /properties/{id}/policies: property_id",
+          "GET /properties/{id}/sources: property_id (returns SoR + 'also seen in')",
+          "POST /properties/{id}/cache/flush: property_id",
+          "POST /properties/{id}/sync: property_id",
+          "Sync Service writes base data (PMS layer, priority 10)",
+          "PM edits via override endpoints (priority 20)",
+          "Wander team overrides (priority 30)",
+          "Admin emergency overrides (priority 40)",
+          "Redis cache for effective (base + overrides applied) data",
+          "PostgreSQL property + property_address + property_override + property_override_conflict + property_fee + property_policy + property_external_id + cancellation_policy tables"
+        ],
+        "outputs": [
+          "GET /properties/{id} → 200 {effective property data: base + overrides applied, has_overrides: boolean, has_conflicts: boolean}",
+          "GET /properties → {data: [], next_cursor, total}",
+          "POST /properties/{id}/overrides → 200 {override created} or 403 INSUFFICIENT_PRIORITY or 409 OVERRIDE_EXISTS",
+          "GET /properties/{id}/overrides/conflicts → {conflicts: []}",
+          "POST /properties/{id}/overrides/conflicts/{id}/resolve → 200 {resolved}",
+          "GET /properties/{id}/fees → {property_id, currency, fees: [{kind, label, amount_cents, per, required, conditions}]}",
+          "GET /properties/{id}/policies → {check_in, check_out, min_nights, cancellation_policy, pets_allowed, house_rules, etc.}",
+          "GET /properties/{id}/sources → {sor: {pms_type, external_id}, also_seen_in: [{source, external_id}]}",
+          "POST /properties/{id}/cache/flush → 200 {flushed}",
+          "POST /properties/{id}/sync → 202 {job_id, status: 'QUEUED'}",
+          "property.created event: {property_id, organization_id}",
+          "property.updated event: {property_id, fields_changed: []}",
+          "property.override_set event: {property_id, field, actor}",
+          "property.override_conflict event: {property_id, field, old_base, new_base}",
+          "property.sync_requested event: {property_id, priority}",
+          "Materialized effective view in Redis (cache hit rate target >90%)"
+        ],
+        "invariants": [
+          "4-tier override hierarchy: PMS (10) < PM (20) < Wander (30) < Admin (40), higher priority wins",
+          "Override as diff: from_value (expected base) and to_value (replacement), not mutation",
+          "from_value=null → always apply regardless of base (force override)",
+          "Conflict resolution: sync updates base → if override.from_value != new base → create conflict record",
+          "Conflict policies: KEEP_OVERRIDE (update from_value to match new base), ACCEPT_NEW (drop override), ASK (manual resolution)",
+          "Effective data computation: base + overrides sorted by priority, highest priority wins per field",
+          "Materialized reads: effective data cached in Redis, invalidated on override or sync update",
+          "Address normalization: PostGIS for lat/lng, GIST index for geo queries",
+          "PMS mappings: property_external_id table with is_sor flag for System of Record",
+          "Fee calculation types: PER_STAY, PER_NIGHT, PER_GUEST, PER_PET (stored in conditions JSONB)",
+          "Cancellation policies: separate cancellation_policy table with tiers JSONB (days_before, refund_percent)"
+        ],
+        "error_modes": [
+          "400 INVALID_FIELD: invalid field name for override",
+          "403 INSUFFICIENT_PRIORITY: lower priority override exists, cannot override",
+          "409 OVERRIDE_EXISTS: override already exists at same priority",
+          "404 PROPERTY_NOT_FOUND: property does not exist",
+          "Sync conflict: from_value mismatch → create conflict record, keep override, emit property.override_conflict event",
+          "Cache inconsistency: flush cache, recompute effective data from PostgreSQL",
+          "Redis unavailable → query PostgreSQL directly, slower but correct (p95 <50ms uncached vs <10ms cached)"
+        ]
+      },
+      {
+        "component_id": "payments_service",
+        "inputs": [
+          "POST /invoices: booking_id, customer_id, items [{type, description, cents}], due_date",
+          "GET /invoices/{id}: invoice_id (UUID)",
+          "POST /invoices/{id}/pay: stripe_payment_intent_id, amount_cents",
+          "POST /invoices/{id}/void: reason",
+          "POST /refunds: booking_id, amount_cents, reason, note",
+          "GET /refunds/{id}: refund_id (UUID)",
+          "POST /payouts/run: cycle (YYYY-Wnn), owner_ids, dry_run",
+          "GET /payouts/{id}: payout_id (UUID)",
+          "GET /owners/{id}/payouts: owner_id, status, limit, cursor",
+          "GET /reconciliation/status: admin only",
+          "GET /reconciliation/exceptions: admin only",
+          "POST /reconciliation/exceptions/{id}/resolve: resolution, note",
+          "Stripe webhooks: payment_intent.succeeded, payment_intent.payment_failed, charge.refunded, transfer.created, transfer.failed",
+          "Booking Service calls /invoices on booking creation and /refunds on cancellation",
+          "Nightly reconciliation job compares Stripe balance transactions with local records",
+          "PostgreSQL invoice + invoice_item + payment + refund + payout_snapshot + payout_config + stripe_object + reconciliation_exception tables"
+        ],
+        "outputs": [
+          "POST /invoices → 201 {id, invoice_number, status, subtotal_cents, tax_cents, total_cents, due_cents, stripe_payment_intent_id, payment_url, created_at}",
+          "GET /invoices/{id} → 200 {invoice details with line items, paid_cents, refunded_cents, due_cents, paid_at}",
+          "POST /invoices/{id}/pay → 200 {status: 'PAID' or 'PARTIALLY_PAID', paid_cents, due_cents, paid_at}",
+          "POST /invoices/{id}/void → 200 {status: 'VOID', voided_at}",
+          "POST /refunds → 201 {id, invoice_id, amount_cents, status: 'SUCCEEDED', stripe_refund_id, created_at}",
+          "GET /refunds/{id} → 200 {refund details with status, completed_at}",
+          "POST /payouts/run → 200 {cycle, payout_snapshots: [{id, owner_id, booking_count, total_cents, status}], total_payout_cents}",
+          "GET /payouts/{id} → 200 {payout snapshot with bookings array, totals, hash, prev_hash, stripe_transfer_ids, paid_at}",
+          "GET /owners/{id}/payouts → {owner_id, payouts: [], next_cursor}",
+          "GET /reconciliation/status → {last_run, status, exceptions_pending, drift_amount_cents, next_run}",
+          "GET /reconciliation/exceptions → {exceptions: [{type, stripe_id, amount_cents, status}], total}",
+          "payment.invoice_created event: {invoice_id, booking_id, total_cents}",
+          "payment.succeeded event: {invoice_id, amount_cents}",
+          "payment.failed event: {invoice_id, error}",
+          "payment.refunded event: {refund_id, invoice_id, amount_cents}",
+          "payment.payout_created event: {payout_id, owner_id, total_cents}",
+          "payment.payout_sent event: {payout_id, owner_id, stripe_transfer_id}",
+          "payment.reconciliation_mismatch event: {exception_type, stripe_id, amount}",
+          "Immutable payout snapshots with SHA256 hash chain (content_hash, prev_hash)"
+        ],
+        "invariants": [
+          "Stripe is ledger: this service maintains read-optimized mirror for queries",
+          "Mirror via webhooks: payment_intent.succeeded → update invoice.paid_cents and payment.status",
+          "Invoice statuses: DRAFT, OPEN, PAID, PARTIALLY_PAID, VOID, REFUNDED",
+          "Payment capture: amount at PMS price (authoritative), not initial quote",
+          "Refund validation: amount_cents <= paid_cents - refunded_cents, else 400 EXCEEDS_PAID",
+          "Payout immutability: once payout_snapshot created, numbers never change, hash chain prevents tampering",
+          "Hash chain: content_hash = SHA256(sorted JSON of {owner_id, bookings, totals}), prev_hash links to previous payout",
+          "Platform fee: stored per invoice (platform_fee_cents, platform_fee_rate), default 15%",
+          "Payout calculation: sum(booking gross - platform_fee) + adjustments - capex_deduction",
+          "Reconciliation: nightly job (48hr window), compares Stripe balance_transaction with local records",
+          "Exception types: ORPHANED_CHARGE, ORPHANED_REFUND, ORPHANED_TRANSFER, AMOUNT_MISMATCH",
+          "Stripe object mirror: stripe_object table stores raw Stripe payloads for reconciliation",
+          "Currency handling: invoice.currency = property currency, no conversion (UI handles display conversion)",
+          "Money representation: cents (integers) with Banker's rounding (round half to even)"
+        ],
+        "error_modes": [
+          "400 INVALID_ITEMS: invalid items or amounts in invoice creation",
+          "409 INVOICE_EXISTS: invoice already exists for booking",
+          "400 EXCEEDS_PAID: refund amount exceeds paid amount",
+          "402 REFUND_FAILED: Stripe refund failed (capture error, re-throw with context)",
+          "404 NOT_FOUND: booking/invoice not found for refund",
+          "Webhook processing failure: retry with exponential backoff (1s, 2s, 4s, 8s, 16s, max 60s, max 5 attempts), then DLQ",
+          "Stripe API failure: circuit breaker (5 failures → open, 60s reset timeout), retry with idempotency keys",
+          "Reconciliation drift: create reconciliation_exception record, emit alert, manual resolution required",
+          "Orphaned Stripe charge: no matching payment record → ORPHANED_CHARGE exception",
+          "Amount mismatch: payment.amount_cents != Stripe charge amount → AMOUNT_MISMATCH exception"
+        ]
+      },
+      {
+        "component_id": "sync_service",
+        "inputs": [
+          "POST /webhook/{pms_type}: webhook payload from external PMS (Guesty, Hostaway, Streamline, Escapia, OwnerRez, Lodgify, RentalsUnited, TrackPMS)",
+          "POST /sync/push: property_id, subsystems (availability, pricing, property), date_range (outbound sync for OPERATED properties)",
+          "POST /sync/pull: property_id, subsystems, full (boolean, inbound sync for BRANDED properties)",
+          "GET /sync/jobs/{job_id}: job_id (UUID)",
+          "POST /sync/reconcile: property_ids, subsystems (full reconciliation job)",
+          "GET /sync/reconcile/{job_id}: job_id",
+          "GET /sync/status: overall sync health",
+          "GET /sync/queue: queue depths by partner",
+          "GET /sync/rate-limits: current rate limit state by partner",
+          "POST /sync/pms/quote: property_id, check_in, check_out, guests (internal, called by Booking Service)",
+          "POST /sync/pms/reservation: property_id, check_in, check_out, guest, quote_id (internal, called by Booking Service)",
+          "DELETE /sync/pms/reservation/{external_id}: external_id (internal, called by Booking Service for cancellation)",
+          "Property Service: property PMS mapping lookups, unit_id resolution",
+          "Availability Service: /apply_external_blocks for inbound, /get_range for outbound",
+          "Pricing Service: /set for inbound, /rate for outbound",
+          "Redis for rate limiters (token bucket), debounce buffers, job queues",
+          "PostgreSQL pms_connection + channel_connection + sync_job + sync_job_subsystem + webhook_event + sync_reconciliation + rate_limit_state + fee_dictionary + pms_quote_cache + pms_reservation_mapping tables"
+        ],
+        "outputs": [
+          "POST /webhook/{pms_type} → 200 {received: true, event_id} (acknowledge within 500ms)",
+          "POST /sync/push → 202 {job_id, status: 'QUEUED', subsystem_jobs: []}",
+          "POST /sync/pull → 202 {job_id, status: 'QUEUED', subsystem_jobs: []}",
+          "GET /sync/jobs/{id} → 200 {job_id, job_type, property_id, pms_type, status, subsystem_jobs: [{subsystem, status, records_synced, completed_at}], created_at, completed_at}",
+          "POST /sync/reconcile → 202 {job_id, status: 'QUEUED', property_count}",
+          "GET /sync/reconcile/{id} → 200 {job_id, status, properties_checked, discrepancies_found, discrepancies: [{property_id, subsystem, diff}], completed_at}",
+          "GET /sync/status → 200 {status, adapters: {pms_type: {status, last_sync}}, queue_depths: {}, webhooks_received_24h, sync_success_rate_24h}",
+          "GET /sync/queue → {queues: [{partner, pending, processing, failed_24h}]}",
+          "GET /sync/rate-limits → {limits: [{partner, max_per_minute, current_tokens, in_backoff, backoff_until}]}",
+          "POST /sync/pms/quote → 200 {quote_id, pms_type, rates, fees, total_cents, expires_at}",
+          "POST /sync/pms/reservation → 201 {external_id, confirmation_code, status: 'CONFIRMED'}",
+          "DELETE /sync/pms/reservation/{id} → 200 {external_id, cancelled: true}",
+          "sync.property_pulled event: {property_id, pms_type}",
+          "sync.property_pushed event: {property_id, pms_type}",
+          "sync.availability_pulled event: {property_id, dates_count}",
+          "sync.availability_pushed event: {property_id, dates_count}",
+          "sync.pricing_pulled event: {property_id, dates_count}",
+          "sync.booking_received event: {property_id, external_id}",
+          "sync.rate_limit_backoff event: {partner, backoff_seconds}",
+          "sync.reconciliation_drift event: {property_id, subsystem, diff}",
+          "sync.failed event: {job_id, error}",
+          "Debounced availability updates: 5s coalesce window, batch changed dates into single API call",
+          "Canonical structs: PropertyCore, PropertyLocation, PropertyCapacity, PropertyAmenities, PropertyMedia, PropertyPolicies, AvailabilityBlock, NightlyRate, Fee, Taxes, Reservation"
+        ],
+        "invariants": [
+          "Two-layer architecture: Connectors (transport: HTTP/SOAP/iCal with auth/retries/rate limits) + Adapters (translation: PMS format ↔ canonical structs)",
+          "Three independent subsystems: Property, Availability, Pricing (separate queues, run independently)",
+          "Two sync modes: OPERATED (outbound, Wander SoR) and BRANDED (inbound, external PMS SoR)",
+          "Token bucket rate limiting per credential_id (not global per PMS): max_tokens, refill_rate, Redis-backed",
+          "Rate limit backoff: exponential with jitter (min(60s, 2^attempt) + random(0, 10%)), reset on success",
+          "Webhook idempotency: payload_hash (SHA256) stored in webhook_event, duplicates within 24hr window ignored",
+          "Debouncing: 5s coalesce window, buffer changes, flush after quiet period",
+          "Reconciliation: nightly job (90-day window), compares internal vs external, detects MISSING_INTERNAL, MISSING_EXTERNAL, VALUE_MISMATCH",
+          "Fee dictionary: fee_dictionary table maps external_code (per PMS) to standard_type (CLEANING, PET, EXTRA_GUEST, etc.)",
+          "Bulk ingestion: 10K properties <1hr = ~3 properties/sec, parallelism = rate_limit / (3 * 60) per PMS",
+          "Delta sync: webhook-driven (events.raw Kafka topic), debounced, targeted date ranges",
+          "Full sync: scheduled (property: weekly, availability/pricing: daily) or manual trigger",
+          "iCal polling: adaptive interval (15min for active, 60min for quiet properties)",
+          "Quote caching: pms_quote_cache table with expires_at (15min TTL for Streamline, 5min for others)",
+          "Connector retry: exponential backoff (1s, 2s, 4s, 8s, 16s, max 60s), max 5 attempts, then DLQ"
+        ],
+        "error_modes": [
+          "Webhook validation failure: HMAC mismatch → 401 UNAUTHORIZED, log and alert",
+          "Rate limit exceeded: token unavailable → wait (refill_rate) or backoff if external 429 received",
+          "PMS API failure: circuit breaker per partner (5 failures → open, 60s reset), retry with backoff, emit sync.failed event",
+          "Adapter translation failure: invalid external format → log to DLQ, emit alert, skip record",
+          "Reconciliation drift: discrepancy detected → create sync_reconciliation record, emit sync.reconciliation_drift event, manual resolution or auto-fix (prefer external for BRANDED, internal for OPERATED)",
+          "Fee mapping missing: external fee code not in fee_dictionary → map to FEE_MISC, log for dictionary update",
+          "Quote expiry: pms_quote_cache.expires_at < now → re-fetch from PMS, 5s timeout",
+          "Reservation creation failure: PMS 400/500 → retry (max 3 attempts), return error to Booking Service",
+          "Webhook queue backlog: depth >1000 → alert ops, scale consumers (HPA on Kafka lag >10k for 5min)",
+          "iCal parse failure: invalid .ics format → log, skip, mark feed as degraded"
+        ]
+      },
+      {
+        "component_id": "event_service",
+        "inputs": [
+          "SDK emit(): event_kind, entity_kind, entity_id, actor, context, workflow_kind, workflow_id, session_id, external_refs, level",
+          "All services call SDK to emit events (fire-and-forget, async buffered)",
+          "Kafka events.raw topic: ingestion firehose (32 partitions, 7-day retention)",
+          "Classifier consumes events.raw: deduplicates (Redis 5min window), validates, routes via bitmask",
+          "Subsystem consumers: Audit (events.audit topic), Alerts (events.alert), Logging (events.log), Monitoring (events.metric), Analytics (events.analytics)",
+          "YAML routing config: /etc/wander/event-service/routing.yaml (hot-reload via k8s ConfigMap)",
+          "PostgreSQL audit_event table for permanent storage",
+          "Handler registry: PagerDuty, Slack, Email, Datadog, CloudWatch, Prometheus, StatsD, Amplitude, Segment, BigQuery"
+        ],
+        "outputs": [
+          "GET /events/audit → 200 {events: [], next_cursor, total} (query by entity_kind, entity_id, event_kind, actor_id, workflow_id, level, from/to timestamps)",
+          "GET /events/audit/{event_id} → 200 {event details}",
+          "GET /events/audit/entity/{entity_kind}/{entity_id} → {entity_kind, entity_id, events: []} (full entity timeline)",
+          "GET /events/audit/workflow/{workflow_kind}/{workflow_id} → {events: []} (all events for workflow)",
+          "GET /events/audit/actor/{actor_kind}/{actor_id} → {events: []} (all events by actor)",
+          "GET /events/audit/ref/{ref_kind}/{ref_id} → {events: []} (query by external_refs: ubr, pms_confirmation, stripe_charge, etc.)",
+          "GET /events/config/routing → routing config (admin only)",
+          "GET /events/handlers/status → {handlers: [{name, status, queue_depth, processed_24h, failed_24h, last_error}]}",
+          "GET /events/metrics → {ingestion: {events_per_second, events_24h, deduplicated_24h}, processing: {latency_p50/p95/p99_ms}, by_event_kind: {}}",
+          "GET /health → {status, classifier: {status, lag}, subsystems: {}, handlers: {circuit}, dependencies: {kafka, redis, postgres}}",
+          "Content-addressable event_id: evt_{SHA256(event_kind + entity_kind + entity_id + actor + context + workflow_id + external_refs)[:16].hex()}",
+          "Kafka subsystem topics: events.audit (16 partitions, 7-day retention), events.alert/log/metric (8/16/8 partitions, 1-day retention), events.analytics (8 partitions, 3-day retention), events.dlq (8 partitions, 30-day retention)",
+          "Audit log: PostgreSQL append-only, 7-year retention, immutable (UPDATE/DELETE triggers raise exception)",
+          "Event routing: bitmask flags (PAGERDUTY=0x0001, SLACK=0x0002, EMAIL=0x0004, DATADOG=0x0008, CLOUDWATCH=0x0010, STDOUT=0x0020, PROMETHEUS=0x0040, STATSD=0x0080, AMPLITUDE=0x0100, SEGMENT=0x0200, BIGQUERY=0x0400, AUDIT=0x1000)",
+          "Handler batching: default 100 events or 5s flush interval, circuit breaker (5 failures → open, 60s reset)"
+        ],
+        "invariants": [
+          "Content-addressable IDs: same content → same event_id → automatic idempotency (5min dedup window)",
+          "Hash excludes metadata: timestamp, session_id, level not in hash (only 'what happened' content)",
+          "Kafka partitioning: by entity_id hash for ordering within entity",
+          "Deduplication: Redis setnx with 5min TTL, duplicate drops increments metric but continues processing",
+          "Classifier routing: match rules in order (first match wins), default destinations if no match",
+          "Destination bitmask: bitwise OR for multiple destinations, AND for subsystem checks",
+          "Audit immutability: INSERT allowed, UPDATE/DELETE blocked by trigger (raise exception 'Audit events are immutable')",
+          "Event schema validation: json_schema per event_kind in event_schema table (future enhancement)",
+          "DLQ: 3 retries with exponential backoff, then move to events.dlq for manual review",
+          "Circuit breaker: per handler, 5 failures → open, 60s reset timeout, half-open allows test request",
+          "External refs: array of {kind, id}, GIN index for fast lookup (ubr, pms_confirmation, stripe_charge, airbnb_reservation, etc.)",
+          "Level filtering: default 'info', overrides per event_kind pattern (e.g., 'booking.*': 'debug', 'health.*': 'warn')",
+          "Handler batching: batch_size (default 100) or flush_interval (default 5s), whichever comes first",
+          "Kafka lag monitoring: alert if lag >10k messages for >5min, trigger HPA for consumer scaling"
+        ],
+        "error_modes": [
+          "SDK buffer full (10K events): drop event, log locally, emit metric (target <0.001% loss)",
+          "Kafka unavailable: SDK buffers, retries with exponential backoff (1s, 2s, 4s, max 60s, indefinite)",
+          "Classifier down: events queue in events.raw topic (Kafka retention 7 days)",
+          "Subsystem down: events queue in subsystem topic (1-7 day retention depending on topic)",
+          "Handler failure: circuit breaker opens, events buffer in memory (10K limit), then drop with metric",
+          "Redis unavailable: skip deduplication, continue processing (prefer availability over dedup accuracy)",
+          "PostgreSQL unavailable: Audit subsystem pauses, Kafka holds events, resume when DB recovers",
+          "External API down (PagerDuty, Slack, etc.): circuit breaker opens, events buffer, retry after reset timeout",
+          "DLQ overflow: alert ops, manual intervention required (review/resolve/ignore exceptions)",
+          "Event schema violation: log to DLQ, emit alert, continue processing other events"
+        ]
+      },
+      {
+        "component_id": "infrastructure",
+        "inputs": [
+          "PostgreSQL 14+ with streaming replication: 1 primary, 2 replicas (async replication, read-only replicas)",
+          "pgBouncer connection pooling: transaction mode, 5-20 connections per service, max 200 global, 30s max_client_conn, 60s server_idle_timeout",
+          "Redis Cluster: 3 masters (CRC16 hash slot partitioning), 3 replicas, Sentinel for failover (30s detection, 60s failover), lazy cache warming on failover",
+          "Kafka cluster: 32 partitions for events.raw, 16 for audit/log/analytics, 8 for alerts/metrics, 7-day retention for raw events, 1-3 days for subsystem topics, replication factor 3",
+          "R2 for document storage: property contracts, PDFs, images (metadata in PostgreSQL, binary in R2)",
+          "PostGIS extension: GIST index for geo queries (property addresses: lat/lng)",
+          "Monitoring: Prometheus metrics (rate, gauge, histogram, counter), Datadog logs/APM, Grafana dashboards",
+          "Kubernetes HPA: trigger on Kafka lag >10k messages for 5min, scale consumers horizontally",
+          "Health checks: DB ping every 30s, 3 consecutive failures → mark unhealthy, remove from load balancer",
+          "Secrets: Vault or k8s Secrets for PMS credentials, Stripe keys, database passwords, API tokens",
+          "Backup: PostgreSQL daily backups (7-day retention), WAL archiving for PITR (point-in-time recovery)"
+        ],
+        "outputs": [
+          "PostgreSQL connection strings: primary (write), replica (read-only) via pgBouncer",
+          "Redis connection: Cluster-aware client (e.g., redis-py-cluster) with automatic failover handling",
+          "Kafka bootstrap servers: cluster endpoint for producer/consumer clients",
+          "R2 signed URLs: temporary access for document uploads/downloads (5min expiry)",
+          "Prometheus /metrics endpoints: per service, scraped every 15s",
+          "Datadog traces: APM tracing via OTEL (OpenTelemetry) integration, 1% sampling for high-volume endpoints",
+          "Grafana dashboards: service-level (latency, throughput, errors), infrastructure-level (CPU, memory, disk, network), business-level (bookings/day, revenue, conversion rate)",
+          "HPA scaling events: Kubernetes events for scaling actions (scale up/down, current/desired replicas)",
+          "Health endpoints: GET /health per service (200 OK = healthy, 503 = degraded/unhealthy)",
+          "Alerting: Prometheus Alertmanager → PagerDuty/Slack for critical alerts (DB down, Kafka lag >100k, p95 latency >5s, error rate >1%)"
+        ],
+        "invariants": [
+          "PostgreSQL as source of truth: all persistent state, transactional guarantees, simpler debugging than event sourcing",
+          "Redis as cache only: if Redis dies, system is slow but correct (fallback to PostgreSQL)",
+          "pgBouncer transaction mode: connection per transaction, not per session (better pooling, lower connection overhead)",
+          "Connection pool limits: 5-20 per service (based on concurrency), max 200 global to avoid PostgreSQL connection exhaustion",
+          "Redis failover: Sentinel quorum 2/3, lazy cache warming (cache miss → query PostgreSQL, populate Redis, return result)",
+          "Kafka partitioning: String.hashCode(entity_id) % partitions for entity ordering, accept hot partition risk (rare in practice)",
+          "Kafka retention: 7 days for audit trail, 1-3 days for operational topics, 30 days for DLQ (manual review window)",
+          "R2 object naming: {entity_kind}/{entity_id}/{timestamp}_{filename} for organization, versioning via timestamp",
+          "PostGIS queries: ST_DWithin for radius search, GIST index on ST_MakePoint(longitude, latitude) for <50ms p95",
+          "Monitoring sample rate: 1% for high-volume endpoints (>100 req/s), 100% for low-volume (<10 req/s)",
+          "HPA cooldown: 5min after scale-up, 15min after scale-down to prevent flapping",
+          "Health check timeouts: 5s per check, 3 consecutive failures → unhealthy, exponential backoff for retry (1s, 2s, 4s, max 30s)",
+          "Backup retention: 7 days for daily backups, 30 days for monthly, 1 year for yearly (compliance requirement)",
+          "Secrets rotation: 90-day rotation for PMS credentials, 180-day for Stripe keys, automated via Vault"
+        ],
+        "error_modes": [
+          "PostgreSQL primary down: promote replica to primary (manual or automatic with Patroni), ETA ~5min for manual failover",
+          "PostgreSQL replica down: remove from read pool, continue serving reads from remaining replicas",
+          "pgBouncer failure: direct connection to PostgreSQL (fallback), slower but operational",
+          "Redis Cluster node down: Sentinel promotes replica to master (30s detection, 60s failover), lazy cache warming on new master",
+          "Redis Cluster split-brain: Sentinel quorum prevents, minority partition becomes read-only",
+          "Kafka broker down: replication factor 3 ensures no data loss, leader election for affected partitions (~10s)",
+          "Kafka consumer lag >10k: alert ops, trigger HPA (scale consumers), investigate producer spike or consumer bottleneck",
+          "R2 unavailable: retry with exponential backoff (1s, 2s, 4s, 8s, max 60s), fallback to 'document unavailable' message if >5min",
+          "Prometheus scrape failure: alert after 3 consecutive failures, check service health endpoint",
+          "Datadog API down: buffer traces locally (1hr max), flush when API recovers",
+          "HPA failure: manual scaling via kubectl, investigate HPA metrics/logs",
+          "Health check degradation: service returns 503, load balancer removes from pool, logs reason (DB timeout, Redis unavailable, Kafka lag, etc.)"
+        ]
+      }
+    ]
+  },
+  "cross_component_constraints": [
+    "Date handling: All dates in YYYY-MM-DD format, UTC normalization at service boundaries, timezone stored per property (Property Service), applied in UI layer only",
+    "Money representation: All amounts in cents (integers) with Banker's rounding (round half to even), currency per property (Property Service → Pricing Service → Booking Service → Payments Service), no conversion in backend",
+    "Idempotency: All mutation endpoints require idempotency_key (client-generated UUID), same key returns same result without side effects, 24hr dedup window",
+    "Event correlation: workflow_id links related events across services (e.g., booking flow: availability.checked → pricing.quoted → booking.created → payment.succeeded), entity_id for single-entity history",
+    "External references: Standardized external_refs array [{kind, id}] in Event Service, supported kinds: ubr, pms_confirmation, stripe_charge, stripe_payout, stripe_refund, airbnb_reservation, vrbo_reservation, booking_com_reservation",
+    "System of Record (SoR) authority: Property Service determines SoR per unit (Wander vs external PMS), Booking Service enforces dual-table design (booking for Wander SoR with EXCLUDE constraint, booking_stub for external SoR without), Sync Service respects sync_mode per property",
+    "PMS verification protocol: Booking Service calls Sync Service /sync/pms/quote (5s timeout) and /sync/pms/reservation (5s timeout), price tolerance ±5% (else abort + alert), PMS failure → auto-refund + release availability",
+    "Cache invalidation: Property Service calls Availability.flush and Pricing.flush on sync updates, Sync Service invalidates Redis keys on write, services fallback to PostgreSQL on cache miss",
+    "Rate limiting: Sync Service enforces token bucket per credential_id (not global per PMS), shared via Redis, respects external rate limits (e.g., Guesty 120/min, Hostaway 100/min, Streamline 60/min)",
+    "Error propagation: Services return structured errors with code + message (e.g., {error: {code: 'DATES_UNAVAILABLE', message: '...', details: {}}}), 4xx for client errors, 5xx for server errors, retryable errors include Retry-After header",
+    "Audit trail: All state-changing operations emit events to Event Service (booking.created, property.updated, payment.succeeded, etc.), Event Service routes to Audit subsystem (PostgreSQL append-only, 7yr retention), external_refs for cross-system correlation",
+    "Sync-to-service boundaries: Sync Service translates canonical structs → internal format → calls service APIs directly (not via events), e.g., Availability.apply_external_blocks, Pricing.set, Property.update_from_sync (not exposed via HTTP, internal only)",
+    "Dual-write reconciliation: During migration, services dual-write to old + new tables, nightly reconciliation job compares for drift, discrepancies logged + alerted, manual resolution via admin UI, cutover after 30-day dual-write period with <0.01% drift",
+    "Connection pooling: All services use pgBouncer in transaction mode (not session), 5-20 connections per service based on concurrency, max 200 global, 30s max_client_conn, 60s server_idle_timeout",
+    "Health checks: All services implement GET /health endpoint (200 = healthy, 503 = degraded), check DB ping (30s interval), Redis ping, Kafka lag, downstream service availability, 3 consecutive failures → unhealthy → remove from load balancer",
+    "Bookability logic: Property Service owns structural bookability (is_bookable flag, status='LIVE'), Booking Service owns transactional bookability (availability check, policy enforcement, PMS verification), both must pass for successful booking",
+    "Hash chain verification: Payments Service payout_snapshot hash computed as SHA256(sorted JSON of {owner_id, period_start, period_end, bookings, totals}), prev_hash links to previous payout, verification checks: hash(current) == stored, prev_hash == hash(previous), excludes mutable fields (stripe_transfer_id, paid_at, status)",
+    "Kafka consumer scaling: All Kafka consumers in consumer groups, Kubernetes HPA triggers on lag >10k messages for >5min, scales consumer replicas (1 replica per partition max), partitions pre-allocated (32 for events.raw, 16 for audit/log/analytics, 8 for alerts/metrics)",
+    "Redis sharding strategy: Availability and Pricing use hash-based sharding (CRC16 for cluster, modulo for manual), all data for a unit on one shard, multi-unit queries fan-out in parallel by shard, Sync Service rate limiters use Redis but not sharded (small dataset, <10 partners)",
+    "Tax calculation flow: Property Service stores tax configuration (occupancy tax rate, resort fee rate), Pricing Service caches final rates (including taxes if PMS provides), Booking Service calculates full quote (rates + fees + taxes) using external tax service (TaxJar/Stripe Tax) or Property config, Payments Service does NOT store tax breakdown (only invoice line items with type='TAX')"
+  ],
+  "implementation_order": {
+    "steps": [
+      {
+        "component_id": "infrastructure",
+        "order": 1,
+        "rationale": "Foundation layer with no dependencies. Provides PostgreSQL, Redis, Kafka, R2, monitoring, and all infrastructure primitives that every other service depends on. Must be deployed and stable first."
+      },
+      {
+        "component_id": "event_service",
+        "order": 2,
+        "rationale": "Core infrastructure service with no business logic dependencies. All other services emit events for audit, alerting, and monitoring. Should be operational early so subsequent services can emit events during their own testing."
+      },
+      {
+        "component_id": "availability_service",
+        "order": 3,
+        "rationale": "Foundation service with no dependencies. Required by both booking_service and sync_service. Can be built and tested independently with mock availability data."
+      },
+      {
+        "component_id": "pricing_service",
+        "order": 3,
+        "rationale": "Foundation service with no dependencies. Required by both booking_service and sync_service. Can be built and tested independently with mock pricing data."
+      },
+      {
+        "component_id": "property_service",
+        "order": 3,
+        "rationale": "Foundation service with no dependencies. Required by booking_service and sync_service. Owns property metadata, SoR authority, policies, and fees. Can be built and tested independently."
+      },
+      {
+        "component_id": "sync_service",
+        "order": 4,
+        "rationale": "Depends on property_service (PMS mappings), availability_service (block management), and pricing_service (rate updates). Does NOT depend on booking_service or payments_service. Handles PMS integration and provides /sync/pms/quote and /sync/pms/reservation endpoints needed by booking_service."
+      },
+      {
+        "component_id": "payments_service",
+        "order": 5,
+        "rationale": "Circular dependency detected with booking_service. However, payments_service can be implemented with stub/mock booking_id references. The service creates invoices, processes payments, handles refunds, and manages payouts independently. Booking_service dependency is only for referencing booking_id in invoice creation."
+      },
+      {
+        "component_id": "booking_service",
+        "order": 6,
+        "rationale": "Final service with most dependencies: availability_service (availability checks), pricing_service (quote calculation), payments_service (invoice/payment processing), sync_service (PMS verification), and property_service (policies/fees). Acts as orchestrator for the booking workflow. Must be last due to circular dependency with payments_service being resolved by implementing payments_service first with mock booking references."
+      }
+    ],
+    "parallel_groups": [
+      [
+        "availability_service",
+        "pricing_service",
+        "property_service"
+      ]
+    ],
+    "confidence": 0.92,
+    "reasoning": "The implementation order follows a clear topological sort with these key considerations:\n\n**Foundation Layer (Orders 1-2):**\n- infrastructure must be first as all services depend on PostgreSQL, Redis, Kafka, etc.\n- event_service is second as a cross-cutting infrastructure concern that all services use for audit/monitoring\n\n**Core Services Layer (Order 3 - Parallel Group):**\n- availability_service, pricing_service, and property_service have NO dependencies and can be built in parallel\n- These are pure data services that can be tested independently with mock data\n- All three are required by higher-level services\n\n**Integration Layer (Order 4):**\n- sync_service depends on the three core services (property for PMS mappings, availability for blocks, pricing for rates)\n- Provides PMS integration endpoints needed by booking_service\n- Does NOT depend on booking_service or payments_service\n\n**Financial Layer (Order 5):**\n- payments_service has a circular dependency with booking_service\n- Breaking the cycle: payments_service can be implemented first with stub booking_id references\n- The service logic (invoices, Stripe integration, refunds, payouts) is independent\n- Only references bookings, doesn't orchestrate them\n\n**Orchestration Layer (Order 6):**\n- booking_service is last, orchestrating all other services\n- Depends on availability (checks), pricing (quotes), payments (invoices/charges), sync (PMS verification), property (policies)\n- Circular dependency with payments_service resolved by implementing payments first\n\n**Confidence: 0.92** - High confidence in the ordering. The only complexity is the circular dependency between booking_service and payments_service, which is resolved by implementing payments_service first with forward references to booking IDs. This is a common pattern in financial systems."
+  },
+  "decisions": [
+    {
+      "ambiguity": "Redis sharding strategy: Spec mentions 'hash-sharded by unit_id' and 'region-sharded' but doesn't specify shard count, consistent hashing algorithm, or resharding strategy",
+      "decision": "Use Redis Cluster with 3 master nodes (9 total with replicas) for Pricing/Availability. Partition using CRC16 of unit_id modulo 16384 (Redis Cluster default). Region-sharding for Availability means logical grouping via key prefix (avail:{region}:{unit_id}:*) but still distributed across cluster. Resharding uses Redis Cluster's built-in MIGRATE commands.",
+      "rationale": "Redis Cluster is the standard for horizontal scaling. CRC16 mod 16384 is Redis's native algorithm, minimizing custom code. 3 masters handle 500 properties * 12 months * 2 services = ~12K keys comfortably. Region prefix allows targeted cache invalidation while leveraging cluster distribution. Resharding via MIGRATE is battle-tested. Simpler than custom consistent hashing and fits the 'simple over complex' principle."
+    },
+    {
+      "ambiguity": "Kafka partition key strategy: Spec says 'partitioned by entity_id hash' but doesn't specify hash function, hot partition handling, or rebalancing",
+      "decision": "Use Java's String.hashCode() of entity_id modulo partition count for deterministic routing. Start with 32 partitions for events.raw (spec says 32), 16 for audit/log/analytics, 8 for alerts/metrics. Hot partitions: Accept them — ordering per entity is the goal. If a single property/booking generates high volume, that's fine; Kafka handles it. Rebalancing: Kafka's default cooperative-sticky assignor.",
+      "rationale": "Java's hashCode is deterministic, widely used, and matches JVM-based Kafka producer defaults. Modulo partition count is simple and sufficient. Hot partitions are intentional: we WANT all events for booking_123 on the same partition for ordering. Kafka's built-in assignor handles consumer rebalancing gracefully. No custom partitioning logic needed. Aligns with 'simplicity' and 'determinism' constraints."
+    },
+    {
+      "ambiguity": "PMS adapter interface enforcement: While there's a Protocol interface defined, no runtime validation or schema registry mechanism is specified",
+      "decision": "Use Python dataclasses with runtime type checking (via typeguard or beartype) for adapter outputs. Define canonical structs (PropertyCore, AvailabilityBlock, etc.) as frozen dataclasses. Adapters must return these types; decorator validates at call time. No separate schema registry — types ARE the contract. Fail fast on type mismatch with clear error.",
+      "rationale": "Python's type system + runtime validation is simpler than a separate schema registry (no Kafka Schema Registry, no Avro overhead). Dataclasses are lightweight, self-documenting, and enforce structure. Frozen dataclasses prevent mutation after creation. Failing fast with typeguard catches integration bugs immediately. Fits 'simple' and 'deterministic' constraints. Avoids the complexity of maintaining a separate registry while still enforcing contracts."
+    },
+    {
+      "ambiguity": "Booking Service PMS verification protocol: Spec says 'verify with PMS before confirming' but doesn't specify timeout, what constitutes 'verified', or fallback behavior",
+      "decision": "PMS verification = 2-step: (1) GET availability for dates (timeout: 5s), (2) POST quote (timeout: 5s). 'Verified' means: (1) returns available=true, (2) quote matches our cached price within 5% tolerance. Total budget: 10s of the 3s booking flow, so parallelize with payment auth. On timeout: treat as unavailable, cancel payment auth, return 409 DATES_UNAVAILABLE. No retry — user can retry themselves. On price mismatch >5%: return 422 with new price, let user re-confirm.",
+      "rationale": "Two calls (availability + quote) are minimal to satisfy 'PMS is authoritative'. 5s per call is aggressive but fits sub-3s total flow via parallelization. 5% tolerance handles minor PMS rate fluctuations without rejecting bookings. No retry on timeout: the 3-second constraint doesn't allow it, and retries could cause double-booking if PMS is slow but succeeds. Failing fast with clear errors (409, 422) is better than hanging. Simple, deterministic, safe."
+    },
+    {
+      "ambiguity": "Date format at PMS boundaries: Spec uses ISO8601, but doesn't specify timezone handling when PMSs send local time vs UTC",
+      "decision": "Canonical internal format: YYYY-MM-DD (date-only, no time) for availability/pricing, stored as PostgreSQL DATE. Time-aware events use ISO8601 with UTC (YYYY-MM-DDTHH:MM:SSZ). Adapter layer: Convert PMS local time to UTC using property.timezone (from Property Service). If PMS doesn't provide timezone, assume UTC and log warning. Date-only fields: Parse string, ignore time component, normalize to midnight UTC.",
+      "rationale": "DATE type avoids timezone ambiguity for nightly data (availability/pricing). Events need time precision so use timestamptz (UTC). Adapters do the dirty work of conversion, keeping core services timezone-agnostic. Assuming UTC when unknown is safer than guessing. Logging warnings lets us detect data quality issues. This eliminates a huge class of bugs (off-by-one-day errors) while staying simple."
+    },
+    {
+      "ambiguity": "Money representation: Spec uses cents (integers), but doesn't specify rounding rules for currency conversion or fractional cents in proration",
+      "decision": "Always store in cents (integers). Rounding: Banker's rounding (round half to even) for all calculations. Proration: Distribute remainder cents to first N items (e.g., 5-night stay, $100.01 total -> $20.01, $20, $20, $20, $20). Currency conversion: Never convert in backend — always bill in property's native currency. If UI shows converted prices, it's for display only, rounded to 2 decimals, not used for transactions.",
+      "rationale": "Integer cents eliminate floating-point errors. Banker's rounding is the accounting standard. Remainder distribution is simple and deterministic. Never converting currency in backend avoids exchange rate drift and regulatory issues (spec mentions 'Mexico requires local currency'). UI can show conversions as a convenience. This satisfies 'determinism' and 'correctness' constraints while staying simple."
+    },
+    {
+      "ambiguity": "External reference validation: UBR format is defined, but other external refs (PMS IDs, Stripe IDs, etc.) lack validation/normalization rules",
+      "decision": "Define regex patterns per ref kind: stripe_charge: ^ch_[a-zA-Z0-9]{24}$, stripe_payout: ^po_[a-zA-Z0-9]{24}$, ubr: ^UBR-[A-Za-z0-9]{43,}$, pms_confirmation: ^[A-Z0-9-]{5,20}$ (lenient). Validate on creation, reject invalid refs. Normalize: Trim whitespace, uppercase for PMS confirmations. Store as-is in JSONB. Index: GIN index on external_refs JSONB for fast lookup (spec already includes this).",
+      "rationale": "Regex validation catches typos/corruption at write time. Lenient PMS pattern accommodates different formats (Guesty 'GY-99887', Hostaway 'HA-12345', etc.) without per-PMS logic. Normalization prevents lookup misses due to whitespace/casing. GIN index on JSONB is PostgreSQL's native solution for array-of-object queries. Simple, robust, minimal maintenance."
+    },
+    {
+      "ambiguity": "Sync Service vs Availability Service boundary: When Sync pulls availability, does it directly call Availability Service API, or emit events for Availability to consume?",
+      "decision": "Sync directly calls Availability Service APIs (/acquire, /release, /apply_external_blocks). Sync is synchronous orchestrator for PMS data -> Wander services. After successful update, Sync emits sync.availability_pulled event for observability/analytics. Availability Service emits availability.changed event when data actually changes. Two separate event streams, different purposes.",
+      "rationale": "Direct API calls keep the critical path synchronous and simple. Sync's job is to coordinate, not to emit-and-hope. Events are for observability, not control flow. This matches the 'synchronous' principle throughout the spec (e.g., Booking Service). Async event consumption would add latency and failure modes (what if event is lost?). Direct calls = immediate error handling, clear ownership. Events = audit trail."
+    },
+    {
+      "ambiguity": "PMS down during booking: Spec says 'refund automatically' but doesn't specify retry count, timeout values, or whether to queue for later reconciliation",
+      "decision": "Booking flow: (1) Auth payment (5s timeout), (2) Verify PMS availability (5s timeout), (3) Create PMS reservation (10s timeout), (4) Capture payment (5s timeout). If step 3 fails: Cancel payment auth (5s timeout), return 503 SERVICE_UNAVAILABLE to user. No retries in booking flow (3s budget exhausted). Background: Reconciliation job runs every 5 minutes, detects orphaned auths (authorized but no booking), auto-cancels them after 30 minutes.",
+      "rationale": "Tight timeouts keep total flow under 3s (parallelizing steps 1&2 saves time). No retries: 3s constraint + user can retry themselves. Returning 503 is honest. Background reconciliation is the safety net: cleans up orphaned auths without blocking users. 30-minute window gives PMS time to recover if it's just a blip. This balances speed (user at checkout) with correctness (no charges without bookings)."
+    },
+    {
+      "ambiguity": "Dual-write consistency during migration: Strategy mentions dual-write but doesn't specify conflict resolution when old/new tables diverge",
+      "decision": "Dual-write: Write to new tables first, then old tables. On conflict: Log error, emit alert, continue (don't fail the request). Comparison job runs every 15 minutes: Queries both old and new tables, compares key fields (booking status, price, dates), logs discrepancies to reconciliation_exception table. Manual review via admin UI. After 30 days of clean comparison (zero discrepancies for 30 consecutive days), flip feature flag to stop dual-write.",
+      "rationale": "New-first write ensures the future state is always correct. Not failing the request keeps user experience intact. Comparison job catches drift without blocking operations. 30-day clean window proves stability before cutover. Manual review for exceptions is acceptable during migration (temporary state). This satisfies 'correctness' (eventual consistency verified) and 'simplicity' (no complex conflict resolution logic)."
+    },
+    {
+      "ambiguity": "Rate limit scope: Comment [bb] notes rate limits are per-credential/org, but schema has per-partner limits. Which is correct?",
+      "decision": "Rate limits are per (pms_type, credential_id) pair. Schema: Add credential_id to rate_limit_state table (composite key: partner, credential_id). Token bucket per credential. Config: Store max_per_minute in pms_connection table (per connection, not global). Aggregator view: rate_limiter.get_status() shows per-partner totals for monitoring, but enforcement is per-credential.",
+      "rationale": "Per-credential enforcement is correct (one org hitting limit doesn't block others). Schema needs credential_id to support this. Config in pms_connection table keeps it decentralized (each connection has its own limit). Monitoring view aggregates for dashboard simplicity. This matches the real-world API behavior (PMS rate limits are per API key) while keeping the monitoring view user-friendly."
+    },
+    {
+      "ambiguity": "Database connection pooling: All services use PostgreSQL but no pool sizing, connection limits, or failover strategy specified",
+      "decision": "Use pgBouncer in transaction pooling mode. Pool size per service: min=5, max=20, timeout=30s. PostgreSQL max_connections: 200 (across all services). Failover: Use PostgreSQL 14+ with streaming replication (1 primary, 2 replicas). Read replicas for heavy read services (Property, Availability search). Connection string: Use libpq failover syntax (host=primary,replica1,replica2). Health checks: Every service pings DB every 30s, marks unhealthy if 3 consecutive failures.",
+      "rationale": "pgBouncer is the standard solution, transaction mode fits short-lived requests. 20 connections per service * 7 services = 140, under 200 limit. Streaming replication is PostgreSQL's built-in HA. Read replicas offload primary for read-heavy workloads. Failover connection string is native PostgreSQL, no custom logic. Health checks catch DB issues fast. Simple, battle-tested, fits constraints."
+    },
+    {
+      "ambiguity": "Kafka consumer group sizing: Spec says 'add consumers for horizontal scaling' but doesn't specify auto-scaling triggers or max concurrency",
+      "decision": "Auto-scaling: Scale consumers when lag > 10,000 messages for 5 consecutive minutes. Max consumers per group = partition count (e.g., 32 consumers for events.raw since it has 32 partitions). Start with 1 consumer per subsystem per partition (16 total for audit subsystem since events.audit has 16 partitions). Use Kubernetes HPA with custom metric (Kafka lag) to trigger scaling. Max scale: 2x partition count (overprovisioning for spikes).",
+      "rationale": "Lag threshold (10K messages) balances responsiveness vs thrashing. 5-minute window prevents scaling on transient spikes. Max consumers = partitions is Kafka's hard limit (more consumers idle). Starting at 1:1 is simple and sufficient for initial load. HPA with custom metrics is Kubernetes-native. 2x overprovisioning handles spikes without waste. Deterministic, simple, leverages platform."
+    },
+    {
+      "ambiguity": "Redis failover strategy: Spec says 'if Redis dies, we're slow but correct' but doesn't specify fallback read path, cache warming strategy, or cluster topology",
+      "decision": "Topology: Redis Cluster with 3 masters, 3 replicas (2 replicas per master), deployed across 3 availability zones. Failover: Automatic via Redis Sentinel (30s detection, 60s failover). Fallback: On cache miss or Redis error, read from PostgreSQL, return result, skip cache write (don't retry Redis if it's down). Cache warming: On service startup, no pre-warming (lazy load). On Redis recovery, gradual warming via read traffic (no batch load).",
+      "rationale": "3 masters + replicas provide HA. Sentinel is Redis's native failover (simple, battle-tested). Fallback to PostgreSQL ensures correctness (spec's 'slow but correct'). Not retrying Redis writes prevents cascading failures. Lazy cache warming is simpler than pre-warming and avoids stampede on startup. Gradual warming via traffic is natural. This satisfies 'correctness' (PostgreSQL is truth) and 'simplicity' (no custom failover logic)."
+    },
+    {
+      "ambiguity": "Booking Service bookability rules: Property Service has is_bookable flag, but Booking Service enforces policy (min stay, etc.). Who decides the actual bookability logic?",
+      "decision": "Bookability is a two-phase check: (1) Property Service owns structural bookability (is_bookable flag: property is live, not archived, has complete data). (2) Booking Service owns transactional bookability (dates available, min stay met, max occupancy OK). Booking flow: Check Property.is_bookable first (fast), then Booking applies policy + checks Availability + verifies PMS. If Property.is_bookable=false, return 422 PROPERTY_NOT_BOOKABLE immediately.",
+      "rationale": "Separation of concerns: Property Service knows 'can this property ever be booked?', Booking Service knows 'can this specific request be booked?'. is_bookable is a gate (archived properties, incomplete setup). Policy enforcement (min stay, occupancy) requires booking context, so lives in Booking Service. This minimizes coupling (Property doesn't need Availability/Pricing context) and keeps Booking Service as the 'policy enforcer' per spec."
+    },
+    {
+      "ambiguity": "Financial audit hash chain: Spec includes prev_hash in payout_snapshot but doesn't specify hash algorithm, what's included in hash, or how to verify chain integrity",
+      "decision": "Hash algorithm: SHA256. Hash input: JSON.stringify(snapshot data, sorted keys) of {owner_id, period_start, period_end, booking_ids (sorted), totals (sorted keys), bookings (sorted by booking_id)}. Exclude: id, created_at, stripe_transfer_id, paid_at, status (mutable). Include prev_hash in current hash. Verification: Recompute hash on read, compare to stored hash. Chain verification: Start from genesis (first payout), walk forward, verify each prev_hash matches prior hash. Expose GET /payouts/verify-chain endpoint for admin.",
+      "rationale": "SHA256 is standard for cryptographic hashing. Including only immutable business data prevents tampering. Sorted keys ensure determinism (same data = same hash). Excluding mutable metadata (status, paid_at) allows those to change without breaking chain. prev_hash in current hash creates the chain. Verification on read catches corruption. Chain verification endpoint provides audit trail. This satisfies 'immutability' and 'auditability' constraints simply."
+    }
+  ],
+  "answers": {
+    "Tax calculation strategy: Should Booking Service compute taxes locally (simple percentages from Property config), call an external tax service (Avalara, TaxJar), or use Stripe Tax? This affects Payments Service integration, data model (do we store tax rates?), and compliance requirements (remittance, filing).": "Booking service should pull tax data for the property from Property service.  Booking service should pass that data to Payment service which is in charge of all calculations and interactions with Stripe.  Booking service shouldn't do any of the calculations.  Payment service doesn't store tax information, taxes and fees are property data.  Payment service calcuates the invoice according to the prices from Pricing service, the dates and configuration from Booking, the data from Property.  Once Booking has that back, it checks with the PMSes via Sync service.  They give the invoice as a quote and likely get one back.  If the prices are close, we honor what we'd told the guest and if they're different by too large of an amount or percentage then alert the user that the price has changed and get their approval.",
+    "Property override conflict resolution workflow (ASK policy): When sync detects a conflict and policy is ASK, who resolves it (PM, Wander ops, automated system?), how are they notified (email, dashboard, Slack?), what's the SLA (resolve within 24 hours?), and what happens if unresolved (keep override, accept new, freeze updates?)?": "The message would go to Event service which would handle it.  For now, Slack is good.",
+    "Organizational context for Kafka/Redis: What's the team's current operational maturity with Kafka (do you run it in prod? have runbooks? on-call experience?) and Redis Cluster (same questions)? This affects design choices: if Kafka is new, we might simplify event routing (fewer topics, simpler partitioning); if Redis Cluster is new, we might start with standalone Redis + replica and defer sharding.": "Prod."
+  }
+}

@@ -1,0 +1,2297 @@
+{
+  "component_id": "pricing_service",
+  "name": "Pricing Service",
+  "description": "Rate cache service providing fast price lookups for rental units. Stores nightly rates hash-sharded by unit_id in Redis for O(1) lookups. Supports dynamic pricing with date-specific rates, seasonal rates, length-of-stay discounts, and fees/taxes computation. PostgreSQL stores authoritative rate configurations; Redis is the hot cache sharded by unit_id hash for even distribution. Thin orchestration facade exposing 7 public functions via a factory-created PricingService object: getQuote (cache-aside + full computation pipeline), getRates (cache-aside nightly rate lookup), updateRateConfiguration (write-through + cache invalidation), upsertFee (write-through + cache invalidation), warmCache (bulk cache population), invalidateCache (explicit cache bust), plus the createPricingService factory. Cache strategy is cache-aside reads with write-through invalidation and graceful degradation (Redis failure → DB fallback, never an error to callers). The computation pipeline follows strict order: nightly rates → subtotal → LOS discount → flat fees → percentage fees → taxes → grand total. All arithmetic in CentsAmount (integer cents), bankers rounding for percentage calculations. File organization: mod.ts (public exports, <300 lines), types.ts (all contract types), service.ts (orchestration implementation), pipeline.ts (quote computation pipeline), deps.ts (dependency interface definitions).",
+  "version": 1,
+  "types": [
+    {
+      "name": "CentsAmount",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer type representing monetary value in minor currency units (e.g. cents for USD). Underlying storage is a 64-bit integer. Never use floating-point for money. Re-exported from pricing_schema."
+    },
+    {
+      "name": "CurrencyCode",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 4217 three-letter currency code stored as string. Examples: USD, EUR, GBP, JPY. Validated via regex ^[A-Z]{3}$. Re-exported from pricing_schema."
+    },
+    {
+      "name": "UnitId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a rental unit. Re-exported from shared_foundation via pricing_cache_engine. Validated via regex ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$."
+    },
+    {
+      "name": "ISODateString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 8601 date string in YYYY-MM-DD format. Used for check-in, check-out, and nightly rate dates."
+    },
+    {
+      "name": "ISOTimestampString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 8601 UTC timestamp string (YYYY-MM-DDTHH:mm:ss.sssZ). Used for resolvedAt, computedAt timestamps."
+    },
+    {
+      "name": "DiscountPercent",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer representing a discount percentage in basis points (0-10000, where 10000 = 100%). Re-exported from pricing_schema."
+    },
+    {
+      "name": "TaxRateBasisPoints",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer representing a tax rate in basis points (0-10000, where 10000 = 100%). Re-exported from pricing_schema."
+    },
+    {
+      "name": "PricingServiceErrorKind",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "UNIT_NOT_FOUND",
+        "DATES_UNCOVERED",
+        "INVALID_DATE_RANGE",
+        "CURRENCY_MISMATCH",
+        "CONFIGURATION_ERROR",
+        "INTERNAL_ERROR"
+      ],
+      "inner_types": [],
+      "description": "Discriminated union tag for all pricing service error types. Service-level errors that wrap dependency-level errors."
+    },
+    {
+      "name": "PricingServiceError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "kind",
+          "type_ref": "PricingServiceErrorKind",
+          "required": true,
+          "default": "",
+          "description": "The discriminated union tag identifying the error category.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        },
+        {
+          "name": "details",
+          "type_ref": "dict",
+          "required": false,
+          "default": "{}",
+          "description": "Additional structured context (e.g. unitId, date range, mismatched currencies, underlying error kind).",
+          "validators": []
+        },
+        {
+          "name": "cause",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Underlying dependency error message, if any. For debugging only — not exposed to callers.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured error type for all pricing service operations. Uses a discriminated union pattern via the kind field. Wraps dependency errors into service-level errors — never leaks internal error types."
+    },
+    {
+      "name": "FeeType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "FLAT",
+        "PERCENTAGE"
+      ],
+      "inner_types": [],
+      "description": "Discriminated union tag for fee calculation method. Re-exported from pricing_schema."
+    },
+    {
+      "name": "TaxType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "OCCUPANCY",
+        "SALES",
+        "VAT",
+        "TOURISM",
+        "LOCAL",
+        "STATE",
+        "FEDERAL",
+        "CUSTOM"
+      ],
+      "inner_types": [],
+      "description": "Enumeration of supported tax types. Re-exported from pricing_schema."
+    },
+    {
+      "name": "RateSource",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "BASE",
+        "OVERRIDE"
+      ],
+      "inner_types": [],
+      "description": "Identifies which source provided a resolved nightly rate."
+    },
+    {
+      "name": "NightlyRateEntry",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "The night date (YYYY-MM-DD). In a half-open [checkIn, checkOut) interval, this is the night starting on this date.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "rate",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Nightly rate in minor currency units for this date.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "source",
+          "type_ref": "RateSource",
+          "required": true,
+          "default": "",
+          "description": "Whether this rate came from the base rate plan or a date-specific override.",
+          "validators": []
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rate plan ID from which this rate was resolved.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Per-night rate detail within a quote breakdown. Shows the date, the applicable rate in cents, and the source (base rate plan vs. date override)."
+    },
+    {
+      "name": "NightlyRateEntryList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "NightlyRateEntry",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of nightly rate entries, one per night in [checkIn, checkOut). Length equals numNights."
+    },
+    {
+      "name": "ResolvedFeeLineItem",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "feeId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The source fee record ID.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable fee name.",
+          "validators": []
+        },
+        {
+          "name": "feeType",
+          "type_ref": "FeeType",
+          "required": true,
+          "default": "",
+          "description": "FLAT or PERCENTAGE.",
+          "validators": []
+        },
+        {
+          "name": "originalAmount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Original amount from the fee record (cents if FLAT, basis points if PERCENTAGE).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "resolvedAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Computed fee in minor currency units for this booking.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "isTaxable",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether this fee is subject to taxes (included in the tax base).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A fee resolved to an absolute CentsAmount for a specific booking context within the quote pipeline."
+    },
+    {
+      "name": "ResolvedFeeLineItemList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "ResolvedFeeLineItem",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of resolved fee line items. Flat fees appear before percentage fees per pipeline specification."
+    },
+    {
+      "name": "ResolvedTaxLineItem",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "taxId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The source tax record ID.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable tax name.",
+          "validators": []
+        },
+        {
+          "name": "taxType",
+          "type_ref": "TaxType",
+          "required": true,
+          "default": "",
+          "description": "Classification of the tax.",
+          "validators": []
+        },
+        {
+          "name": "rateBasisPoints",
+          "type_ref": "TaxRateBasisPoints",
+          "required": true,
+          "default": "",
+          "description": "The tax rate in basis points (0-10000).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0 <= value <= 10000",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "taxableAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "The base amount on which this tax was computed (discountedSubtotal + taxable fee amounts).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "taxAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Computed tax in minor currency units using bankers rounding.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A tax resolved to an absolute CentsAmount for a specific booking context within the quote pipeline."
+    },
+    {
+      "name": "ResolvedTaxLineItemList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "ResolvedTaxLineItem",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of resolved tax line items."
+    },
+    {
+      "name": "ResolvedLosDiscount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "losDiscountId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Source LOS discount record ID.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "minNights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Minimum number of nights required for this discount tier.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "discountPctBasisPoints",
+          "type_ref": "DiscountPercent",
+          "required": true,
+          "default": "",
+          "description": "Discount in basis points (0-10000).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0 <= value <= 10000",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "discountAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Absolute discount amount in minor currency units. Computed via bankers rounding.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "The applied length-of-stay discount details. Present only when the stay qualifies for a discount."
+    },
+    {
+      "name": "OptionalResolvedLosDiscount",
+      "kind": "optional",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "ResolvedLosDiscount"
+      ],
+      "description": "Optional LOS discount — present when the stay qualifies for a length-of-stay discount, absent otherwise."
+    },
+    {
+      "name": "QuoteBreakdown",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit this quote is for.",
+          "validators": []
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The primary rate plan used for resolution.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "checkIn",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive check-in date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "checkOut",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive check-out date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "numNights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of nights = checkOut - checkIn in days.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 1",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "ISO 4217 currency code for all amounts in this breakdown.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "nightlyRates",
+          "type_ref": "NightlyRateEntryList",
+          "required": true,
+          "default": "",
+          "description": "Per-night rate details. Length must equal numNights.",
+          "validators": []
+        },
+        {
+          "name": "nightlySubtotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Sum of all nightly rates before LOS discount.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "losDiscount",
+          "type_ref": "OptionalResolvedLosDiscount",
+          "required": false,
+          "default": "null",
+          "description": "Applied LOS discount, if stay qualifies. Null if no discount.",
+          "validators": []
+        },
+        {
+          "name": "discountedSubtotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "nightlySubtotal - losDiscount.discountAmount (or nightlySubtotal if no LOS discount). Always >= 0.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "fees",
+          "type_ref": "ResolvedFeeLineItemList",
+          "required": true,
+          "default": "",
+          "description": "All resolved fees. Flat fees appear before percentage fees.",
+          "validators": []
+        },
+        {
+          "name": "feesTotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Sum of all resolved fee amounts.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "taxableAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "discountedSubtotal + sum of taxable fee amounts. Base for tax computation.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "taxes",
+          "type_ref": "ResolvedTaxLineItemList",
+          "required": true,
+          "default": "",
+          "description": "All resolved taxes computed on the taxable amount.",
+          "validators": []
+        },
+        {
+          "name": "taxesTotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Sum of all resolved tax amounts.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "grandTotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "discountedSubtotal + feesTotal + taxesTotal.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "resolvedAt",
+          "type_ref": "ISOTimestampString",
+          "required": true,
+          "default": "",
+          "description": "ISO 8601 UTC timestamp when this quote was computed.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Complete quote breakdown output from the pricing pipeline. Includes per-night rates, subtotals, LOS discount, fees, taxes, and grand total. All amounts in minor currency units (CentsAmount). Computation order: (1) resolve nightly rates → nightlySubtotal, (2) apply best LOS discount → discountedSubtotal, (3) add flat fees, (4) add percentage fees → feesTotal, (5) compute taxes on (discountedSubtotal + taxable fees) → taxesTotal, (6) grandTotal = discountedSubtotal + feesTotal + taxesTotal."
+    },
+    {
+      "name": "QuoteOptions",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "guests",
+          "type_ref": "int",
+          "required": false,
+          "default": "1",
+          "description": "Number of guests. May affect per-guest fees if configured.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 100",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "skipCache",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "If true, bypasses Redis cache and reads directly from PostgreSQL.",
+          "validators": []
+        },
+        {
+          "name": "includeInactive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "If true, includes inactive fees/taxes in the breakdown (for preview/admin use).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Optional parameters for getQuote that do not affect core pricing logic."
+    },
+    {
+      "name": "RatesResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit.",
+          "validators": []
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rate plan used for resolution.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "startDate",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "endDate",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "ISO 4217 currency code.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "nightlyRates",
+          "type_ref": "NightlyRateEntryList",
+          "required": true,
+          "default": "",
+          "description": "Per-night rate details. One entry per night in [startDate, endDate).",
+          "validators": []
+        },
+        {
+          "name": "cachedAt",
+          "type_ref": "ISOTimestampString",
+          "required": false,
+          "default": "",
+          "description": "If served from cache, the timestamp when the cache entry was written. Empty if from DB.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of a nightly rate lookup (getRates). Contains per-night rates without fee/tax computation."
+    },
+    {
+      "name": "RateConfigurationInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ratePlanName",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Updated rate plan name.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1 <= length <= 255",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "baseRate",
+          "type_ref": "CentsAmount",
+          "required": false,
+          "default": "",
+          "description": "Updated base nightly rate in cents.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": false,
+          "default": "",
+          "description": "Updated currency. Must match existing currency or all rates must be reconfigured.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "Activation/deactivation flag.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for updateRateConfiguration. Partial update — only provided fields are applied. Delegates to pricing_schema for persistence."
+    },
+    {
+      "name": "UpdateResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit whose configuration was updated.",
+          "validators": []
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The updated rate plan ID.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "updatedFields",
+          "type_ref": "list",
+          "required": true,
+          "default": "",
+          "description": "List of field names that were actually updated.",
+          "validators": []
+        },
+        {
+          "name": "cacheInvalidated",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the Redis cache was successfully invalidated for this unit.",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "ISOTimestampString",
+          "required": true,
+          "default": "",
+          "description": "Timestamp of the update.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of an updateRateConfiguration operation."
+    },
+    {
+      "name": "FeeInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable fee name.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1 <= length <= 255",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "feeType",
+          "type_ref": "FeeType",
+          "required": true,
+          "default": "",
+          "description": "FLAT for absolute CentsAmount, PERCENTAGE for basis points of subtotal.",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Fee amount: CentsAmount when FLAT, basis points (0-10000) when PERCENTAGE.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Currency code. Must match the rate plan currency for the same unit.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "isTaxable",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "Whether this fee is subject to taxes.",
+          "validators": []
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "Whether this fee is currently active.",
+          "validators": []
+        },
+        {
+          "name": "feeId",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "If provided, updates the existing fee with this ID. If omitted, creates a new fee.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for upsertFee. Creates or updates a fee for a unit. Delegates to pricing_schema for persistence."
+    },
+    {
+      "name": "FeeResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "feeId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The ID of the created or updated fee.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit this fee belongs to.",
+          "validators": []
+        },
+        {
+          "name": "created",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if a new fee was created, false if an existing fee was updated.",
+          "validators": []
+        },
+        {
+          "name": "cacheInvalidated",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the Redis cache was successfully invalidated.",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "ISOTimestampString",
+          "required": true,
+          "default": "",
+          "description": "Timestamp of the operation.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of an upsertFee operation."
+    },
+    {
+      "name": "DateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "startDate",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "endDate",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date (YYYY-MM-DD). Must be > startDate.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Half-open date range [startDate, endDate) used for warmCache and rate queries."
+    },
+    {
+      "name": "UnitIdList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "UnitId",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of unit IDs for bulk operations."
+    },
+    {
+      "name": "WarmCacheUnitResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit ID.",
+          "validators": []
+        },
+        {
+          "name": "success",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the cache was successfully populated for this unit.",
+          "validators": []
+        },
+        {
+          "name": "nightsCached",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of nightly rate entries written to cache. 0 on failure.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "errorMessage",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Error message if success is false.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Cache warm result for a single unit within a bulk warmCache operation."
+    },
+    {
+      "name": "WarmCacheUnitResultList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "WarmCacheUnitResult",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of per-unit cache warm results."
+    },
+    {
+      "name": "WarmCacheResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "totalUnits",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Total number of units requested.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "successCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of units successfully cached.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "failureCount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of units that failed to cache.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "results",
+          "type_ref": "WarmCacheUnitResultList",
+          "required": true,
+          "default": "",
+          "description": "Per-unit results.",
+          "validators": []
+        },
+        {
+          "name": "durationMs",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Total duration of the warm operation in milliseconds.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Aggregate result of a bulk warmCache operation."
+    },
+    {
+      "name": "InvalidateResult",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit whose cache was invalidated.",
+          "validators": []
+        },
+        {
+          "name": "success",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the invalidation was successful. True even if the key did not exist (idempotent).",
+          "validators": []
+        },
+        {
+          "name": "keyExisted",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether a cache key actually existed and was deleted.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Result of an explicit cache invalidation."
+    },
+    {
+      "name": "DatabasePoolConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "connectionString",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "PostgreSQL connection string.",
+          "validators": []
+        },
+        {
+          "name": "maxConnections",
+          "type_ref": "int",
+          "required": false,
+          "default": "10",
+          "description": "Maximum number of connections in the pool.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 100",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Configuration for the PostgreSQL connection pool."
+    },
+    {
+      "name": "RedisClientConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "url",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Redis connection URL.",
+          "validators": []
+        },
+        {
+          "name": "connectTimeoutMs",
+          "type_ref": "int",
+          "required": false,
+          "default": "5000",
+          "description": "Connection timeout in milliseconds.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 100",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Configuration for the Redis client used by the cache engine."
+    },
+    {
+      "name": "CacheConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "defaultTtlSeconds",
+          "type_ref": "int",
+          "required": false,
+          "default": "600",
+          "description": "Default cache TTL in seconds (default 10 minutes).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "value >= 0",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "shardCount",
+          "type_ref": "int",
+          "required": false,
+          "default": "64",
+          "description": "Number of hash shards for Redis key distribution.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 4096",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "warmBatchSize",
+          "type_ref": "int",
+          "required": false,
+          "default": "50",
+          "description": "Number of units to warm concurrently in warmCache.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1 <= value <= 500",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Cache-specific configuration options."
+    },
+    {
+      "name": "PricingServiceConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "databasePool",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "A connected PostgreSQL database pool instance. Used to create the pricing_schema repository.",
+          "validators": []
+        },
+        {
+          "name": "redisClient",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "A connected Redis client instance. Used to create the pricing_cache_engine.",
+          "validators": []
+        },
+        {
+          "name": "cache",
+          "type_ref": "CacheConfig",
+          "required": false,
+          "default": "{}",
+          "description": "Cache configuration overrides. Uses sensible defaults if not provided.",
+          "validators": []
+        },
+        {
+          "name": "enableCacheLogging",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "Whether to log cache hit/miss/error events.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Top-level configuration for creating a PricingService instance via the factory function."
+    },
+    {
+      "name": "PricingService",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "getQuote",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Method: (unitId, checkIn, checkOut, currency, options?) -> Promise<ServiceResult<QuoteBreakdown>>.",
+          "validators": []
+        },
+        {
+          "name": "getRates",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Method: (unitId, startDate, endDate, currency) -> Promise<ServiceResult<RatesResult>>.",
+          "validators": []
+        },
+        {
+          "name": "updateRateConfiguration",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Method: (unitId, config) -> Promise<ServiceResult<UpdateResult>>.",
+          "validators": []
+        },
+        {
+          "name": "upsertFee",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Method: (unitId, fee) -> Promise<ServiceResult<FeeResult>>.",
+          "validators": []
+        },
+        {
+          "name": "warmCache",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Method: (unitIds, dateRange) -> Promise<ServiceResult<WarmCacheResult>>.",
+          "validators": []
+        },
+        {
+          "name": "invalidateCache",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Method: (unitId) -> Promise<ServiceResult<InvalidateResult>>.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "The pricing service facade object returned by createPricingService. Exposes 6 methods: getQuote, getRates, updateRateConfiguration, upsertFee, warmCache, invalidateCache. All methods return Result types and never throw."
+    },
+    {
+      "name": "ServiceResultOk",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true for success.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "value == true",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "value",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The successful result value (generic T — QuoteBreakdown, RatesResult, UpdateResult, FeeResult, WarmCacheResult, or InvalidateResult).",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "None",
+          "required": true,
+          "default": "",
+          "description": "Always null for success.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success branch of the service-level Result type. Contains the value and no error."
+    },
+    {
+      "name": "ServiceResultErr",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always false for error.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "value == false",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "value",
+          "type_ref": "None",
+          "required": true,
+          "default": "",
+          "description": "Always null for error.",
+          "validators": []
+        },
+        {
+          "name": "error",
+          "type_ref": "PricingServiceError",
+          "required": true,
+          "default": "",
+          "description": "The pricing service error.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Error branch of the service-level Result type. Contains the PricingServiceError and no value."
+    },
+    {
+      "name": "ServiceResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "ServiceResultOk",
+        "ServiceResultErr"
+      ],
+      "description": "Discriminated union Result type for all pricing service operations. ok=true branch has value, ok=false branch has error. Never both, never neither."
+    }
+  ],
+  "functions": [
+    {
+      "name": "createPricingService",
+      "description": "Factory function that creates and returns a PricingService facade object. Accepts a PricingServiceConfig containing a connected database pool, Redis client, and optional configuration overrides. Internally creates a pricing_schema repository and pricing_cache_engine instance, wiring them together into the orchestration service. The returned PricingService object exposes all 6 public methods. This function validates the configuration but does NOT test database/Redis connectivity — that is deferred to first use with graceful degradation.",
+      "inputs": [
+        {
+          "name": "config",
+          "type_ref": "PricingServiceConfig",
+          "required": true,
+          "default": "",
+          "description": "Service configuration containing database pool, Redis client, and options.",
+          "validators": []
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "invalid_database_pool",
+          "condition": "config.databasePool is null, undefined, or not a valid pool interface",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_redis_client",
+          "condition": "config.redisClient is null, undefined, or not a valid Redis client interface",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_cache_config",
+          "condition": "Cache configuration values are out of valid ranges (e.g. shardCount < 1, defaultTtlSeconds < 0)",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "config.databasePool is a valid database pool instance (may or may not be connected)",
+        "config.redisClient is a valid Redis client instance (may or may not be connected)",
+        "If config.cache is provided, shardCount >= 1 and defaultTtlSeconds >= 0"
+      ],
+      "postconditions": [
+        "On success, returns ServiceResultOk with value being a PricingService object with all 6 methods",
+        "The returned PricingService is safe for concurrent use",
+        "No database or Redis calls are made during construction",
+        "On configuration validation failure, returns ServiceResultErr with kind=CONFIGURATION_ERROR"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "getQuote",
+      "description": "Computes a full price breakdown for a potential stay. Implements cache-aside pattern: checks Redis cache first for nightly rates, falls back to PostgreSQL via pricing_schema.resolveRatesForDateRange on miss, populates cache on miss. Then runs the computation pipeline in strict order: (1) resolve nightly rates from cache/DB, (2) sum to nightlySubtotal, (3) apply best LOS discount → discountedSubtotal, (4) add flat fees, (5) add percentage fees on discountedSubtotal → feesTotal, (6) compute taxes on (discountedSubtotal + taxable fees) → taxesTotal, (7) grandTotal = discountedSubtotal + feesTotal + taxesTotal. Each step produces typed line items for full transparency. All arithmetic in integer cents with bankers rounding. Redis failures are silently logged and result in DB fallback — never an error to callers.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit to compute a quote for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "checkIn",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive check-in date (YYYY-MM-DD). First night of the stay.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "checkOut",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive check-out date (YYYY-MM-DD). Must be after checkIn.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Requested currency. Must match the unit's configured currency.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "options",
+          "type_ref": "QuoteOptions",
+          "required": false,
+          "default": "{}",
+          "description": "Optional parameters: guests count, skipCache flag, includeInactive flag.",
+          "validators": []
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "unit_not_found",
+          "condition": "No active rate plan exists for the given unitId",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "dates_uncovered",
+          "condition": "One or more nights in the date range have no rate coverage (no base rate and no override)",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "DATES_UNCOVERED"
+          }
+        },
+        {
+          "name": "invalid_date_range",
+          "condition": "checkIn >= checkOut, dates are not valid calendar dates, or range exceeds 730 nights",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Requested currency does not match the unit's configured rate plan currency",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "configuration_error",
+          "condition": "Rate plan, fees, or taxes have inconsistent or invalid configuration (e.g. mixed currencies within a unit)",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected database error or unrecoverable internal failure during computation",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "checkIn < checkOut (half-open interval must contain at least one night)",
+        "checkIn and checkOut are valid calendar dates in YYYY-MM-DD format",
+        "The date range spans at most 730 nights",
+        "currency is a valid ISO 4217 code"
+      ],
+      "postconditions": [
+        "On success, value is a QuoteBreakdown",
+        "nightlyRates has exactly (checkOut - checkIn) entries, one per night",
+        "nightlySubtotal == sum of all nightlyRates[i].rate",
+        "discountedSubtotal == nightlySubtotal - (losDiscount.discountAmount or 0)",
+        "discountedSubtotal >= 0",
+        "feesTotal == sum of all fees[i].resolvedAmount",
+        "taxableAmount == discountedSubtotal + sum of fees where isTaxable",
+        "taxesTotal == sum of all taxes[i].taxAmount",
+        "grandTotal == discountedSubtotal + feesTotal + taxesTotal",
+        "All CentsAmount values are non-negative integers",
+        "currency in the breakdown matches the requested currency and the rate plan's currency",
+        "resolvedAt is set to the current UTC timestamp",
+        "Redis cache failures are transparent — quote is computed from DB on cache miss/error"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "May write to Redis cache on cache miss (fire-and-forget, errors swallowed)",
+        "Logs cache hit/miss/error events if enableCacheLogging is true"
+      ]
+    },
+    {
+      "name": "getRates",
+      "description": "Retrieves raw nightly rates for a unit and date range without fee/tax computation. Implements cache-aside pattern: checks Redis cache first, falls back to PostgreSQL on miss, populates cache on miss. Returns per-night rate entries with source attribution (base vs. override). Redis failures are silently logged and result in DB fallback.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit to look up rates for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "startDate",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "endDate",
+          "type_ref": "ISODateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Requested currency. Must match the unit's configured currency.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "unit_not_found",
+          "condition": "No active rate plan exists for the given unitId",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "dates_uncovered",
+          "condition": "One or more nights in the date range have no rate coverage",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "DATES_UNCOVERED"
+          }
+        },
+        {
+          "name": "invalid_date_range",
+          "condition": "startDate >= endDate, dates are not valid, or range exceeds 730 nights",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Requested currency does not match the unit's configured rate plan currency",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected database error or unrecoverable internal failure",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "startDate < endDate (half-open interval)",
+        "startDate and endDate are valid calendar dates",
+        "Date range spans at most 730 nights",
+        "currency is a valid ISO 4217 code"
+      ],
+      "postconditions": [
+        "On success, value is a RatesResult",
+        "nightlyRates has exactly (endDate - startDate) entries sorted by date ascending",
+        "Each entry has a rate >= 0 and a valid source",
+        "All rates use the requested currency",
+        "Redis cache failures are transparent — rates are fetched from DB on cache miss/error"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "May write to Redis cache on cache miss (fire-and-forget, errors swallowed)",
+        "Logs cache hit/miss/error events if enableCacheLogging is true"
+      ]
+    },
+    {
+      "name": "updateRateConfiguration",
+      "description": "Updates the rate configuration for a unit via write-through with cache invalidation. Delegates to pricing_schema for PostgreSQL persistence (updateRatePlan), then invalidates the Redis cache for the unit via pricing_cache_engine.invalidateUnit. The cache invalidation happens after the DB commit to ensure consistency. If cache invalidation fails, the DB update is still committed (cache will eventually expire or be warmed). Returns the updated configuration summary.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit whose rate configuration to update.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "config",
+          "type_ref": "RateConfigurationInput",
+          "required": true,
+          "default": "",
+          "description": "Partial update input. Only provided fields are applied.",
+          "validators": []
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "unit_not_found",
+          "condition": "No rate plan exists for the given unitId",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Provided currency does not match the existing rate plan currency",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "configuration_error",
+          "condition": "Validation failure on input fields (e.g. empty name, negative baseRate)",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Database error during update",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "At least one field in config is provided (not all empty/default)",
+        "If config.currency is provided, it must be a valid ISO 4217 code",
+        "If config.baseRate is provided, it must be >= 0"
+      ],
+      "postconditions": [
+        "On success, value is an UpdateResult",
+        "The rate plan in PostgreSQL reflects the updated fields",
+        "Redis cache for this unitId has been invalidated (or invalidation was attempted)",
+        "updatedAt reflects the time of the DB commit",
+        "cacheInvalidated is true if Redis invalidation succeeded, false if it failed (DB update still committed)"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Updates rate plan row in PostgreSQL pricing.rate_plans",
+        "Invalidates Redis cache key for the unit (fire-and-forget on failure)",
+        "Logs cache invalidation success/failure"
+      ]
+    },
+    {
+      "name": "upsertFee",
+      "description": "Creates or updates a fee for a rental unit via write-through with cache invalidation. If feeId is provided in the input, updates the existing fee; otherwise creates a new fee. Delegates to pricing_schema (createFee or updateFee) for PostgreSQL persistence, then invalidates the Redis cache for the unit. Cache invalidation failure does not roll back the DB change.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit to add/update a fee for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "fee",
+          "type_ref": "FeeInput",
+          "required": true,
+          "default": "",
+          "description": "The fee definition to create or update.",
+          "validators": []
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "unit_not_found",
+          "condition": "No rate plan exists for the given unitId (fees require a rate plan context)",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Fee currency does not match the unit's configured rate plan currency",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "configuration_error",
+          "condition": "Validation failure on fee input (e.g. empty name, negative amount, PERCENTAGE amount > 10000)",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Database error during fee creation/update",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "fee.name is non-empty and <= 255 characters",
+        "fee.amount >= 0",
+        "If fee.feeType is PERCENTAGE, fee.amount must be 0-10000 (basis points)",
+        "fee.currency must match the unit's configured rate plan currency",
+        "If fee.feeId is provided, it must be a valid UUID v4 referencing an existing fee"
+      ],
+      "postconditions": [
+        "On success, value is a FeeResult",
+        "The fee exists in PostgreSQL pricing.fees with the provided values",
+        "created is true if a new row was inserted, false if an existing row was updated",
+        "Redis cache for this unitId has been invalidated (or invalidation was attempted)",
+        "cacheInvalidated reflects whether Redis invalidation succeeded"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Inserts or updates a row in PostgreSQL pricing.fees",
+        "Invalidates Redis cache key for the unit (fire-and-forget on failure)",
+        "Logs cache invalidation success/failure"
+      ]
+    },
+    {
+      "name": "warmCache",
+      "description": "Bulk cache population for a list of units over a date range. For each unit, resolves rates from PostgreSQL via pricing_schema.resolveRatesForDateRange and writes them to Redis via pricing_cache_engine.cacheRates. Processes units in batches (configurable via CacheConfig.warmBatchSize) for controlled concurrency. Individual unit failures do not abort the batch — each unit's result is reported independently. This is a best-effort operation designed for pre-warming before high-traffic periods.",
+      "inputs": [
+        {
+          "name": "unitIds",
+          "type_ref": "UnitIdList",
+          "required": true,
+          "default": "",
+          "description": "List of unit IDs to warm cache for.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1 <= length <= 10000",
+              "error_message": ""
+            }
+          ]
+        },
+        {
+          "name": "dateRange",
+          "type_ref": "DateRange",
+          "required": true,
+          "default": "",
+          "description": "The date range to warm for each unit.",
+          "validators": []
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range",
+          "condition": "dateRange.startDate >= dateRange.endDate or range exceeds 730 days",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "configuration_error",
+          "condition": "unitIds is empty or exceeds 10000",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Catastrophic failure (e.g. database pool exhausted) preventing any processing",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unitIds is non-empty and contains at most 10000 entries",
+        "dateRange.startDate < dateRange.endDate",
+        "Date range spans at most 730 days",
+        "All unit IDs are valid UUID v4 strings"
+      ],
+      "postconditions": [
+        "On success, value is a WarmCacheResult",
+        "totalUnits == length of unitIds",
+        "successCount + failureCount == totalUnits",
+        "results list has one entry per unit in unitIds",
+        "For each successful unit, nightsCached == (endDate - startDate) in days",
+        "durationMs reflects actual wall-clock time of the operation",
+        "Individual unit failures (DB errors, missing rate plans) are reported per-unit, not as a top-level error"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Reads rate configurations from PostgreSQL for each unit",
+        "Writes nightly rate data to Redis cache for each successfully resolved unit",
+        "Logs progress and per-unit errors"
+      ]
+    },
+    {
+      "name": "invalidateCache",
+      "description": "Explicitly invalidates (deletes) the Redis cache for a specific unit. Delegates to pricing_cache_engine.invalidateUnit. Idempotent — succeeds even if the cache key does not exist. Redis failures are caught and reported in the result (success=false) but never thrown.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The rental unit whose cache to invalidate.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": ""
+            }
+          ]
+        }
+      ],
+      "output_type": "ServiceResult",
+      "error_cases": [
+        {
+          "name": "invalid_unit_id",
+          "condition": "unitId is not a valid UUID v4 string",
+          "error_type": "PricingServiceError",
+          "error_data": {
+            "kind": "CONFIGURATION_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unitId is a valid UUID v4 string"
+      ],
+      "postconditions": [
+        "On success, value is an InvalidateResult",
+        "If Redis was reachable, the cache key for the unit no longer exists",
+        "success is true if Redis DEL succeeded or key did not exist, false if Redis was unreachable",
+        "keyExisted is true only if a key was actually deleted",
+        "This function never returns a ServiceResultErr — Redis failures are reported via InvalidateResult.success=false"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes Redis hash key for the unit's shard (if key exists)",
+        "Logs cache invalidation result"
+      ]
+    }
+  ],
+  "dependencies": [
+    "pricing_schema",
+    "pricing_cache_engine",
+    "pricing_api",
+    "pricing_tests"
+  ],
+  "dependency_contracts": {
+    "pricing_schema": [
+      "createPricingRepository",
+      "resolveRatesForDateRange",
+      "createRatePlan",
+      "updateRatePlan",
+      "createFee",
+      "updateFee",
+      "listFeesByUnit",
+      "createRateOverride",
+      "listRatePlansByUnit",
+      "createLosDiscount",
+      "listLosDiscountsByUnit",
+      "listTaxesByUnit",
+      "withTransaction"
+    ],
+    "pricing_cache_engine": [
+      "shardKey",
+      "cacheRates",
+      "getCachedRates",
+      "invalidateUnit"
+    ],
+    "pricing_api": [
+      "get_quote",
+      "get_rates",
+      "update_rate_configuration",
+      "upsert_fee"
+    ],
+    "pricing_tests": [
+      "resolve_nightly_rates",
+      "apply_los_discount",
+      "apply_flat_fees",
+      "apply_percentage_fees",
+      "apply_taxes",
+      "calculate_total",
+      "compute_shard_index",
+      "lookup_price_with_cache"
+    ]
+  },
+  "invariants": [
+    "All monetary values (rates, fees, taxes, subtotals, totals, discounts) are represented as non-negative integers in minor currency units (CentsAmount). No floating-point arithmetic is ever used for money.",
+    "All date ranges use half-open intervals [start, end) where start < end. A stay of N nights has checkIn and checkOut exactly N days apart.",
+    "Currency codes are ISO 4217 three-letter uppercase codes. All monetary entities within a single quote/rate lookup share the same currency. Cross-currency mixing within a single operation is an error.",
+    "The computation pipeline order is fixed and immutable: (1) resolve nightly rates, (2) sum to nightlySubtotal, (3) apply single best LOS discount → discountedSubtotal, (4) add flat fees, (5) add percentage fees on discountedSubtotal, (6) compute taxes on (discountedSubtotal + taxable fees), (7) grandTotal = discountedSubtotal + feesTotal + taxesTotal.",
+    "Only the single best (highest discount percentage) active LOS discount where minNights <= numNights is applied. If no LOS discount qualifies, no discount is applied and discountedSubtotal equals nightlySubtotal.",
+    "Percentage fees and tax rates are stored in basis points (0-10000 where 10000 = 100%). Integer division uses banker's rounding (round half to even).",
+    "Taxes are computed on (discountedSubtotal + sum of taxable fee amounts). Non-taxable fees are excluded from the tax base.",
+    "No public method of the PricingService ever throws an exception. All operations return ServiceResult (discriminated union: ok with value, or err with PricingServiceError).",
+    "Cache failures (Redis unavailable, timeout, deserialization error) are always silent to callers. The service falls back to PostgreSQL on any cache failure and logs the error. Cache failures never produce a ServiceResultErr.",
+    "Write-through cache invalidation occurs after PostgreSQL commit on all mutation operations (updateRateConfiguration, upsertFee). If cache invalidation fails, the DB mutation is NOT rolled back — cache will eventually expire via TTL.",
+    "The Redis cache is hash-sharded by unit_id using consistent hashing (CRC32 or equivalent). The shard key format is 'pricing:{N}:{unit_id}' where N = hash(unit_id) % shard_count. Same unit_id always maps to the same shard.",
+    "Cache-aside read pattern: check Redis → on miss, read from PostgreSQL → populate Redis (fire-and-forget). Cache reads require ALL dates in range to be present and valid; partial hits are treated as full misses.",
+    "The PricingService facade is stateless and safe for concurrent use. All state resides in PostgreSQL (authoritative) and Redis (cache). Multiple PricingService instances sharing the same pool and Redis client are safe.",
+    "Dependency errors from pricing_schema and pricing_cache_engine are wrapped into PricingServiceError with appropriate kind values. Internal error types are never leaked to callers.",
+    "QuoteBreakdown line item sums are exact: nightlySubtotal == sum(nightlyRates[].rate), feesTotal == sum(fees[].resolvedAmount), taxesTotal == sum(taxes[].taxAmount), grandTotal == discountedSubtotal + feesTotal + taxesTotal. No rounding drift is permitted."
+  ],
+  "requires": [
+    "pricing_schema must be initialized with a connected PostgreSQL pool and the pricing schema migration must have been run",
+    "pricing_cache_engine must be constructable with a Redis client (connection may be down — graceful degradation applies)",
+    "All five pricing schema tables (rate_plans, rate_overrides, fees, taxes, los_discounts) must exist in the PostgreSQL pricing namespace",
+    "The btree_gist extension must be enabled in PostgreSQL for EXCLUDE constraints on rate_overrides"
+  ]
+}

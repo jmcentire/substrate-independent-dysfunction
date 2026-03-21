@@ -1,0 +1,168 @@
+{
+  "id": "dad14c724fb3",
+  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project",
+  "status": "paused",
+  "formation": "standard",
+  "current_stage_index": 6,
+  "stages": [
+    {
+      "stage": "diagnose",
+      "passed": true,
+      "confidence": 0.9,
+      "detail": "Build an Anonymous Identity system with SSO authentication, site-specific unlink",
+      "tokens_in": 2123,
+      "tokens_out": 648,
+      "cost_usd": 0.08044499999999999
+    },
+    {
+      "stage": "architect",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "Build the Anonymous Identity system as a single cohesive Python module with a co",
+      "tokens_in": 2159,
+      "tokens_out": 1910,
+      "cost_usd": 0.17563499999999999
+    },
+    {
+      "stage": "architect_review",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "approve",
+      "tokens_in": 5801,
+      "tokens_out": 828,
+      "cost_usd": 0.149115
+    },
+    {
+      "stage": "locate",
+      "passed": true,
+      "confidence": 0.97,
+      "detail": "2 files",
+      "tokens_in": 2830,
+      "tokens_out": 282,
+      "cost_usd": 0.0636
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "6 files changed",
+      "tokens_in": 1842,
+      "tokens_out": 6057,
+      "cost_usd": 0.481905
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.82,
+      "detail": "2 test files",
+      "tokens_in": 2212,
+      "tokens_out": 6114,
+      "cost_usd": 0.49173
+    },
+    {
+      "stage": "verify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.97,
+      "detail": "reject",
+      "tokens_in": 12146,
+      "tokens_out": 2070,
+      "cost_usd": 0.33743999999999996
+    },
+    {
+      "stage": "review_classify",
+      "passed": true,
+      "confidence": 0.0,
+      "detail": "factual=6, subjective=3",
+      "tokens_in": 3271,
+      "tokens_out": 2271,
+      "cost_usd": 0.21939
+    },
+    {
+      "stage": "execute",
+      "passed": true,
+      "confidence": 0.92,
+      "detail": "6 files changed",
+      "tokens_in": 2051,
+      "tokens_out": 7665,
+      "cost_usd": 0.6056400000000001
+    },
+    {
+      "stage": "test",
+      "passed": true,
+      "confidence": 0.72,
+      "detail": "2 test files",
+      "tokens_in": 2293,
+      "tokens_out": 7268,
+      "cost_usd": 0.579495
+    },
+    {
+      "stage": "verify",
+      "passed": false,
+      "confidence": 0.0,
+      "detail": "compile=True tests=0/0",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0
+    },
+    {
+      "stage": "review",
+      "passed": false,
+      "confidence": 0.92,
+      "detail": "reject",
+      "tokens_in": 14876,
+      "tokens_out": 1795,
+      "cost_usd": 0.357765
+    },
+    {
+      "stage": "review_escalation",
+      "passed": true,
+      "confidence": 0.95,
+      "detail": "project: reject",
+      "tokens_in": 5188,
+      "tokens_out": 558,
+      "cost_usd": 0.11967
+    },
+    {
+      "stage": "review_escalation",
+      "passed": true,
+      "confidence": 0.15,
+      "detail": "architect: force_approve",
+      "tokens_in": 5519,
+      "tokens_out": 946,
+      "cost_usd": 0.153735
+    },
+    {
+      "stage": "escalation_triage",
+      "passed": true,
+      "confidence": 0.9,
+      "detail": "project: reject",
+      "tokens_in": 2003,
+      "tokens_out": 511,
+      "cost_usd": 0.06837
+    },
+    {
+      "stage": "escalation_triage",
+      "passed": true,
+      "confidence": 0.25,
+      "detail": "architect: force_approve",
+      "tokens_in": 2222,
+      "tokens_out": 811,
+      "cost_usd": 0.09415499999999999
+    }
+  ],
+  "total_tokens": 106270,
+  "total_cost_usd": 3.97809,
+  "created_at": "2026-02-13T19:18:58.379951",
+  "completed_at": null,
+  "pause_reason": "Signal: Multiple consternation signals (test, review, test, review, review_escalation, review_escalation) — systemic concern",
+  "signals": []
+}

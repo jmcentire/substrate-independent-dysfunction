@@ -1,0 +1,8 @@
+{"ts": "2026-02-14T04:06:19.210365+00:00", "wall_s": 0.024, "agent": "system", "event": "run_started", "summary": "Unary (single agent) | budget=$2.0", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T04:06:19.210579+00:00", "wall_s": 0.024, "agent": "agent", "event": "task_received", "summary": "Build the Wander Backend Services platform \u2014 a microservices backend for a\nvacation rental booking and property management system.\n\nCORE CONSTRAINT: \"User standing at checkout with credit card. 3 seco", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T04:06:22.656166+00:00", "wall_s": 3.47, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 1556, "tokens_out": 200}
+{"ts": "2026-02-14T04:06:26.190459+00:00", "wall_s": 7.004, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 33526, "tokens_out": 142}
+{"ts": "2026-02-14T04:06:30.334013+00:00", "wall_s": 11.147, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 33937, "tokens_out": 285}
+{"ts": "2026-02-14T04:06:36.023646+00:00", "wall_s": 16.837, "agent": "agent", "event": "api_call", "summary": "tool loop turn (tool_use)", "tokens_in": 41675, "tokens_out": 217}
+{"ts": "2026-02-14T04:07:02.490576+00:00", "wall_s": 43.304, "agent": "system", "event": "budget_exceeded", "summary": "Budget exceeded: $2.5146 spent, cap was $2.00", "tokens_in": 0, "tokens_out": 0}
+{"ts": "2026-02-14T04:07:02.493064+00:00", "wall_s": 43.306, "agent": "system", "event": "run_completed", "summary": "$2.51 spent, 13 files, 43s", "tokens_in": 0, "tokens_out": 0}

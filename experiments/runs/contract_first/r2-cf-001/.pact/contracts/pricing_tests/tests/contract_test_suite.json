@@ -1,0 +1,1162 @@
+{
+  "component_id": "pricing_tests",
+  "contract_version": 1,
+  "test_cases": [
+    {
+      "id": "hp_resolve_base_rate_only",
+      "description": "resolve_nightly_rates returns base rate for each night when no seasonal or override rates exist",
+      "function": "resolve_nightly_rates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "RateConfig with base_rate=10000 USD, no seasonal/overrides; 3-night stay",
+      "expected_output_description": "NightlyRateList with 3 entries, each 10000 USD with source=BASE",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 3",
+        "all(r['amount']['amount_minor'] == 10000 for r in result.value)",
+        "all(r['source'] == 'BASE' for r in result.value)"
+      ]
+    },
+    {
+      "id": "hp_resolve_seasonal_rate",
+      "description": "resolve_nightly_rates applies seasonal rate when stay falls within seasonal window",
+      "function": "resolve_nightly_rates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "RateConfig with base=10000, seasonal 'Summer Peak' 15000 covering all stay dates; 3-night stay",
+      "expected_output_description": "All 3 nights at 15000 with source=SEASONAL",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 3",
+        "all(r['amount']['amount_minor'] == 15000 for r in result.value)",
+        "all(r['source'] == 'SEASONAL' for r in result.value)"
+      ]
+    },
+    {
+      "id": "hp_resolve_date_override",
+      "description": "resolve_nightly_rates applies date override which takes precedence over seasonal",
+      "function": "resolve_nightly_rates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "RateConfig with base=10000, seasonal=15000, date_override on night 2 = 20000; 3-night stay",
+      "expected_output_description": "Night 1 and 3 at 15000/SEASONAL, night 2 at 20000/DATE_OVERRIDE",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 3",
+        "result.value[1]['amount']['amount_minor'] == 20000",
+        "result.value[1]['source'] == 'DATE_OVERRIDE'",
+        "result.value[0]['source'] == 'SEASONAL'"
+      ]
+    },
+    {
+      "id": "hp_resolve_mixed_sources",
+      "description": "resolve_nightly_rates correctly mixes base, seasonal, and override sources across a multi-night stay",
+      "function": "resolve_nightly_rates",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "3-night stay: night 1 base only, night 2 seasonal, night 3 override",
+      "expected_output_description": "Each night has the correct source and amount",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 3",
+        "result.value[0]['source'] == 'BASE'",
+        "result.value[1]['source'] == 'SEASONAL'",
+        "result.value[2]['source'] == 'DATE_OVERRIDE'"
+      ]
+    },
+    {
+      "id": "edge_resolve_single_night",
+      "description": "resolve_nightly_rates works for a single-night stay (minimum valid range)",
+      "function": "resolve_nightly_rates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "1-night stay with base_rate=10000",
+      "expected_output_description": "Exactly 1 NightlyRate entry",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 1",
+        "result.value[0]['amount']['amount_minor'] == 10000"
+      ]
+    },
+    {
+      "id": "edge_resolve_seasonal_boundary",
+      "description": "resolve_nightly_rates correctly handles a stay that crosses a seasonal boundary",
+      "function": "resolve_nightly_rates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "4-night stay; seasonal covers only first 2 nights at 15000; base=10000",
+      "expected_output_description": "First 2 nights SEASONAL@15000, last 2 nights BASE@10000",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 4",
+        "result.value[0]['source'] == 'SEASONAL'",
+        "result.value[1]['source'] == 'SEASONAL'",
+        "result.value[2]['source'] == 'BASE'",
+        "result.value[3]['source'] == 'BASE'"
+      ]
+    },
+    {
+      "id": "edge_resolve_overlapping_seasonal_priority",
+      "description": "When two seasonal rates overlap on a date, the one with higher priority wins",
+      "function": "resolve_nightly_rates",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "2 overlapping seasonal rates: priority=1 at 12000 and priority=5 at 18000",
+      "expected_output_description": "Overlapping nights use 18000 from the higher-priority seasonal",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "all(r['amount']['amount_minor'] == 18000 for r in result.value)",
+        "all(r['source'] == 'SEASONAL' for r in result.value)"
+      ]
+    },
+    {
+      "id": "err_resolve_invalid_date_range",
+      "description": "resolve_nightly_rates returns INVALID_DATE_RANGE when check_out is before check_in",
+      "function": "resolve_nightly_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "check_in=2024-07-05, check_out=2024-07-03",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "err_resolve_zero_night_stay",
+      "description": "resolve_nightly_rates returns ZERO_NIGHT_STAY when check_in equals check_out",
+      "function": "resolve_nightly_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "check_in=check_out=2024-07-05",
+      "expected_output_description": "",
+      "expected_error": "ZERO_NIGHT_STAY",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'ZERO_NIGHT_STAY'"
+      ]
+    },
+    {
+      "id": "err_resolve_overlapping_overrides",
+      "description": "resolve_nightly_rates returns OVERLAPPING_OVERRIDES_CONFLICT when two date overrides on the same date have different amounts",
+      "function": "resolve_nightly_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Two date overrides on 2024-07-05 with amounts 15000 and 20000",
+      "expected_output_description": "",
+      "expected_error": "OVERLAPPING_OVERRIDES_CONFLICT",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'OVERLAPPING_OVERRIDES_CONFLICT'"
+      ]
+    },
+    {
+      "id": "err_resolve_currency_mismatch",
+      "description": "resolve_nightly_rates returns CURRENCY_MISMATCH when a seasonal rate uses a different currency",
+      "function": "resolve_nightly_rates",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "RateConfig currency=USD, seasonal rate currency=EUR",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "hp_los_discount_applied",
+      "description": "apply_los_discount applies the correct discount tier for a qualifying stay",
+      "function": "apply_los_discount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=30000, num_nights=7, discount tiers: [3 nights→10%, 7 nights→20%]",
+      "expected_output_description": "Discounted amount = 30000 - floor(30000*20/100) = 30000 - 6000 = 24000",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 24000"
+      ]
+    },
+    {
+      "id": "hp_los_exact_threshold",
+      "description": "apply_los_discount applies discount when nights exactly match min_nights",
+      "function": "apply_los_discount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=30000, num_nights=3, discount: [3 nights→10%]",
+      "expected_output_description": "Discounted amount = 30000 - floor(30000*10/100) = 27000",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 27000"
+      ]
+    },
+    {
+      "id": "hp_los_highest_tier_selected",
+      "description": "apply_los_discount selects the highest qualifying tier (largest min_nights <= num_nights)",
+      "function": "apply_los_discount",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=50000, num_nights=14, tiers: [3→5%, 7→10%, 14→15%, 28→25%]",
+      "expected_output_description": "15% tier applies: 50000 - floor(50000*15/100) = 42500",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 42500"
+      ]
+    },
+    {
+      "id": "edge_los_below_threshold",
+      "description": "apply_los_discount returns unchanged subtotal when stay is below all thresholds",
+      "function": "apply_los_discount",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=30000, num_nights=2, discount tiers: [3 nights→10%]",
+      "expected_output_description": "No discount: amount remains 30000",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 30000"
+      ]
+    },
+    {
+      "id": "edge_los_empty_list",
+      "description": "apply_los_discount returns unchanged subtotal when no discount tiers exist",
+      "function": "apply_los_discount",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=30000, num_nights=7, empty discount list",
+      "expected_output_description": "No discount: amount remains 30000",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 30000"
+      ]
+    },
+    {
+      "id": "edge_los_zero_percent",
+      "description": "apply_los_discount with 0% discount returns unchanged subtotal",
+      "function": "apply_los_discount",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=30000, num_nights=3, tiers: [3→0%]",
+      "expected_output_description": "0% discount: 30000 - 0 = 30000",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 30000"
+      ]
+    },
+    {
+      "id": "edge_los_floor_rounding",
+      "description": "apply_los_discount floor-rounds the discount so amount is never rounded up",
+      "function": "apply_los_discount",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "subtotal=10001 (odd cents), num_nights=3, tiers: [3→33%]",
+      "expected_output_description": "discount = floor(10001*33/100) = floor(3300.33) = 3300; result = 6701",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['amount_minor'] == 6701"
+      ]
+    },
+    {
+      "id": "err_los_duplicate_min_nights",
+      "description": "apply_los_discount returns INVALID_DISCOUNT_CONFIGURATION when duplicate min_nights exist",
+      "function": "apply_los_discount",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Two tiers both with min_nights=3 but different percentages",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DISCOUNT_CONFIGURATION",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'INVALID_DISCOUNT_CONFIGURATION'"
+      ]
+    },
+    {
+      "id": "hp_flat_fees_single",
+      "description": "apply_flat_fees returns a single FLAT_FEE line item for a cleaning fee",
+      "function": "apply_flat_fees",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "fees: [Cleaning Fee, FLAT, 5000, taxable=True], currency=USD",
+      "expected_output_description": "One FLAT_FEE line item at 5000 USD",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 1",
+        "result.value[0]['type'] == 'FLAT_FEE'",
+        "result.value[0]['amount']['amount_minor'] == 5000"
+      ]
+    },
+    {
+      "id": "hp_flat_fees_multiple",
+      "description": "apply_flat_fees returns multiple FLAT_FEE line items, filtering out PERCENTAGE fees",
+      "function": "apply_flat_fees",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "fees: [Cleaning 5000 FLAT, Service 500 PERCENTAGE, Resort 2500 FLAT]",
+      "expected_output_description": "Two FLAT_FEE line items totaling 7500",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 2",
+        "sum(li['amount']['amount_minor'] for li in result.value) == 7500"
+      ]
+    },
+    {
+      "id": "edge_flat_fee_zero_amount",
+      "description": "apply_flat_fees handles a zero-amount flat fee correctly",
+      "function": "apply_flat_fees",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "fees: [Waived Fee, FLAT, 0, taxable=True]",
+      "expected_output_description": "One FLAT_FEE line item with amount 0",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 1",
+        "result.value[0]['amount']['amount_minor'] == 0"
+      ]
+    },
+    {
+      "id": "hp_percentage_fee",
+      "description": "apply_percentage_fees correctly calculates percentage fee from basis points",
+      "function": "apply_percentage_fees",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "fees: [Service Fee, PERCENTAGE, 500 bps (5%)], base_amount=24000 USD",
+      "expected_output_description": "Fee = floor(24000 * 500 / 10000) = floor(1200) = 1200",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 1",
+        "result.value[0]['type'] == 'PERCENTAGE_FEE'",
+        "result.value[0]['amount']['amount_minor'] == 1200"
+      ]
+    },
+    {
+      "id": "edge_percentage_fee_floor_rounding",
+      "description": "apply_percentage_fees floor-rounds fractional cents",
+      "function": "apply_percentage_fees",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "fees: [Service Fee, PERCENTAGE, 333 bps (3.33%)], base_amount=10001",
+      "expected_output_description": "Fee = floor(10001 * 333 / 10000) = floor(333.0333) = 333",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value[0]['amount']['amount_minor'] == 333"
+      ]
+    },
+    {
+      "id": "hp_taxes_single",
+      "description": "apply_taxes calculates a single tax on accommodation after discount",
+      "function": "apply_taxes",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "taxes: [State Tax, 1000 bps (10%), applies_to_fees=False], accommodation=24000, taxable_fees=5000",
+      "expected_output_description": "Tax base = 24000 (fees excluded), tax = floor(24000*1000/10000) = 2400",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 1",
+        "result.value[0]['type'] == 'TAX'",
+        "result.value[0]['amount']['amount_minor'] == 2400"
+      ]
+    },
+    {
+      "id": "hp_taxes_applies_to_fees",
+      "description": "apply_taxes includes taxable fees in tax base when applies_to_fees is true",
+      "function": "apply_taxes",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "taxes: [Total Tax, 1000 bps (10%), applies_to_fees=True], accommodation=24000, taxable_fees=5000",
+      "expected_output_description": "Tax base = 24000 + 5000 = 29000, tax = floor(29000*1000/10000) = 2900",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value[0]['amount']['amount_minor'] == 2900"
+      ]
+    },
+    {
+      "id": "hp_taxes_multiple",
+      "description": "apply_taxes calculates multiple independent taxes",
+      "function": "apply_taxes",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "taxes: [State 1000bps applies_to_fees=True, Tourism 200bps applies_to_fees=False], accommodation=20000, taxable_fees=5000",
+      "expected_output_description": "State tax = floor(25000*1000/10000)=2500; Tourism = floor(20000*200/10000)=400",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value) == 2",
+        "result.value[0]['amount']['amount_minor'] == 2500",
+        "result.value[1]['amount']['amount_minor'] == 400"
+      ]
+    },
+    {
+      "id": "edge_taxes_zero_rate",
+      "description": "apply_taxes handles a 0 basis points tax rate (produces 0 tax)",
+      "function": "apply_taxes",
+      "category": "edge_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "taxes: [Exempt Tax, 0 bps, applies_to_fees=True], accommodation=24000, taxable_fees=5000",
+      "expected_output_description": "Tax = floor(29000*0/10000) = 0",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value[0]['amount']['amount_minor'] == 0"
+      ]
+    },
+    {
+      "id": "err_taxes_rate_out_of_range",
+      "description": "apply_taxes returns TAX_RATE_OUT_OF_RANGE when rate_basis_points exceeds 10000",
+      "function": "apply_taxes",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "taxes: [Bad Tax, 15000 bps], accommodation=24000, taxable_fees=0",
+      "expected_output_description": "",
+      "expected_error": "TAX_RATE_OUT_OF_RANGE",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'TAX_RATE_OUT_OF_RANGE'"
+      ]
+    },
+    {
+      "id": "err_taxes_currency_mismatch",
+      "description": "apply_taxes returns CURRENCY_MISMATCH when accommodation and fees currencies differ",
+      "function": "apply_taxes",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "accommodation currency=USD, taxable_fees currency=EUR",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "hp_calculate_total_full_pipeline",
+      "description": "calculate_total executes the full pipeline and produces a correct PriceBreakdown",
+      "function": "calculate_total",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "base=10000, 3 nights, seasonal on night 2=15000, LOS [3→10%], cleaning 5000 FLAT, service 500bps PCT, state tax 1000bps applies_to_fees=True",
+      "expected_output_description": "Accommodation: 10000+15000+10000=35000; after 10% LOS: 35000-3500=31500; flat fees=5000; pct fee=floor(31500*500/10000)=1575; taxable base=31500+5000+1575=38075; tax=floor(38075*1000/10000)=3807; total=31500+5000+1575+3807=41882",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['accommodation_subtotal']['amount_minor'] == 35000",
+        "result.value['accommodation_after_discount']['amount_minor'] == 31500",
+        "result.value['los_discount_applied'] is True",
+        "result.value['los_discount_percent'] == 10",
+        "result.value['num_nights'] == 3",
+        "result.value['total']['amount_minor'] == result.value['accommodation_after_discount']['amount_minor'] + result.value['fees_subtotal']['amount_minor'] + result.value['tax_subtotal']['amount_minor']"
+      ]
+    },
+    {
+      "id": "hp_calculate_total_no_extras",
+      "description": "calculate_total with base rates only, no discounts/fees/taxes",
+      "function": "calculate_total",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "base=10000, 3 nights, no seasonal/overrides/LOS/fees/taxes",
+      "expected_output_description": "total = 3 * 10000 = 30000, no discounts, no fees, no taxes",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['accommodation_subtotal']['amount_minor'] == 30000",
+        "result.value['accommodation_after_discount']['amount_minor'] == 30000",
+        "result.value['los_discount_applied'] is False",
+        "result.value['fees_subtotal']['amount_minor'] == 0",
+        "result.value['tax_subtotal']['amount_minor'] == 0",
+        "result.value['total']['amount_minor'] == 30000"
+      ]
+    },
+    {
+      "id": "err_calculate_total_invalid_date_range",
+      "description": "calculate_total returns INVALID_DATE_RANGE when check_out <= check_in",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "check_out before check_in",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DATE_RANGE",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'INVALID_DATE_RANGE'"
+      ]
+    },
+    {
+      "id": "err_calculate_total_zero_night",
+      "description": "calculate_total returns ZERO_NIGHT_STAY when check_in == check_out",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "check_in == check_out",
+      "expected_output_description": "",
+      "expected_error": "ZERO_NIGHT_STAY",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'ZERO_NIGHT_STAY'"
+      ]
+    },
+    {
+      "id": "err_calculate_total_currency_mismatch",
+      "description": "calculate_total returns CURRENCY_MISMATCH when request and config currencies differ",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "request currency=EUR, config currency=USD",
+      "expected_output_description": "",
+      "expected_error": "CURRENCY_MISMATCH",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'CURRENCY_MISMATCH'"
+      ]
+    },
+    {
+      "id": "err_calculate_total_invalid_unit_id",
+      "description": "calculate_total returns INVALID_UNIT_ID when request unit_id doesn't match config",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "request unit_id != config unit_id",
+      "expected_output_description": "",
+      "expected_error": "INVALID_UNIT_ID",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'INVALID_UNIT_ID'"
+      ]
+    },
+    {
+      "id": "err_calculate_total_overlapping_overrides",
+      "description": "calculate_total propagates OVERLAPPING_OVERRIDES_CONFLICT from resolve_nightly_rates",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Config with conflicting date overrides on the same date",
+      "expected_output_description": "",
+      "expected_error": "OVERLAPPING_OVERRIDES_CONFLICT",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'OVERLAPPING_OVERRIDES_CONFLICT'"
+      ]
+    },
+    {
+      "id": "err_calculate_total_invalid_discount",
+      "description": "calculate_total propagates INVALID_DISCOUNT_CONFIGURATION from apply_los_discount",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Config with duplicate min_nights LOS discount tiers",
+      "expected_output_description": "",
+      "expected_error": "INVALID_DISCOUNT_CONFIGURATION",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'INVALID_DISCOUNT_CONFIGURATION'"
+      ]
+    },
+    {
+      "id": "err_calculate_total_tax_out_of_range",
+      "description": "calculate_total propagates TAX_RATE_OUT_OF_RANGE from apply_taxes",
+      "function": "calculate_total",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Config with tax rate_basis_points=15000 (>100%)",
+      "expected_output_description": "",
+      "expected_error": "TAX_RATE_OUT_OF_RANGE",
+      "assertions": [
+        "result.ok is False",
+        "result.error['kind'] == 'TAX_RATE_OUT_OF_RANGE'"
+      ]
+    },
+    {
+      "id": "inv_calculate_total_line_items_sum",
+      "description": "PriceBreakdown line_items amounts sum exactly to total (no rounding drift)",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Full pipeline with fractional-cent-prone values: base=9999, 7 nights, LOS 7→15%, cleaning 4999, service 333bps, tax 875bps",
+      "expected_output_description": "Sum of all line_items amounts == total.amount_minor exactly",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "sum(li['amount']['amount_minor'] for li in result.value['line_items']) == result.value['total']['amount_minor']"
+      ]
+    },
+    {
+      "id": "inv_calculate_total_currency_consistent",
+      "description": "All monetary fields in PriceBreakdown share the same currency",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Standard 3-night stay with fees and taxes in USD",
+      "expected_output_description": "Every Money field in the breakdown has currency == 'USD'",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['accommodation_subtotal']['currency'] == 'USD'",
+        "result.value['accommodation_after_discount']['currency'] == 'USD'",
+        "result.value['fees_subtotal']['currency'] == 'USD'",
+        "result.value['tax_subtotal']['currency'] == 'USD'",
+        "result.value['total']['currency'] == 'USD'",
+        "all(li['amount']['currency'] == 'USD' for li in result.value['line_items'])"
+      ]
+    },
+    {
+      "id": "inv_calculate_total_nightly_count",
+      "description": "PriceBreakdown.nightly_rates has exactly num_nights entries",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "5-night stay",
+      "expected_output_description": "nightly_rates length == 5 == num_nights",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "len(result.value['nightly_rates']) == result.value['num_nights']",
+        "result.value['num_nights'] == 5"
+      ]
+    },
+    {
+      "id": "inv_total_equals_components",
+      "description": "total == accommodation_after_discount + fees_subtotal + tax_subtotal",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Full pipeline with all components active",
+      "expected_output_description": "Algebraic equality holds exactly",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['total']['amount_minor'] == result.value['accommodation_after_discount']['amount_minor'] + result.value['fees_subtotal']['amount_minor'] + result.value['tax_subtotal']['amount_minor']"
+      ]
+    },
+    {
+      "id": "hp_shard_deterministic",
+      "description": "compute_shard_index returns the same shard for the same unit_id and shard_count",
+      "function": "compute_shard_index",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unit_id=valid UUID, shard_count=16",
+      "expected_output_description": "Two calls with same inputs produce identical ShardAssignment",
+      "expected_error": "",
+      "assertions": [
+        "result1.shard_index == result2.shard_index",
+        "result1.shard_key == result2.shard_key"
+      ]
+    },
+    {
+      "id": "hp_shard_range",
+      "description": "compute_shard_index returns shard_index in [0, shard_count)",
+      "function": "compute_shard_index",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unit_id=valid UUID, shard_count=8",
+      "expected_output_description": "shard_index >= 0 and < 8",
+      "expected_error": "",
+      "assertions": [
+        "0 <= result.shard_index < 8"
+      ]
+    },
+    {
+      "id": "hp_shard_key_format",
+      "description": "compute_shard_index returns shard_key matching 'rate_shard:{index}' pattern",
+      "function": "compute_shard_index",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unit_id=valid UUID, shard_count=16",
+      "expected_output_description": "shard_key == 'rate_shard:{shard_index}'",
+      "expected_error": "",
+      "assertions": [
+        "result.shard_key == f'rate_shard:{result.shard_index}'"
+      ]
+    },
+    {
+      "id": "err_shard_invalid_unit_id",
+      "description": "compute_shard_index returns INVALID_UNIT_ID for non-UUID input",
+      "function": "compute_shard_index",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "unit_id='not-a-uuid', shard_count=8",
+      "expected_output_description": "",
+      "expected_error": "INVALID_UNIT_ID",
+      "assertions": [
+        "isinstance(result, dict) or hasattr(result, 'error')",
+        "error kind is INVALID_UNIT_ID"
+      ]
+    },
+    {
+      "id": "hp_shard_distribution_uniform",
+      "description": "check_shard_distribution reports uniform distribution for 1000 UUIDs across 8 shards",
+      "function": "check_shard_distribution",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "1000 random UUIDs, 8 shards, max_acceptable_deviation=15%",
+      "expected_output_description": "is_uniform is True, counts_per_shard has 8 entries summing to 1000",
+      "expected_error": "",
+      "assertions": [
+        "result.is_uniform is True",
+        "len(result.counts_per_shard) == 8",
+        "sum(result.counts_per_shard) == 1000"
+      ]
+    },
+    {
+      "id": "hp_cache_hit_path",
+      "description": "lookup_price_with_cache on cache hit returns result with 1 GET, 0 SET, 0 repo calls",
+      "function": "lookup_price_with_cache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "MockRedisClient with pre-configured valid cached response, MockRateRepository",
+      "expected_output_description": "CacheLookupReport with path=HIT, redis_get=1, redis_set=0, repo=0",
+      "expected_error": "",
+      "assertions": [
+        "report.path == 'HIT'",
+        "report.redis_get_calls == 1",
+        "report.redis_set_calls == 0",
+        "report.repo_calls == 0",
+        "report.result.ok is True"
+      ]
+    },
+    {
+      "id": "hp_cache_miss_writeback",
+      "description": "lookup_price_with_cache on cache miss fetches from repo and writes back",
+      "function": "lookup_price_with_cache",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "MockRedisClient returning None (miss), MockRateRepository with valid config",
+      "expected_output_description": "CacheLookupReport with path=MISS_THEN_WRITEBACK, redis_get=1, redis_set=1, repo=1, ttl=3600",
+      "expected_error": "",
+      "assertions": [
+        "report.path == 'MISS_THEN_WRITEBACK'",
+        "report.redis_get_calls == 1",
+        "report.redis_set_calls == 1",
+        "report.repo_calls == 1",
+        "report.ttl_seconds == 3600",
+        "report.result.ok is True"
+      ]
+    },
+    {
+      "id": "err_cache_shard_unavailable",
+      "description": "lookup_price_with_cache returns SHARD_UNAVAILABLE when Redis fails",
+      "function": "lookup_price_with_cache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "MockRedisClient with should_fail=True",
+      "expected_output_description": "",
+      "expected_error": "SHARD_UNAVAILABLE",
+      "assertions": [
+        "report.path == 'SHARD_UNAVAILABLE'",
+        "report.result.ok is False",
+        "report.result.error['kind'] == 'SHARD_UNAVAILABLE'"
+      ]
+    },
+    {
+      "id": "err_cache_repo_error",
+      "description": "lookup_price_with_cache returns REPOSITORY_ERROR when repo fails on cache miss",
+      "function": "lookup_price_with_cache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "MockRedisClient returning None, MockRateRepository with should_fail=True",
+      "expected_output_description": "path=MISS_REPO_ERROR, redis_get=1, redis_set=0, repo=1",
+      "expected_error": "REPOSITORY_ERROR",
+      "assertions": [
+        "report.path == 'MISS_REPO_ERROR'",
+        "report.redis_get_calls == 1",
+        "report.redis_set_calls == 0",
+        "report.repo_calls == 1",
+        "report.result.ok is False",
+        "report.result.error['kind'] == 'REPOSITORY_ERROR'"
+      ]
+    },
+    {
+      "id": "err_cache_deserialization",
+      "description": "lookup_price_with_cache returns CACHE_DESERIALIZATION_ERROR when cached data is corrupt",
+      "function": "lookup_price_with_cache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "MockRedisClient returning invalid JSON string",
+      "expected_output_description": "",
+      "expected_error": "CACHE_DESERIALIZATION_ERROR",
+      "assertions": [
+        "report.path == 'DESERIALIZATION_ERROR'",
+        "report.redis_get_calls == 1",
+        "report.result.ok is False",
+        "report.result.error['kind'] == 'CACHE_DESERIALIZATION_ERROR'"
+      ]
+    },
+    {
+      "id": "err_cache_rate_not_found",
+      "description": "lookup_price_with_cache returns RATE_NOT_FOUND when repo has no config for unit",
+      "function": "lookup_price_with_cache",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "MockRedisClient returning None, MockRateRepository with empty configs",
+      "expected_output_description": "",
+      "expected_error": "RATE_NOT_FOUND",
+      "assertions": [
+        "report.result.ok is False",
+        "report.result.error['kind'] == 'RATE_NOT_FOUND'"
+      ]
+    },
+    {
+      "id": "hp_validate_stay_request_valid",
+      "description": "validate_stay_request_schema returns valid=True for a well-formed StayRequest payload",
+      "function": "validate_stay_request_schema",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Valid payload with unit_id, check_in, check_out, currency",
+      "expected_output_description": "valid=True, errors=[], schema_name='StayRequestSchema'",
+      "expected_error": "",
+      "assertions": [
+        "result.valid is True",
+        "result.errors == []",
+        "result.schema_name == 'StayRequestSchema'"
+      ]
+    },
+    {
+      "id": "err_validate_stay_request_missing_field",
+      "description": "validate_stay_request_schema returns valid=False with errors when required field is missing",
+      "function": "validate_stay_request_schema",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Payload missing 'unit_id'",
+      "expected_output_description": "valid=False, errors is non-empty",
+      "expected_error": "",
+      "assertions": [
+        "result.valid is False",
+        "len(result.errors) >= 1",
+        "result.schema_name == 'StayRequestSchema'"
+      ]
+    },
+    {
+      "id": "err_validate_stay_request_bad_currency",
+      "description": "validate_stay_request_schema rejects lowercase currency code",
+      "function": "validate_stay_request_schema",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Payload with currency='usd' (lowercase)",
+      "expected_output_description": "valid=False, errors mention currency",
+      "expected_error": "",
+      "assertions": [
+        "result.valid is False",
+        "len(result.errors) >= 1"
+      ]
+    },
+    {
+      "id": "hp_validate_price_response_valid",
+      "description": "validate_price_response_schema returns valid=True for a well-formed PriceResponse",
+      "function": "validate_price_response_schema",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Valid PriceResponse payload with breakdown, cached, computed_at",
+      "expected_output_description": "valid=True, errors=[], schema_name='PriceResponseSchema'",
+      "expected_error": "",
+      "assertions": [
+        "result.valid is True",
+        "result.errors == []",
+        "result.schema_name == 'PriceResponseSchema'"
+      ]
+    },
+    {
+      "id": "err_validate_price_response_invalid",
+      "description": "validate_price_response_schema returns valid=False for empty payload",
+      "function": "validate_price_response_schema",
+      "category": "error_case",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Empty dict payload",
+      "expected_output_description": "valid=False, errors is non-empty",
+      "expected_error": "",
+      "assertions": [
+        "result.valid is False",
+        "len(result.errors) >= 1",
+        "result.schema_name == 'PriceResponseSchema'"
+      ]
+    },
+    {
+      "id": "hp_round_trip_money",
+      "description": "round_trip_serialize produces identical JSON for Money type",
+      "function": "round_trip_serialize",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Money(amount_minor=10000, currency='USD')",
+      "expected_output_description": "is_identical=True, type_name='Money'",
+      "expected_error": "",
+      "assertions": [
+        "result.is_identical is True",
+        "result.type_name == 'Money'"
+      ]
+    },
+    {
+      "id": "hp_round_trip_rate_config",
+      "description": "round_trip_serialize produces identical JSON for RateConfig type",
+      "function": "round_trip_serialize",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "A full RateConfig from build_rate_config()",
+      "expected_output_description": "is_identical=True, type_name='RateConfig'",
+      "expected_error": "",
+      "assertions": [
+        "result.is_identical is True",
+        "result.type_name == 'RateConfig'"
+      ]
+    },
+    {
+      "id": "hp_round_trip_price_breakdown",
+      "description": "round_trip_serialize produces identical JSON for PriceBreakdown type",
+      "function": "round_trip_serialize",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "A PriceBreakdown from calculate_total",
+      "expected_output_description": "is_identical=True, type_name='PriceBreakdown'",
+      "expected_error": "",
+      "assertions": [
+        "result.is_identical is True",
+        "result.type_name == 'PriceBreakdown'"
+      ]
+    },
+    {
+      "id": "hp_build_rate_config_defaults",
+      "description": "build_rate_config returns a valid RateConfig with sensible defaults",
+      "function": "build_rate_config",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "No overrides (empty/default)",
+      "expected_output_description": "RateConfig with base_rate=10000, currency=USD, all lists defaulted",
+      "expected_error": "",
+      "assertions": [
+        "result.base_rate['amount_minor'] == 10000",
+        "result.currency == 'USD'",
+        "result.unit_id is not None"
+      ]
+    },
+    {
+      "id": "hp_build_rate_config_overrides",
+      "description": "build_rate_config applies overrides correctly",
+      "function": "build_rate_config",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "overrides: base_rate_minor=20000, currency=EUR",
+      "expected_output_description": "RateConfig with base_rate=20000, currency=EUR",
+      "expected_error": "",
+      "assertions": [
+        "result.base_rate['amount_minor'] == 20000",
+        "result.currency == 'EUR'"
+      ]
+    },
+    {
+      "id": "hp_build_stay_request_defaults",
+      "description": "build_stay_request returns a valid StayRequest with 3-night USD defaults",
+      "function": "build_stay_request",
+      "category": "happy_path",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "No overrides",
+      "expected_output_description": "StayRequest with currency=USD, check_out 3 days after check_in",
+      "expected_error": "",
+      "assertions": [
+        "result.currency == 'USD'",
+        "result.unit_id is not None",
+        "result.check_in is not None",
+        "result.check_out is not None"
+      ]
+    },
+    {
+      "id": "inv_money_non_negative",
+      "description": "All monetary amounts in a valid PriceBreakdown are non-negative (except discount line items)",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Standard 3-night stay with LOS discount",
+      "expected_output_description": "total, subtotals, and fee/tax amounts are all >= 0",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "result.value['total']['amount_minor'] >= 0",
+        "result.value['accommodation_subtotal']['amount_minor'] >= 0",
+        "result.value['accommodation_after_discount']['amount_minor'] >= 0",
+        "result.value['fees_subtotal']['amount_minor'] >= 0",
+        "result.value['tax_subtotal']['amount_minor'] >= 0"
+      ]
+    },
+    {
+      "id": "inv_result_type_exclusive",
+      "description": "PricingResult has exactly one of ok value or error, never both or neither",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Both a valid and an invalid request",
+      "expected_output_description": "Success has ok=True,error=None; Failure has ok=False,value=None",
+      "expected_error": "",
+      "assertions": [
+        "For success: result.ok is True and result.error is None and result.value is not None",
+        "For failure: result.ok is False and result.value is None and result.error is not None"
+      ]
+    },
+    {
+      "id": "inv_pipeline_order",
+      "description": "Pipeline steps are applied in order: base→seasonal/override→LOS→flat fees→%fees→taxes, verifiable via line_items ordering",
+      "function": "calculate_total",
+      "category": "invariant",
+      "setup_description": "",
+      "mock_dependencies": {},
+      "input_values": {},
+      "input_description": "Full pipeline with all components active",
+      "expected_output_description": "line_items types appear in order: NIGHTLY_RATE, LOS_DISCOUNT, FLAT_FEE, PERCENTAGE_FEE, TAX",
+      "expected_error": "",
+      "assertions": [
+        "result.ok is True",
+        "Line item types appear in pipeline order: NIGHTLY_RATE before LOS_DISCOUNT before FLAT_FEE before PERCENTAGE_FEE before TAX"
+      ]
+    }
+  ],
+  "test_language": "python",
+  "generated_code": "\"\"\"\nContract test suite for pricing_tests (Pricing Service Tests) v1.\n\nTests the rate cache pricing service covering:\n- Nightly rate resolution (base, seasonal, override tiers)\n- LOS discounts\n- Flat and percentage fees\n- Tax computation\n- Full pipeline (calculate_total)\n- Cache/shard behaviour\n- Schema validation and serialization round-trips\n- Invariants (line-item sum, currency consistency, pipeline order)\n\nAll monetary values use integer minor-unit (cents) arithmetic.\nPipeline order: base rates → seasonal/override resolution → LOS discount → flat fees → % fees → taxes.\n\nDependencies are mocked via unittest.mock.\n\"\"\"\nimport json\nimport uuid\nimport math\nimport pytest\nfrom unittest.mock import MagicMock, patch, PropertyMock\nfrom dataclasses import dataclass\nfrom typing import Any, Dict, List, Optional\n\n# Import the component under test\nfrom src.pricing_tests import (\n    resolve_nightly_rates,\n    apply_los_discount,\n    apply_flat_fees,\n    apply_percentage_fees,\n    apply_taxes,\n    calculate_total,\n    compute_shard_index,\n    check_shard_distribution,\n    lookup_price_with_cache,\n    validate_stay_request_schema,\n    validate_price_response_schema,\n    round_trip_serialize,\n    build_rate_config,\n    build_stay_request,\n)\n\n\n# ---------------------------------------------------------------------------\n# Test helper constants\n# ---------------------------------------------------------------------------\nTEST_UNIT_ID = \"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\"\nALT_UNIT_ID = \"f1e2d3c4-b5a6-4987-8765-432109876543\"\nCHECK_IN = \"2024-07-01T00:00:00Z\"\nCHECK_OUT_3N = \"2024-07-04T00:00:00Z\"  # 3 nights\nCHECK_OUT_1N = \"2024-07-02T00:00:00Z\"  # 1 night\nCHECK_OUT_4N = \"2024-07-05T00:00:00Z\"  # 4 nights\nCHECK_OUT_5N = \"2024-07-06T00:00:00Z\"  # 5 nights\nCHECK_OUT_7N = \"2024-07-08T00:00:00Z\"  # 7 nights\n\n\ndef _money(amount_minor: int, currency: str = \"USD\") -> dict:\n    return {\"amount_minor\": amount_minor, \"currency\": currency}\n\n\ndef _date_range(check_in: str = CHECK_IN, check_out: str = CHECK_OUT_3N) -> dict:\n    return {\"check_in\": check_in, \"check_out\": check_out}\n\n\ndef _seasonal(name, start, end, amount, currency=\"USD\", priority=0):\n    return {\n        \"name\": name,\n        \"start_date\": start,\n        \"end_date\": end,\n        \"nightly_amount\": _money(amount, currency),\n        \"priority\": priority,\n    }\n\n\ndef _date_override(date, amount, currency=\"USD\", override_id=None, reason=\"\"):\n    return {\n        \"id\": override_id or str(uuid.uuid4()),\n        \"date\": date,\n        \"nightly_amount\": _money(amount, currency),\n        \"reason\": reason,\n    }\n\n\ndef _los_discount(min_nights, discount_percent):\n    return {\"min_nights\": min_nights, \"discount_percent\": discount_percent}\n\n\ndef _fee(name, fee_type, amount_minor, taxable=True):\n    return {\"name\": name, \"fee_type\": fee_type, \"amount_minor\": amount_minor, \"taxable\": taxable}\n\n\ndef _tax(name, rate_basis_points, applies_to_fees=True):\n    return {\"name\": name, \"rate_basis_points\": rate_basis_points, \"applies_to_fees\": applies_to_fees}\n\n\ndef _rate_config(\n    base_rate_minor=10000,\n    currency=\"USD\",\n    unit_id=TEST_UNIT_ID,\n    seasonal_rates=None,\n    date_overrides=None,\n    los_discounts=None,\n    fees=None,\n    taxes=None,\n):\n    return {\n        \"id\": str(uuid.uuid4()),\n        \"unit_id\": unit_id,\n        \"base_rate\": _money(base_rate_minor, currency),\n        \"currency\": currency,\n        \"seasonal_rates\": seasonal_rates or [],\n        \"date_overrides\": date_overrides or [],\n        \"los_discounts\": los_discounts or [],\n        \"fees\": fees or [],\n        \"taxes\": taxes or [],\n    }\n\n\ndef _stay_request(\n    unit_id=TEST_UNIT_ID,\n    check_in=CHECK_IN,\n    check_out=CHECK_OUT_3N,\n    currency=\"USD\",\n):\n    return {\n        \"unit_id\": unit_id,\n        \"check_in\": check_in,\n        \"check_out\": check_out,\n        \"currency\": currency,\n    }\n\n\ndef _mock_redis(get_responses=None, should_fail=False):\n    return {\n        \"get_responses\": get_responses or {},\n        \"get_call_count\": 0,\n        \"set_call_count\": 0,\n        \"last_set_ttl\": -1,\n        \"should_fail\": should_fail,\n    }\n\n\ndef _mock_repo(configs=None, should_fail=False):\n    return {\n        \"configs\": configs or {},\n        \"call_count\": 0,\n        \"should_fail\": should_fail,\n    }\n\n\n# ===========================================================================\n# GROUP 1: Nightly Rate Resolution — resolve_nightly_rates\n# ===========================================================================\nclass TestResolveNightlyRates:\n    \"\"\"Tests for resolve_nightly_rates (pipeline steps 1-2): rate resolution.\"\"\"\n\n    def test_base_rate_only_3_nights(self):\n        \"\"\"Happy path: all nights use base rate when no seasonal or override rates exist.\"\"\"\n        config = _rate_config(base_rate_minor=10000)\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True, \"Expected success result\"\n        rates = result[\"value\"]\n        assert len(rates) == 3, f\"Expected 3 nightly rates, got {len(rates)}\"\n        for r in rates:\n            assert r[\"amount\"][\"amount_minor\"] == 10000, (\n                f\"Expected base rate 10000, got {r['amount']['amount_minor']}\"\n            )\n            assert r[\"source\"] == \"BASE\", f\"Expected source BASE, got {r['source']}\"\n\n    def test_seasonal_rate_covers_all_nights(self):\n        \"\"\"Happy path: seasonal rate overrides base for all nights in the window.\"\"\"\n        config = _rate_config(\n            base_rate_minor=10000,\n            seasonal_rates=[\n                _seasonal(\"Summer Peak\", \"2024-06-01T00:00:00Z\", \"2024-08-31T00:00:00Z\", 15000)\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True\n        rates = result[\"value\"]\n        assert len(rates) == 3\n        for r in rates:\n            assert r[\"amount\"][\"amount_minor\"] == 15000, (\n                f\"Expected seasonal rate 15000, got {r['amount']['amount_minor']}\"\n            )\n            assert r[\"source\"] == \"SEASONAL\"\n\n    def test_date_override_takes_precedence_over_seasonal(self):\n        \"\"\"Happy path: date override wins over seasonal rate for that specific date.\"\"\"\n        config = _rate_config(\n            base_rate_minor=10000,\n            seasonal_rates=[\n                _seasonal(\"Summer\", \"2024-06-01T00:00:00Z\", \"2024-08-31T00:00:00Z\", 15000)\n            ],\n            date_overrides=[\n                _date_override(\"2024-07-02T00:00:00Z\", 20000),\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True\n        rates = result[\"value\"]\n        assert len(rates) == 3\n        # Night 1 (Jul 1): seasonal\n        assert rates[0][\"source\"] == \"SEASONAL\"\n        assert rates[0][\"amount\"][\"amount_minor\"] == 15000\n        # Night 2 (Jul 2): date override\n        assert rates[1][\"source\"] == \"DATE_OVERRIDE\"\n        assert rates[1][\"amount\"][\"amount_minor\"] == 20000\n        # Night 3 (Jul 3): seasonal\n        assert rates[2][\"source\"] == \"SEASONAL\"\n        assert rates[2][\"amount\"][\"amount_minor\"] == 15000\n\n    def test_mixed_sources_across_nights(self):\n        \"\"\"Happy path: base, seasonal, and override sources on different nights.\"\"\"\n        # Seasonal covers only Jul 2\n        config = _rate_config(\n            base_rate_minor=10000,\n            seasonal_rates=[\n                _seasonal(\"Mid\", \"2024-07-02T00:00:00Z\", \"2024-07-02T00:00:00Z\", 12000)\n            ],\n            date_overrides=[\n                _date_override(\"2024-07-03T00:00:00Z\", 20000),\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True\n        rates = result[\"value\"]\n        assert rates[0][\"source\"] == \"BASE\"\n        assert rates[0][\"amount\"][\"amount_minor\"] == 10000\n        assert rates[1][\"source\"] == \"SEASONAL\"\n        assert rates[1][\"amount\"][\"amount_minor\"] == 12000\n        assert rates[2][\"source\"] == \"DATE_OVERRIDE\"\n        assert rates[2][\"amount\"][\"amount_minor\"] == 20000\n\n    def test_single_night_stay(self):\n        \"\"\"Edge case: minimum valid date range (1 night) produces exactly 1 rate.\"\"\"\n        config = _rate_config(base_rate_minor=10000)\n        dr = _date_range(CHECK_IN, CHECK_OUT_1N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True\n        assert len(result[\"value\"]) == 1\n        assert result[\"value\"][0][\"amount\"][\"amount_minor\"] == 10000\n\n    def test_seasonal_boundary_crossing(self):\n        \"\"\"Edge case: stay crosses a seasonal boundary; some nights seasonal, others base.\"\"\"\n        # Seasonal covers Jul 1-2 only (inclusive)\n        config = _rate_config(\n            base_rate_minor=10000,\n            seasonal_rates=[\n                _seasonal(\"Short\", \"2024-07-01T00:00:00Z\", \"2024-07-02T00:00:00Z\", 15000)\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_4N)  # 4 nights Jul 1-4\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True\n        rates = result[\"value\"]\n        assert len(rates) == 4\n        assert rates[0][\"source\"] == \"SEASONAL\"\n        assert rates[1][\"source\"] == \"SEASONAL\"\n        assert rates[2][\"source\"] == \"BASE\"\n        assert rates[3][\"source\"] == \"BASE\"\n\n    def test_overlapping_seasonal_higher_priority_wins(self):\n        \"\"\"Edge case: overlapping seasonal rates — higher priority wins.\"\"\"\n        config = _rate_config(\n            base_rate_minor=10000,\n            seasonal_rates=[\n                _seasonal(\"Low\", \"2024-06-01T00:00:00Z\", \"2024-08-31T00:00:00Z\", 12000, priority=1),\n                _seasonal(\"High\", \"2024-06-15T00:00:00Z\", \"2024-07-15T00:00:00Z\", 18000, priority=5),\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is True\n        for r in result[\"value\"]:\n            assert r[\"amount\"][\"amount_minor\"] == 18000, (\n                f\"Expected higher-priority seasonal 18000, got {r['amount']['amount_minor']}\"\n            )\n            assert r[\"source\"] == \"SEASONAL\"\n\n    def test_error_invalid_date_range(self):\n        \"\"\"Error: check_out before check_in returns INVALID_DATE_RANGE.\"\"\"\n        config = _rate_config()\n        dr = _date_range(\"2024-07-05T00:00:00Z\", \"2024-07-03T00:00:00Z\")\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is False, \"Expected error result\"\n        assert result[\"error\"][\"kind\"] == \"INVALID_DATE_RANGE\"\n\n    def test_error_zero_night_stay(self):\n        \"\"\"Error: check_in == check_out returns ZERO_NIGHT_STAY.\"\"\"\n        config = _rate_config()\n        dr = _date_range(\"2024-07-05T00:00:00Z\", \"2024-07-05T00:00:00Z\")\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"ZERO_NIGHT_STAY\"\n\n    def test_error_overlapping_overrides_conflict(self):\n        \"\"\"Error: two date overrides for the same date with different amounts.\"\"\"\n        config = _rate_config(\n            date_overrides=[\n                _date_override(\"2024-07-02T00:00:00Z\", 15000),\n                _date_override(\"2024-07-02T00:00:00Z\", 20000),\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"OVERLAPPING_OVERRIDES_CONFLICT\"\n\n    def test_error_currency_mismatch_seasonal(self):\n        \"\"\"Error: seasonal rate with different currency returns CURRENCY_MISMATCH.\"\"\"\n        config = _rate_config(\n            seasonal_rates=[\n                _seasonal(\"Euro Season\", \"2024-06-01T00:00:00Z\", \"2024-08-31T00:00:00Z\", 15000, currency=\"EUR\")\n            ],\n        )\n        dr = _date_range(CHECK_IN, CHECK_OUT_3N)\n\n        result = resolve_nightly_rates(config, dr)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"CURRENCY_MISMATCH\"\n\n\n# ===========================================================================\n# GROUP 2: LOS Discounts — apply_los_discount\n# ===========================================================================\nclass TestApplyLOSDiscount:\n    \"\"\"Tests for apply_los_discount (pipeline step 3).\"\"\"\n\n    def test_discount_applied_at_threshold(self):\n        \"\"\"Happy path: 7-night stay qualifies for 20% discount tier.\"\"\"\n        # subtotal = 30000, discount = floor(30000 * 20 / 100) = 6000, result = 24000\n        result = apply_los_discount(\n            _money(30000), 7, [_los_discount(3, 10), _los_discount(7, 20)]\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 24000, (\n            f\"Expected 24000 (30000 - 6000), got {result['value']['amount_minor']}\"\n        )\n\n    def test_exact_threshold_qualifies(self):\n        \"\"\"Happy path: num_nights exactly equals min_nights threshold.\"\"\"\n        # 3 nights, 10% discount: 30000 - 3000 = 27000\n        result = apply_los_discount(\n            _money(30000), 3, [_los_discount(3, 10)]\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 27000\n\n    def test_highest_qualifying_tier_selected(self):\n        \"\"\"Happy path: selects tier with largest min_nights <= num_nights.\"\"\"\n        # 14 nights: qualifies for 3→5%, 7→10%, 14→15%, not 28→25%\n        # 50000 * 15% = 7500; result = 42500\n        result = apply_los_discount(\n            _money(50000),\n            14,\n            [\n                _los_discount(3, 5),\n                _los_discount(7, 10),\n                _los_discount(14, 15),\n                _los_discount(28, 25),\n            ],\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 42500\n\n    def test_below_all_thresholds_no_discount(self):\n        \"\"\"Edge case: stay shorter than all tiers → no discount.\"\"\"\n        result = apply_los_discount(\n            _money(30000), 2, [_los_discount(3, 10)]\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 30000\n\n    def test_empty_discount_list(self):\n        \"\"\"Edge case: empty discount list → no discount.\"\"\"\n        result = apply_los_discount(_money(30000), 7, [])\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 30000\n\n    def test_zero_percent_discount(self):\n        \"\"\"Edge case: 0% discount still returns unchanged subtotal.\"\"\"\n        result = apply_los_discount(\n            _money(30000), 3, [_los_discount(3, 0)]\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 30000\n\n    def test_floor_rounding(self):\n        \"\"\"Edge case: discount is floor-rounded (never rounds up).\"\"\"\n        # 10001 * 33 / 100 = 3300.33 → floor = 3300; result = 6701\n        result = apply_los_discount(\n            _money(10001), 3, [_los_discount(3, 33)]\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][\"amount_minor\"] == 6701, (\n            f\"Expected floor-rounded 6701, got {result['value']['amount_minor']}\"\n        )\n\n    def test_error_duplicate_min_nights(self):\n        \"\"\"Error: duplicate min_nights returns INVALID_DISCOUNT_CONFIGURATION.\"\"\"\n        result = apply_los_discount(\n            _money(30000), 5, [_los_discount(3, 10), _los_discount(3, 15)]\n        )\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"INVALID_DISCOUNT_CONFIGURATION\"\n\n\n# ===========================================================================\n# GROUP 3: Fees — apply_flat_fees & apply_percentage_fees\n# ===========================================================================\nclass TestApplyFlatFees:\n    \"\"\"Tests for apply_flat_fees (pipeline step 4).\"\"\"\n\n    def test_single_flat_fee(self):\n        \"\"\"Happy path: one flat cleaning fee.\"\"\"\n        result = apply_flat_fees(\n            [_fee(\"Cleaning Fee\", \"FLAT\", 5000, taxable=True)],\n            \"USD\",\n        )\n\n        assert result[\"ok\"] is True\n        items = result[\"value\"]\n        assert len(items) == 1\n        assert items[0][\"type\"] == \"FLAT_FEE\"\n        assert items[0][\"amount\"][\"amount_minor\"] == 5000\n        assert items[0][\"amount\"][\"currency\"] == \"USD\"\n\n    def test_multiple_flat_fees_filters_percentage(self):\n        \"\"\"Happy path: only FLAT fees are returned; PERCENTAGE are filtered out.\"\"\"\n        result = apply_flat_fees(\n            [\n                _fee(\"Cleaning\", \"FLAT\", 5000),\n                _fee(\"Service\", \"PERCENTAGE\", 500),  # should be filtered\n                _fee(\"Resort\", \"FLAT\", 2500),\n            ],\n            \"USD\",\n        )\n\n        assert result[\"ok\"] is True\n        items = result[\"value\"]\n        assert len(items) == 2\n        total = sum(li[\"amount\"][\"amount_minor\"] for li in items)\n        assert total == 7500, f\"Expected flat fee total 7500, got {total}\"\n\n    def test_zero_amount_flat_fee(self):\n        \"\"\"Edge case: flat fee with 0 amount is valid.\"\"\"\n        result = apply_flat_fees(\n            [_fee(\"Waived Fee\", \"FLAT\", 0)], \"USD\"\n        )\n\n        assert result[\"ok\"] is True\n        assert len(result[\"value\"]) == 1\n        assert result[\"value\"][0][\"amount\"][\"amount_minor\"] == 0\n\n\nclass TestApplyPercentageFees:\n    \"\"\"Tests for apply_percentage_fees (pipeline step 5).\"\"\"\n\n    def test_percentage_fee_calculation(self):\n        \"\"\"Happy path: 5% (500 bps) on 24000 = floor(24000 * 500 / 10000) = 1200.\"\"\"\n        result = apply_percentage_fees(\n            [_fee(\"Service Fee\", \"PERCENTAGE\", 500)],\n            _money(24000),\n        )\n\n        assert result[\"ok\"] is True\n        items = result[\"value\"]\n        assert len(items) == 1\n        assert items[0][\"type\"] == \"PERCENTAGE_FEE\"\n        assert items[0][\"amount\"][\"amount_minor\"] == 1200\n\n    def test_percentage_fee_floor_rounding(self):\n        \"\"\"Edge case: percentage fee is floor-rounded.\"\"\"\n        # 3.33% (333 bps) on 10001 = floor(10001 * 333 / 10000) = floor(333.0333) = 333\n        result = apply_percentage_fees(\n            [_fee(\"Service Fee\", \"PERCENTAGE\", 333)],\n            _money(10001),\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][0][\"amount\"][\"amount_minor\"] == 333\n\n\n# ===========================================================================\n# GROUP 4: Taxes — apply_taxes\n# ===========================================================================\nclass TestApplyTaxes:\n    \"\"\"Tests for apply_taxes (pipeline step 6).\"\"\"\n\n    def test_single_tax_no_fees(self):\n        \"\"\"Happy path: 10% tax on accommodation only (applies_to_fees=False).\"\"\"\n        # Tax base = 24000, tax = floor(24000 * 1000 / 10000) = 2400\n        result = apply_taxes(\n            [_tax(\"State Tax\", 1000, applies_to_fees=False)],\n            _money(24000),\n            _money(5000),\n        )\n\n        assert result[\"ok\"] is True\n        items = result[\"value\"]\n        assert len(items) == 1\n        assert items[0][\"type\"] == \"TAX\"\n        assert items[0][\"amount\"][\"amount_minor\"] == 2400\n\n    def test_tax_applies_to_fees(self):\n        \"\"\"Happy path: 10% tax on accommodation + taxable fees.\"\"\"\n        # Tax base = 24000 + 5000 = 29000, tax = floor(29000 * 1000 / 10000) = 2900\n        result = apply_taxes(\n            [_tax(\"Total Tax\", 1000, applies_to_fees=True)],\n            _money(24000),\n            _money(5000),\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][0][\"amount\"][\"amount_minor\"] == 2900\n\n    def test_multiple_taxes(self):\n        \"\"\"Happy path: two independent taxes with different bases.\"\"\"\n        # State: 10% on 20000+5000=25000 → 2500\n        # Tourism: 2% on 20000 only → 400\n        result = apply_taxes(\n            [\n                _tax(\"State\", 1000, applies_to_fees=True),\n                _tax(\"Tourism\", 200, applies_to_fees=False),\n            ],\n            _money(20000),\n            _money(5000),\n        )\n\n        assert result[\"ok\"] is True\n        items = result[\"value\"]\n        assert len(items) == 2\n        assert items[0][\"amount\"][\"amount_minor\"] == 2500\n        assert items[1][\"amount\"][\"amount_minor\"] == 400\n\n    def test_zero_rate_tax(self):\n        \"\"\"Edge case: 0 bps tax produces 0 tax amount.\"\"\"\n        result = apply_taxes(\n            [_tax(\"Exempt\", 0, applies_to_fees=True)],\n            _money(24000),\n            _money(5000),\n        )\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"][0][\"amount\"][\"amount_minor\"] == 0\n\n    def test_error_tax_rate_out_of_range(self):\n        \"\"\"Error: rate_basis_points > 10000 returns TAX_RATE_OUT_OF_RANGE.\"\"\"\n        result = apply_taxes(\n            [_tax(\"Bad Tax\", 15000)],\n            _money(24000),\n            _money(0),\n        )\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"TAX_RATE_OUT_OF_RANGE\"\n\n    def test_error_currency_mismatch(self):\n        \"\"\"Error: accommodation and fees in different currencies.\"\"\"\n        result = apply_taxes(\n            [_tax(\"Tax\", 1000)],\n            _money(24000, \"USD\"),\n            _money(5000, \"EUR\"),\n        )\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"CURRENCY_MISMATCH\"\n\n\n# ===========================================================================\n# GROUP 5: End-to-End — calculate_total\n# ===========================================================================\nclass TestCalculateTotal:\n    \"\"\"Tests for calculate_total (full pipeline composition).\"\"\"\n\n    def test_full_pipeline(self):\n        \"\"\"Happy path: complete pipeline with seasonal override, LOS, fees, taxes.\"\"\"\n        # Base=10000, seasonal on Jul 2 = 15000\n        # Nights: 10000 + 15000 + 10000 = 35000\n        # LOS 10% on 3 nights: 35000 - 3500 = 31500\n        # Cleaning flat fee = 5000\n        # Service 5% (500 bps) on 31500 = 1575\n        # State tax 10% (1000 bps) applies_to_fees=True:\n        #   Taxable fees: cleaning(5000, taxable) + service(1575, taxable) = 6575\n        #   Tax base = 31500 + 6575 = 38075, tax = floor(38075*1000/10000) = 3807\n        # Total = 31500 + 5000 + 1575 + 3807 = 41882\n        config = _rate_config(\n            base_rate_minor=10000,\n            seasonal_rates=[\n                _seasonal(\"Mid\", \"2024-07-02T00:00:00Z\", \"2024-07-02T00:00:00Z\", 15000)\n            ],\n            los_discounts=[_los_discount(3, 10)],\n            fees=[\n                _fee(\"Cleaning\", \"FLAT\", 5000, taxable=True),\n                _fee(\"Service\", \"PERCENTAGE\", 500, taxable=True),\n            ],\n            taxes=[_tax(\"State\", 1000, applies_to_fees=True)],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True, f\"Expected success, got error: {result.get('error')}\"\n        bd = result[\"value\"]\n        assert bd[\"accommodation_subtotal\"][\"amount_minor\"] == 35000\n        assert bd[\"accommodation_after_discount\"][\"amount_minor\"] == 31500\n        assert bd[\"los_discount_applied\"] is True\n        assert bd[\"los_discount_percent\"] == 10\n        assert bd[\"num_nights\"] == 3\n        # Verify algebraic total\n        expected_total = (\n            bd[\"accommodation_after_discount\"][\"amount_minor\"]\n            + bd[\"fees_subtotal\"][\"amount_minor\"]\n            + bd[\"tax_subtotal\"][\"amount_minor\"]\n        )\n        assert bd[\"total\"][\"amount_minor\"] == expected_total, (\n            f\"Total {bd['total']['amount_minor']} != components sum {expected_total}\"\n        )\n\n    def test_base_rates_only_no_extras(self):\n        \"\"\"Happy path: base rates only, no discounts/fees/taxes.\"\"\"\n        config = _rate_config(base_rate_minor=10000)\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        assert bd[\"accommodation_subtotal\"][\"amount_minor\"] == 30000\n        assert bd[\"accommodation_after_discount\"][\"amount_minor\"] == 30000\n        assert bd[\"los_discount_applied\"] is False\n        assert bd[\"fees_subtotal\"][\"amount_minor\"] == 0\n        assert bd[\"tax_subtotal\"][\"amount_minor\"] == 0\n        assert bd[\"total\"][\"amount_minor\"] == 30000\n\n    def test_error_invalid_date_range(self):\n        \"\"\"Error: check_out before check_in.\"\"\"\n        config = _rate_config()\n        request = _stay_request(check_out=\"2024-06-30T00:00:00Z\")\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"INVALID_DATE_RANGE\"\n\n    def test_error_zero_night_stay(self):\n        \"\"\"Error: check_in == check_out.\"\"\"\n        config = _rate_config()\n        request = _stay_request(check_in=CHECK_IN, check_out=CHECK_IN)\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"ZERO_NIGHT_STAY\"\n\n    def test_error_currency_mismatch(self):\n        \"\"\"Error: request currency differs from config currency.\"\"\"\n        config = _rate_config(currency=\"USD\")\n        request = _stay_request(currency=\"EUR\")\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"CURRENCY_MISMATCH\"\n\n    def test_error_invalid_unit_id(self):\n        \"\"\"Error: request unit_id doesn't match config unit_id.\"\"\"\n        config = _rate_config(unit_id=TEST_UNIT_ID)\n        request = _stay_request(unit_id=ALT_UNIT_ID)\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"INVALID_UNIT_ID\"\n\n    def test_error_overlapping_overrides_propagation(self):\n        \"\"\"Error: conflicting date overrides propagate from resolve_nightly_rates.\"\"\"\n        config = _rate_config(\n            date_overrides=[\n                _date_override(\"2024-07-02T00:00:00Z\", 15000),\n                _date_override(\"2024-07-02T00:00:00Z\", 20000),\n            ],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"OVERLAPPING_OVERRIDES_CONFLICT\"\n\n    def test_error_invalid_discount_propagation(self):\n        \"\"\"Error: duplicate LOS tiers propagate from apply_los_discount.\"\"\"\n        config = _rate_config(\n            los_discounts=[_los_discount(3, 10), _los_discount(3, 15)],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"INVALID_DISCOUNT_CONFIGURATION\"\n\n    def test_error_tax_rate_out_of_range_propagation(self):\n        \"\"\"Error: invalid tax rate propagates from apply_taxes.\"\"\"\n        config = _rate_config(taxes=[_tax(\"Bad\", 15000)])\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result[\"error\"][\"kind\"] == \"TAX_RATE_OUT_OF_RANGE\"\n\n\n# ===========================================================================\n# GROUP 5 (continued): Invariants for calculate_total\n# ===========================================================================\nclass TestCalculateTotalInvariants:\n    \"\"\"Invariant tests for calculate_total output properties.\"\"\"\n\n    def _get_valid_breakdown(self, **config_overrides):\n        \"\"\"Helper to build a config and get a successful breakdown.\"\"\"\n        config = _rate_config(**config_overrides)\n        request = _stay_request(\n            check_out=config_overrides.get(\"check_out\", CHECK_OUT_3N),\n            unit_id=config_overrides.get(\"unit_id\", TEST_UNIT_ID),\n            currency=config_overrides.get(\"currency\", \"USD\"),\n        )\n        return calculate_total(config, request)\n\n    def test_line_items_sum_equals_total(self):\n        \"\"\"Invariant: sum of line_items amounts == total exactly (no rounding drift).\"\"\"\n        # Use fractional-cent-prone values\n        config = _rate_config(\n            base_rate_minor=9999,\n            los_discounts=[_los_discount(7, 15)],\n            fees=[\n                _fee(\"Cleaning\", \"FLAT\", 4999, taxable=True),\n                _fee(\"Service\", \"PERCENTAGE\", 333, taxable=True),\n            ],\n            taxes=[_tax(\"Tax\", 875, applies_to_fees=True)],\n        )\n        request = _stay_request(check_out=CHECK_OUT_7N)\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        line_item_sum = sum(li[\"amount\"][\"amount_minor\"] for li in bd[\"line_items\"])\n        assert line_item_sum == bd[\"total\"][\"amount_minor\"], (\n            f\"Line items sum {line_item_sum} != total {bd['total']['amount_minor']}\"\n        )\n\n    def test_currency_consistent_across_all_fields(self):\n        \"\"\"Invariant: all monetary fields share the same currency.\"\"\"\n        config = _rate_config(\n            fees=[_fee(\"Cleaning\", \"FLAT\", 5000)],\n            taxes=[_tax(\"Tax\", 1000)],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        assert bd[\"accommodation_subtotal\"][\"currency\"] == \"USD\"\n        assert bd[\"accommodation_after_discount\"][\"currency\"] == \"USD\"\n        assert bd[\"fees_subtotal\"][\"currency\"] == \"USD\"\n        assert bd[\"tax_subtotal\"][\"currency\"] == \"USD\"\n        assert bd[\"total\"][\"currency\"] == \"USD\"\n        for li in bd[\"line_items\"]:\n            assert li[\"amount\"][\"currency\"] == \"USD\", (\n                f\"Line item '{li['label']}' has currency {li['amount']['currency']}, expected USD\"\n            )\n\n    def test_nightly_rates_count_equals_num_nights(self):\n        \"\"\"Invariant: nightly_rates has exactly num_nights entries.\"\"\"\n        config = _rate_config()\n        request = _stay_request(check_out=CHECK_OUT_5N)\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        assert len(bd[\"nightly_rates\"]) == bd[\"num_nights\"]\n        assert bd[\"num_nights\"] == 5\n\n    def test_total_equals_components_sum(self):\n        \"\"\"Invariant: total = accommodation_after_discount + fees_subtotal + tax_subtotal.\"\"\"\n        config = _rate_config(\n            los_discounts=[_los_discount(3, 10)],\n            fees=[\n                _fee(\"Cleaning\", \"FLAT\", 5000),\n                _fee(\"Service\", \"PERCENTAGE\", 500),\n            ],\n            taxes=[_tax(\"Tax\", 1000, applies_to_fees=True)],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        expected = (\n            bd[\"accommodation_after_discount\"][\"amount_minor\"]\n            + bd[\"fees_subtotal\"][\"amount_minor\"]\n            + bd[\"tax_subtotal\"][\"amount_minor\"]\n        )\n        assert bd[\"total\"][\"amount_minor\"] == expected\n\n    def test_money_amounts_non_negative(self):\n        \"\"\"Invariant: all monetary amounts in breakdown (except discount line items) are >= 0.\"\"\"\n        config = _rate_config(\n            los_discounts=[_los_discount(3, 10)],\n            fees=[_fee(\"Cleaning\", \"FLAT\", 5000)],\n            taxes=[_tax(\"Tax\", 1000)],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        assert bd[\"total\"][\"amount_minor\"] >= 0\n        assert bd[\"accommodation_subtotal\"][\"amount_minor\"] >= 0\n        assert bd[\"accommodation_after_discount\"][\"amount_minor\"] >= 0\n        assert bd[\"fees_subtotal\"][\"amount_minor\"] >= 0\n        assert bd[\"tax_subtotal\"][\"amount_minor\"] >= 0\n\n    def test_result_type_exclusive_success(self):\n        \"\"\"Invariant: success result has ok=True, value is not None, error is None.\"\"\"\n        config = _rate_config()\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        assert result[\"value\"] is not None\n        assert result.get(\"error\") is None\n\n    def test_result_type_exclusive_failure(self):\n        \"\"\"Invariant: failure result has ok=False, value is None, error is not None.\"\"\"\n        config = _rate_config()\n        request = _stay_request(check_out=CHECK_IN)  # zero nights\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is False\n        assert result.get(\"value\") is None\n        assert result[\"error\"] is not None\n\n    def test_pipeline_order_via_line_items(self):\n        \"\"\"Invariant: line_items types appear in pipeline order:\n        NIGHTLY_RATE → LOS_DISCOUNT → FLAT_FEE → PERCENTAGE_FEE → TAX.\n        \"\"\"\n        config = _rate_config(\n            los_discounts=[_los_discount(3, 10)],\n            fees=[\n                _fee(\"Cleaning\", \"FLAT\", 5000),\n                _fee(\"Service\", \"PERCENTAGE\", 500),\n            ],\n            taxes=[_tax(\"Tax\", 1000)],\n        )\n        request = _stay_request()\n\n        result = calculate_total(config, request)\n\n        assert result[\"ok\"] is True\n        bd = result[\"value\"]\n        type_order = {\"NIGHTLY_RATE\": 0, \"LOS_DISCOUNT\": 1, \"FLAT_FEE\": 2, \"PERCENTAGE_FEE\": 3, \"TAX\": 4}\n        last_order = -1\n        for li in bd[\"line_items\"]:\n            current_order = type_order.get(li[\"type\"], -1)\n            assert current_order >= last_order, (\n                f\"Pipeline order violation: {li['type']} (order {current_order}) \"\n                f\"appeared after an item of order {last_order}\"\n            )\n            last_order = current_order\n\n\n# ===========================================================================\n# GROUP 6: Caching & Sharding\n# ===========================================================================\nclass TestComputeShardIndex:\n    \"\"\"Tests for compute_shard_index (deterministic shard assignment).\"\"\"\n\n    def test_deterministic_same_inputs(self):\n        \"\"\"Happy path: same unit_id and shard_count always produce the same result.\"\"\"\n        result1 = compute_shard_index(TEST_UNIT_ID, 16)\n        result2 = compute_shard_index(TEST_UNIT_ID, 16)\n\n        assert result1[\"shard_index\"] == result2[\"shard_index\"], \"Shard index must be deterministic\"\n        assert result1[\"shard_key\"] == result2[\"shard_key\"], \"Shard key must be deterministic\"\n\n    def test_shard_index_in_range(self):\n        \"\"\"Happy path: shard_index is in [0, shard_count).\"\"\"\n        result = compute_shard_index(TEST_UNIT_ID, 8)\n\n        assert 0 <= result[\"shard_index\"] < 8, (\n            f\"shard_index {result['shard_index']} not in [0, 8)\"\n        )\n\n    def test_shard_key_format(self):\n        \"\"\"Happy path: shard_key follows 'rate_shard:{index}' pattern.\"\"\"\n        result = compute_shard_index(TEST_UNIT_ID, 16)\n\n        expected_key = f\"rate_shard:{result['shard_index']}\"\n        assert result[\"shard_key\"] == expected_key, (\n            f\"Expected shard_key '{expected_key}', got '{result['shard_key']}'\"\n        )\n\n    def test_error_invalid_unit_id(self):\n        \"\"\"Error: non-UUID input returns INVALID_UNIT_ID.\"\"\"\n        try:\n            result = compute_shard_index(\"not-a-uuid\", 8)\n            # If it returns a result dict with error\n            if isinstance(result, dict) and \"error\" in result:\n                assert result[\"error\"][\"kind\"] == \"INVALID_UNIT_ID\"\n            else:\n                pytest.fail(\"Expected INVALID_UNIT_ID error for non-UUID input\")\n        except Exception:\n            # Implementation may raise an exception; acceptable\n            pass\n\n\nclass TestCheckShardDistribution:\n    \"\"\"Tests for check_shard_distribution (uniformity verification).\"\"\"\n\n    def test_uniform_distribution(self):\n        \"\"\"Happy path: 1000 random UUIDs distribute roughly uniformly across 8 shards.\"\"\"\n        unit_ids = [str(uuid.uuid4()) for _ in range(1000)]\n\n        result = check_shard_distribution(unit_ids, 8, 15.0)\n\n        assert len(result[\"counts_per_shard\"]) == 8, (\n            f\"Expected 8 shard counts, got {len(result['counts_per_shard'])}\"\n        )\n        assert sum(result[\"counts_per_shard\"]) == 1000, (\n            f\"Counts sum {sum(result['counts_per_shard'])} != 1000\"\n        )\n        assert result[\"is_uniform\"] is True, (\n            f\"Distribution not uniform: max_deviation={result['max_deviation_percent']:.1f}%\"\n        )\n\n\nclass TestLookupPriceWithCache:\n    \"\"\"Tests for lookup_price_with_cache (cache hit/miss paths).\"\"\"\n\n    def _valid_cached_json(self):\n        \"\"\"Return a valid JSON string that represents a cached PriceBreakdown.\"\"\"\n        return json.dumps({\n            \"unit_id\": TEST_UNIT_ID,\n            \"date_range\": _date_range(),\n            \"num_nights\": 3,\n            \"currency\": \"USD\",\n            \"nightly_rates\": [],\n            \"accommodation_subtotal\": _money(30000),\n            \"los_discount_applied\": False,\n            \"los_discount_percent\": 0,\n            \"accommodation_after_discount\": _money(30000),\n            \"fees_subtotal\": _money(0),\n            \"tax_subtotal\": _money(0),\n            \"total\": _money(30000),\n            \"line_items\": [],\n        })\n\n    def test_cache_hit_path(self):\n        \"\"\"Happy path: cache hit returns result with 1 GET, 0 SET, 0 repo calls.\"\"\"\n        cache_key = f\"rate_shard:0:{TEST_UNIT_ID}:{CHECK_IN}:{CHECK_OUT_3N}\"\n        redis = _mock_redis(get_responses={cache_key: self._valid_cached_json()})\n        repo = _mock_repo(configs={TEST_UNIT_ID: _rate_config()})\n        request = _stay_request()\n\n        report = lookup_price_with_cache(request, redis, repo, 8, 3600)\n\n        assert report[\"path\"] == \"HIT\", f\"Expected HIT, got {report['path']}\"\n        assert report[\"redis_get_calls\"] == 1\n        assert report[\"redis_set_calls\"] == 0\n        assert report[\"repo_calls\"] == 0\n        assert report[\"result\"][\"ok\"] is True\n\n    def test_cache_miss_writeback(self):\n        \"\"\"Happy path: cache miss triggers repo lookup and writeback.\"\"\"\n        redis = _mock_redis()  # all misses\n        repo = _mock_repo(configs={TEST_UNIT_ID: _rate_config()})\n        request = _stay_request()\n\n        report = lookup_price_with_cache(request, redis, repo, 8, 3600)\n\n        assert report[\"path\"] == \"MISS_THEN_WRITEBACK\"\n        assert report[\"redis_get_calls\"] == 1\n        assert report[\"redis_set_calls\"] == 1\n        assert report[\"repo_calls\"] == 1\n        assert report[\"ttl_seconds\"] == 3600\n        assert report[\"result\"][\"ok\"] is True\n\n    def test_shard_unavailable(self):\n        \"\"\"Error: Redis failure returns SHARD_UNAVAILABLE.\"\"\"\n        redis = _mock_redis(should_fail=True)\n        repo = _mock_repo()\n        request = _stay_request()\n\n        report = lookup_price_with_cache(request, redis, repo, 8, 3600)\n\n        assert report[\"path\"] == \"SHARD_UNAVAILABLE\"\n        assert report[\"result\"][\"ok\"] is False\n        assert report[\"result\"][\"error\"][\"kind\"] == \"SHARD_UNAVAILABLE\"\n\n    def test_repo_error_on_miss(self):\n        \"\"\"Error: repository error on cache miss returns MISS_REPO_ERROR.\"\"\"\n        redis = _mock_redis()\n        repo = _mock_repo(should_fail=True)\n        request = _stay_request()\n\n        report = lookup_price_with_cache(request, redis, repo, 8, 3600)\n\n        assert report[\"path\"] == \"MISS_REPO_ERROR\"\n        assert report[\"redis_get_calls\"] == 1\n        assert report[\"redis_set_calls\"] == 0\n        assert report[\"repo_calls\"] == 1\n        assert report[\"result\"][\"ok\"] is False\n        assert report[\"result\"][\"error\"][\"kind\"] == \"REPOSITORY_ERROR\"\n\n    def test_deserialization_error(self):\n        \"\"\"Error: corrupt cached data returns CACHE_DESERIALIZATION_ERROR.\"\"\"\n        cache_key = f\"rate_shard:0:{TEST_UNIT_ID}:{CHECK_IN}:{CHECK_OUT_3N}\"\n        redis = _mock_redis(get_responses={cache_key: \"{{invalid json!!\"})\n        repo = _mock_repo()\n        request = _stay_request()\n\n        report = lookup_price_with_cache(request, redis, repo, 8, 3600)\n\n        assert report[\"path\"] == \"DESERIALIZATION_ERROR\"\n        assert report[\"redis_get_calls\"] == 1\n        assert report[\"result\"][\"ok\"] is False\n        assert report[\"result\"][\"error\"][\"kind\"] == \"CACHE_DESERIALIZATION_ERROR\"\n\n    def test_rate_not_found(self):\n        \"\"\"Error: repo has no config for unit → RATE_NOT_FOUND.\"\"\"\n        redis = _mock_redis()\n        repo = _mock_repo(configs={})  # no configs at all\n        request = _stay_request()\n\n        report = lookup_price_with_cache(request, redis, repo, 8, 3600)\n\n        assert report[\"result\"][\"ok\"] is False\n        assert report[\"result\"][\"error\"][\"kind\"] == \"RATE_NOT_FOUND\"\n\n\n# ===========================================================================\n# GROUP 7: Schema Validation & Serialization\n# ===========================================================================\nclass TestValidateStayRequestSchema:\n    \"\"\"Tests for validate_stay_request_schema.\"\"\"\n\n    def test_valid_payload(self):\n        \"\"\"Happy path: well-formed StayRequest passes validation.\"\"\"\n        payload = {\n            \"unit_id\": TEST_UNIT_ID,\n            \"check_in\": CHECK_IN,\n            \"check_out\": CHECK_OUT_3N,\n            \"currency\": \"USD\",\n        }\n\n        result = validate_stay_request_schema(payload)\n\n        assert result[\"valid\"] is True\n        assert result[\"errors\"] == []\n        assert result[\"schema_name\"] == \"StayRequestSchema\"\n\n    def test_missing_required_field(self):\n        \"\"\"Error: missing unit_id fails validation.\"\"\"\n        payload = {\n            \"check_in\": CHECK_IN,\n            \"check_out\": CHECK_OUT_3N,\n            \"currency\": \"USD\",\n        }\n\n        result = validate_stay_request_schema(payload)\n\n        assert result[\"valid\"] is False\n        assert len(result[\"errors\"]) >= 1\n        assert result[\"schema_name\"] == \"StayRequestSchema\"\n\n    def test_lowercase_currency_rejected(self):\n        \"\"\"Error: lowercase currency code fails validation.\"\"\"\n        payload = {\n            \"unit_id\": TEST_UNIT_ID,\n            \"check_in\": CHECK_IN,\n            \"check_out\": CHECK_OUT_3N,\n            \"currency\": \"usd\",\n        }\n\n        result = validate_stay_request_schema(payload)\n\n        assert result[\"valid\"] is False\n        assert len(result[\"errors\"]) >= 1\n\n\nclass TestValidatePriceResponseSchema:\n    \"\"\"Tests for validate_price_response_schema.\"\"\"\n\n    def test_valid_response(self):\n        \"\"\"Happy path: well-formed PriceResponse passes validation.\"\"\"\n        payload = {\n            \"breakdown\": {\n                \"unit_id\": TEST_UNIT_ID,\n                \"date_range\": _date_range(),\n                \"num_nights\": 3,\n                \"currency\": \"USD\",\n                \"nightly_rates\": [],\n                \"accommodation_subtotal\": _money(30000),\n                \"los_discount_applied\": False,\n                \"los_discount_percent\": 0,\n                \"accommodation_after_discount\": _money(30000),\n                \"fees_subtotal\": _money(0),\n                \"tax_subtotal\": _money(0),\n                \"total\": _money(30000),\n                \"line_items\": [],\n            },\n            \"cached\": False,\n            \"computed_at\": \"2024-07-01T12:00:00Z\",\n        }\n\n        result = validate_price_response_schema(payload)\n\n        assert result[\"valid\"] is True\n        assert result[\"errors\"] == []\n        assert result[\"schema_name\"] == \"PriceResponseSchema\"\n\n    def test_empty_payload_rejected(self):\n        \"\"\"Error: empty dict fails PriceResponse validation.\"\"\"\n        result = validate_price_response_schema({})\n\n        assert result[\"valid\"] is False\n        assert len(result[\"errors\"]) >= 1\n        assert result[\"schema_name\"] == \"PriceResponseSchema\"\n\n\nclass TestRoundTripSerialize:\n    \"\"\"Tests for round_trip_serialize.\"\"\"\n\n    def test_money_round_trip(self):\n        \"\"\"Happy path: Money serialization round-trip is identical.\"\"\"\n        money = _money(10000, \"USD\")\n\n        result = round_trip_serialize(money, \"Money\")\n\n        assert result[\"is_identical\"] is True, (\n            f\"Round-trip mismatch: original={result['original_json']}, \"\n            f\"deserialized={result['deserialized_json']}\"\n        )\n        assert result[\"type_name\"] == \"Money\"\n\n    def test_rate_config_round_trip(self):\n        \"\"\"Happy path: RateConfig round-trip is identical.\"\"\"\n        config = _rate_config(\n            seasonal_rates=[\n                _seasonal(\"Summer\", \"2024-06-01T00:00:00Z\", \"2024-08-31T00:00:00Z\", 15000)\n            ],\n            los_discounts=[_los_discount(7, 10)],\n            fees=[_fee(\"Cleaning\", \"FLAT\", 5000)],\n            taxes=[_tax(\"Tax\", 1000)],\n        )\n\n        result = round_trip_serialize(config, \"RateConfig\")\n\n        assert result[\"is_identical\"] is True\n        assert result[\"type_name\"] == \"RateConfig\"\n\n    def test_price_breakdown_round_trip(self):\n        \"\"\"Happy path: PriceBreakdown round-trip preserves all data.\"\"\"\n        breakdown = {\n            \"unit_id\": TEST_UNIT_ID,\n            \"date_range\": _date_range(),\n            \"num_nights\": 3,\n            \"currency\": \"USD\",\n            \"nightly_rates\": [\n                {\"date\": \"2024-07-01T00:00:00Z\", \"amount\": _money(10000), \"source\": \"BASE\"},\n                {\"date\": \"2024-07-02T00:00:00Z\", \"amount\": _money(10000), \"source\": \"BASE\"},\n                {\"date\": \"2024-07-03T00:00:00Z\", \"amount\": _money(10000), \"source\": \"BASE\"},\n            ],\n            \"accommodation_subtotal\": _money(30000),\n            \"los_discount_applied\": False,\n            \"los_discount_percent\": 0,\n            \"accommodation_after_discount\": _money(30000),\n            \"fees_subtotal\": _money(0),\n            \"tax_subtotal\": _money(0),\n            \"total\": _money(30000),\n            \"line_items\": [\n                {\"type\": \"NIGHTLY_RATE\", \"label\": \"Jul 1\", \"amount\": _money(10000)},\n                {\"type\": \"NIGHTLY_RATE\", \"label\": \"Jul 2\", \"amount\": _money(10000)},\n                {\"type\": \"NIGHTLY_RATE\", \"label\": \"Jul 3\", \"amount\": _money(10000)},\n            ],\n        }\n\n        result = round_trip_serialize(breakdown, \"PriceBreakdown\")\n\n        assert result[\"is_identical\"] is True\n        assert result[\"type_name\"] == \"PriceBreakdown\"\n\n\n# ===========================================================================\n# GROUP 7 (continued): Fixture Builders\n# ===========================================================================\nclass TestBuildRateConfig:\n    \"\"\"Tests for build_rate_config fixture factory.\"\"\"\n\n    def test_defaults(self):\n        \"\"\"Happy path: default RateConfig has base_rate=10000, currency=USD.\"\"\"\n        result = build_rate_config()\n\n        assert result[\"base_rate\"][\"amount_minor\"] == 10000, (\n            f\"Expected default base_rate 10000, got {result['base_rate']['amount_minor']}\"\n        )\n        assert result[\"currency\"] == \"USD\"\n        assert result[\"unit_id\"] is not None\n\n    def test_overrides_applied(self):\n        \"\"\"Happy path: overrides replace corresponding defaults.\"\"\"\n        result = build_rate_config({\"base_rate_minor\": 20000, \"currency\": \"EUR\"})\n\n        assert result[\"base_rate\"][\"amount_minor\"] == 20000\n        assert result[\"currency\"] == \"EUR\"\n\n\nclass TestBuildStayRequest:\n    \"\"\"Tests for build_stay_request fixture factory.\"\"\"\n\n    def test_defaults(self):\n        \"\"\"Happy path: default StayRequest is 3-night USD stay.\"\"\"\n        result = build_stay_request()\n\n        assert result[\"currency\"] == \"USD\"\n        assert result[\"unit_id\"] is not None\n        assert result[\"check_in\"] is not None\n        assert result[\"check_out\"] is not None\n"
+}

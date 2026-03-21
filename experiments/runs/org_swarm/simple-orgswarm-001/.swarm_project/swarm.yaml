@@ -1,0 +1,35 @@
+backend: anthropic
+break_points:
+- review
+- submit
+budget: 10.0
+commands: {}
+formation: auto
+io_mode: autonomous
+repo: /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/output
+stage_backends:
+  architect: anthropic
+  architect_review: anthropic
+  decompose: anthropic
+  diagnose: anthropic
+  execute: anthropic
+  integrate: anthropic
+  locate: anthropic
+  review: anthropic
+  submit: anthropic
+  test: anthropic
+  verify: anthropic
+stage_models:
+  architect: claude-opus-4-6
+  architect_review: claude-opus-4-6
+  decompose: claude-opus-4-6
+  diagnose: claude-opus-4-6
+  execute: claude-opus-4-6
+  integrate: claude-opus-4-6
+  locate: claude-opus-4-6
+  review: claude-opus-4-6
+  submit: claude-opus-4-6
+  test: claude-opus-4-6
+  verify: claude-opus-4-6
+submit:
+  mode: none

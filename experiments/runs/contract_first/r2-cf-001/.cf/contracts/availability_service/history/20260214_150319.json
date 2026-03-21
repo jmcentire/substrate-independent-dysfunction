@@ -1,0 +1,1979 @@
+{
+  "component_id": "availability_service",
+  "name": "Availability Service",
+  "description": "Manages unit availability using bitmask caching for O(1) date range lookups. Maintains a PostgreSQL source-of-truth table of availability records and a Redis cache of bitmasks per unit. Exposes three core service methods — checkAvailability, updateAvailability, checkBulkAvailability — each returning discriminated union Result types (success | error). The service orchestrates cache-check → DB-fallback → cache-warm reads and write → cache-invalidate → respond writes. Cache is warmed on first access (cache-aside with lazy warming) and invalidated synchronously on writes (write-through). All dates are UTC date-only strings (YYYY-MM-DD) using half-open intervals [start, end). This is the lowest-dependency service and the first one called in the booking flow. Composition wires together the schema/repository, bitmask cache, and HTTP API layers through the AvailabilityServiceInterface via dependency injection of PgClient and RedisClient. All types exported from barrel mod.ts. Interface file kept under 300 lines. Contract tests validate request/response shapes against type definitions using in-memory mocks.",
+  "version": 1,
+  "types": [
+    {
+      "name": "UnitId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying a bookable rental unit. Lowercase canonical form (8-4-4-4-12 hex digits with hyphens). Nominal type — must not be interchanged with BlockId or other UUID-typed identifiers."
+    },
+    {
+      "name": "BlockId",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded UUID v4 string identifying an availability block record. Lowercase canonical form (8-4-4-4-12 hex digits with hyphens). Nominal type — must not be interchanged with UnitId."
+    },
+    {
+      "name": "DateString",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded ISO 8601 date-only string in YYYY-MM-DD format. Always interpreted as UTC midnight. Never contains a time or timezone component. Used consistently across all layers for date representation."
+    },
+    {
+      "name": "BlockType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "reserved",
+        "maintenance",
+        "owner_hold"
+      ],
+      "inner_types": [],
+      "description": "The reason/type for an availability block. Union of literal strings. Used in both domain layer and HTTP API. Maps to PostgreSQL VARCHAR with CHECK constraint."
+    },
+    {
+      "name": "ErrorCode",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "INVALID_DATE_RANGE",
+        "UNIT_NOT_FOUND",
+        "BLOCK_OVERLAP",
+        "CACHE_UNAVAILABLE",
+        "INTERNAL_ERROR",
+        "VALIDATION_ERROR",
+        "BULK_LIMIT_EXCEEDED"
+      ],
+      "inner_types": [],
+      "description": "Finite set of machine-readable error codes produced by the Availability Service. Each maps to a specific HTTP status code. Used in ApiErrorEnvelope responses."
+    },
+    {
+      "name": "HttpStatusCode",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "200",
+        "400",
+        "404",
+        "409",
+        "500",
+        "503"
+      ],
+      "inner_types": [],
+      "description": "HTTP status codes used by the Availability Service endpoints. Each ErrorCode maps to exactly one HttpStatusCode."
+    },
+    {
+      "name": "ErrorCodeToHttpStatus",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "INVALID_DATE_RANGE",
+          "type_ref": "int",
+          "required": true,
+          "default": "400",
+          "description": "Bad request — invalid date range.",
+          "validators": []
+        },
+        {
+          "name": "UNIT_NOT_FOUND",
+          "type_ref": "int",
+          "required": true,
+          "default": "404",
+          "description": "Not found — unit does not exist.",
+          "validators": []
+        },
+        {
+          "name": "BLOCK_OVERLAP",
+          "type_ref": "int",
+          "required": true,
+          "default": "409",
+          "description": "Conflict — block overlaps with existing block.",
+          "validators": []
+        },
+        {
+          "name": "CACHE_UNAVAILABLE",
+          "type_ref": "int",
+          "required": true,
+          "default": "503",
+          "description": "Service unavailable — Redis cache unreachable and no fallback.",
+          "validators": []
+        },
+        {
+          "name": "INTERNAL_ERROR",
+          "type_ref": "int",
+          "required": true,
+          "default": "500",
+          "description": "Internal server error — unexpected failure.",
+          "validators": []
+        },
+        {
+          "name": "VALIDATION_ERROR",
+          "type_ref": "int",
+          "required": true,
+          "default": "400",
+          "description": "Bad request — input validation failure.",
+          "validators": []
+        },
+        {
+          "name": "BULK_LIMIT_EXCEEDED",
+          "type_ref": "int",
+          "required": true,
+          "default": "400",
+          "description": "Bad request — too many unit_ids in bulk query.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Mapping from ErrorCode to HTTP status code. INVALID_DATE_RANGE→400, UNIT_NOT_FOUND→404, BLOCK_OVERLAP→409, CACHE_UNAVAILABLE→503, INTERNAL_ERROR→500, VALIDATION_ERROR→400, BULK_LIMIT_EXCEEDED→400."
+    },
+    {
+      "name": "DateRange",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range in YYYY-MM-DD format, UTC.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range in YYYY-MM-DD format, UTC. Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string"
+            },
+            {
+              "kind": "custom",
+              "expression": "end > start",
+              "error_message": "end must be strictly after start"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A half-open date interval [start, end) where start is inclusive and end is exclusive. Both fields are DateString (YYYY-MM-DD, UTC). start must be strictly before end."
+    },
+    {
+      "name": "ErrorDetail",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "",
+          "description": "Machine-readable error code from the ErrorCode enum.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        },
+        {
+          "name": "details",
+          "type_ref": "any",
+          "required": false,
+          "default": "",
+          "description": "Optional additional structured details (e.g., Zod issue array, field-level validation errors).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured error detail within the API error envelope. Contains machine-readable code, human-readable message, and optional structured details."
+    },
+    {
+      "name": "ApiErrorEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error",
+          "type_ref": "ErrorDetail",
+          "required": true,
+          "default": "",
+          "description": "The structured error detail object.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Consistent JSON error response envelope. All error responses from the Availability Service use this shape: {error: {code, message, details?}}. Readonly."
+    },
+    {
+      "name": "ApiSuccessEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "data",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The success response payload. Shape varies by endpoint.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Consistent JSON success response envelope wrapping the data payload."
+    },
+    {
+      "name": "AvailabilityCheckRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the unit to check availability for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unitId must be a valid UUID v4 string"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check (YYYY-MM-DD, UTC).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to check (YYYY-MM-DD, UTC). Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string"
+            },
+            {
+              "kind": "custom",
+              "expression": "end > start",
+              "error_message": "end must be strictly after start"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated parameters for GET /availability/:unit_id?start=&end=. Derived from Zod schema via z.infer<>. Date range is half-open [start, end)."
+    },
+    {
+      "name": "AvailabilityCheckResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "available",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the unit is available for every date in [start, end).",
+          "validators": []
+        },
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit that was checked (echoed back).",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date that was checked (echoed back).",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date that was checked (echoed back).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for GET /availability/:unit_id. Readonly. Indicates whether the unit is fully available across the requested [start, end) range."
+    },
+    {
+      "name": "AvailabilityUpdateRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the unit to update (from path parameter).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unitId must be a valid UUID v4 string"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to update (YYYY-MM-DD, UTC).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to update (YYYY-MM-DD, UTC). Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string"
+            },
+            {
+              "kind": "custom",
+              "expression": "end > start",
+              "error_message": "end must be strictly after start"
+            }
+          ]
+        },
+        {
+          "name": "blockType",
+          "type_ref": "BlockType",
+          "required": true,
+          "default": "",
+          "description": "The reason for blocking. Required even when unblocking, to identify which block record to remove.",
+          "validators": []
+        },
+        {
+          "name": "blocked",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True to mark the range as blocked/unavailable, false to unblock/mark as available.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated request body for PUT /availability/:unit_id. Sets specified date range as available or blocked. Derived from Zod schema."
+    },
+    {
+      "name": "AvailabilityUpdateResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "success",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the availability state was successfully applied.",
+          "validators": []
+        },
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit that was updated (echoed back).",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date that was updated (echoed back).",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date that was updated (echoed back).",
+          "validators": []
+        },
+        {
+          "name": "blockType",
+          "type_ref": "BlockType",
+          "required": true,
+          "default": "",
+          "description": "The block type that was applied or removed.",
+          "validators": []
+        },
+        {
+          "name": "blocked",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Whether the range was blocked (true) or unblocked (false).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for PUT /availability/:unit_id. Readonly. Always returns HTTP 200 because PUT is idempotent (state set, not created)."
+    },
+    {
+      "name": "BulkAvailabilityCheckRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitIds",
+          "type_ref": "UnitIdList",
+          "required": true,
+          "default": "",
+          "description": "List of unit UUIDs to check, parsed from comma-separated query parameter. Maximum 50 entries.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..50",
+              "error_message": "unitIds must contain between 1 and 50 entries"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check (YYYY-MM-DD, UTC).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to check (YYYY-MM-DD, UTC). Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string"
+            },
+            {
+              "kind": "custom",
+              "expression": "end > start",
+              "error_message": "end must be strictly after start"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Validated query parameters for GET /availability/bulk?unit_ids=id1,id2&start=&end=. Derived from Zod schema. Maximum 50 unit_ids."
+    },
+    {
+      "name": "UnitIdList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "UnitId",
+      "variants": [],
+      "inner_types": [],
+      "description": "A list of UnitId values. Used for bulk operations. Maximum 50 items for the bulk availability endpoint."
+    },
+    {
+      "name": "BulkAvailabilityEntry",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "The unit that was checked.",
+          "validators": []
+        },
+        {
+          "name": "available",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "True if the unit is available for every date in [start, end). Unknown units return false.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single unit's availability result within a bulk response. Readonly."
+    },
+    {
+      "name": "BulkAvailabilityEntryList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "BulkAvailabilityEntry",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of per-unit availability entries in a bulk response."
+    },
+    {
+      "name": "BulkAvailabilityCheckResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "results",
+          "type_ref": "BulkAvailabilityEntryList",
+          "required": true,
+          "default": "",
+          "description": "One entry per requested unit_id, in the same order as the request. Unknown units returned with available: false.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date that was checked (echoed back).",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date that was checked (echoed back).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for GET /availability/bulk. Readonly. Contains one entry per requested unit_id in request order."
+    },
+    {
+      "name": "ServiceResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "ServiceSuccess",
+        "ServiceFailure"
+      ],
+      "description": "Discriminated union Result type returned by all AvailabilityServiceInterface methods. Discriminated on 'ok' field: if ok=true, data contains the success payload; if ok=false, error contains the ServiceError. Methods never throw exceptions."
+    },
+    {
+      "name": "ServiceSuccess",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true for success variant.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "ok === true",
+              "error_message": "ok must be true for ServiceSuccess"
+            }
+          ]
+        },
+        {
+          "name": "data",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "The success payload. Type varies by method: AvailabilityCheckResponse, AvailabilityUpdateResponse, or BulkAvailabilityCheckResponse.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success variant of the ServiceResult discriminated union."
+    },
+    {
+      "name": "ServiceFailure",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always false for failure variant.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "ok === false",
+              "error_message": "ok must be false for ServiceFailure"
+            }
+          ]
+        },
+        {
+          "name": "error",
+          "type_ref": "ServiceError",
+          "required": true,
+          "default": "",
+          "description": "The error that occurred.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Failure variant of the ServiceResult discriminated union."
+    },
+    {
+      "name": "ServiceError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "",
+          "description": "Machine-readable error code.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        },
+        {
+          "name": "details",
+          "type_ref": "any",
+          "required": false,
+          "default": "",
+          "description": "Optional additional structured details for debugging.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured error within a ServiceResult failure. Maps to ApiErrorEnvelope for HTTP responses."
+    },
+    {
+      "name": "CheckAvailabilityResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "CheckAvailabilitySuccess",
+        "ServiceFailure"
+      ],
+      "description": "Typed ServiceResult for checkAvailability: success data is AvailabilityCheckResponse, error is ServiceError."
+    },
+    {
+      "name": "CheckAvailabilitySuccess",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "ok === true",
+              "error_message": "ok must be true"
+            }
+          ]
+        },
+        {
+          "name": "data",
+          "type_ref": "AvailabilityCheckResponse",
+          "required": true,
+          "default": "",
+          "description": "The availability check result.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success variant for checkAvailability."
+    },
+    {
+      "name": "UpdateAvailabilityResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "UpdateAvailabilitySuccess",
+        "ServiceFailure"
+      ],
+      "description": "Typed ServiceResult for updateAvailability: success data is AvailabilityUpdateResponse, error is ServiceError."
+    },
+    {
+      "name": "UpdateAvailabilitySuccess",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "ok === true",
+              "error_message": "ok must be true"
+            }
+          ]
+        },
+        {
+          "name": "data",
+          "type_ref": "AvailabilityUpdateResponse",
+          "required": true,
+          "default": "",
+          "description": "The availability update result.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success variant for updateAvailability."
+    },
+    {
+      "name": "BulkCheckAvailabilityResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "BulkCheckAvailabilitySuccess",
+        "ServiceFailure"
+      ],
+      "description": "Typed ServiceResult for checkBulkAvailability: success data is BulkAvailabilityCheckResponse, error is ServiceError."
+    },
+    {
+      "name": "BulkCheckAvailabilitySuccess",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ok",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "Always true.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "ok === true",
+              "error_message": "ok must be true"
+            }
+          ]
+        },
+        {
+          "name": "data",
+          "type_ref": "BulkAvailabilityCheckResponse",
+          "required": true,
+          "default": "",
+          "description": "The bulk availability check result.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success variant for checkBulkAvailability."
+    },
+    {
+      "name": "HealthStatus",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "status",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Either 'ok' or 'shutting_down'.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "status === 'ok' || status === 'shutting_down'",
+              "error_message": "status must be 'ok' or 'shutting_down'"
+            }
+          ]
+        },
+        {
+          "name": "uptimeSeconds",
+          "type_ref": "float",
+          "required": true,
+          "default": "",
+          "description": "Server uptime in seconds since start. Non-negative.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "uptimeSeconds must be non-negative"
+            }
+          ]
+        },
+        {
+          "name": "version",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Application version string.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..",
+              "error_message": "version must be non-empty"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response body for GET /health. Readonly. Returns HTTP 200 when healthy, HTTP 503 during graceful shutdown."
+    },
+    {
+      "name": "ServiceConfig",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "pgClient",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Injected PostgreSQL client implementing the PgClient interface from availability_bitmask_cache.",
+          "validators": []
+        },
+        {
+          "name": "redisClient",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Injected Redis client implementing the RedisClient interface from availability_bitmask_cache.",
+          "validators": []
+        },
+        {
+          "name": "cacheTtlSeconds",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "TTL in seconds for cached bitmask entries in Redis.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..86400",
+              "error_message": "cacheTtlSeconds must be between 1 and 86400"
+            }
+          ]
+        },
+        {
+          "name": "cacheShardCount",
+          "type_ref": "int",
+          "required": false,
+          "default": "64",
+          "description": "Number of shard buckets for Redis key distribution. Must be a power of 2.",
+          "validators": [
+            {
+              "kind": "custom",
+              "expression": "(value & (value - 1)) === 0 && value >= 1",
+              "error_message": "cacheShardCount must be a positive power of 2"
+            }
+          ]
+        },
+        {
+          "name": "cacheWindowDays",
+          "type_ref": "int",
+          "required": false,
+          "default": "366",
+          "description": "Number of days in the bitmask window starting from today UTC.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..731",
+              "error_message": "cacheWindowDays must be between 1 and 731"
+            }
+          ]
+        },
+        {
+          "name": "fallbackToPgOnRedisFailure",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "When true, Redis unavailability triggers graceful degradation to direct PostgreSQL queries.",
+          "validators": []
+        },
+        {
+          "name": "bulkMaxUnitIds",
+          "type_ref": "int",
+          "required": false,
+          "default": "50",
+          "description": "Maximum number of unit_ids allowed in a bulk availability check request.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..1000",
+              "error_message": "bulkMaxUnitIds must be between 1 and 1000"
+            }
+          ]
+        },
+        {
+          "name": "port",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "TCP port for the HTTP server.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..65535",
+              "error_message": "port must be between 1 and 65535"
+            }
+          ]
+        },
+        {
+          "name": "hostname",
+          "type_ref": "str",
+          "required": false,
+          "default": "0.0.0.0",
+          "description": "Hostname/IP to bind the HTTP server to.",
+          "validators": []
+        },
+        {
+          "name": "shutdownTimeoutMs",
+          "type_ref": "int",
+          "required": false,
+          "default": "30000",
+          "description": "Maximum milliseconds to wait for in-flight requests during graceful shutdown.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..300000",
+              "error_message": "shutdownTimeoutMs must be between 0 and 300000"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Configuration for the Availability Service. Passed to the service constructor or factory. Includes injected dependencies and cache/server settings."
+    },
+    {
+      "name": "CacheState",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "HIT",
+        "MISS",
+        "STALE",
+        "DEGRADED"
+      ],
+      "inner_types": [],
+      "description": "The state of the bitmask cache for a given unit on a particular read operation."
+    },
+    {
+      "name": "AvailabilityServiceInterface",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "checkAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unitId: UnitId, start: DateString, end: DateString) => Promise<CheckAvailabilityResult>. Checks if a single unit is fully available for the half-open date range [start, end).",
+          "validators": []
+        },
+        {
+          "name": "updateAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (request: AvailabilityUpdateRequest) => Promise<UpdateAvailabilityResult>. Updates availability (block/unblock dates) and invalidates cache synchronously before responding.",
+          "validators": []
+        },
+        {
+          "name": "checkBulkAvailability",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Async method: (unitIds: UnitId[], start: DateString, end: DateString) => Promise<BulkCheckAvailabilityResult>. Bulk checks availability for up to 50 units. Unknown units returned with available: false.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "TypeScript interface for the Availability Service. The primary contract that all layers (HTTP handlers, tests, mocks) program against. Three async methods returning discriminated union Result types — never throws exceptions."
+    }
+  ],
+  "functions": [
+    {
+      "name": "checkAvailability",
+      "description": "Checks whether a single unit is fully available for the half-open date range [start, end). Orchestrates: (1) validate inputs, (2) check Redis bitmask cache, (3) on cache miss/stale, query PostgreSQL for all blocks in the window, (4) build bitmask and warm cache, (5) perform O(1) bitwise AND check on the requested range, (6) return Result. Uses singleflight to coalesce concurrent cache misses. Falls back to direct PostgreSQL query if Redis is unavailable and fallbackToPgOnRedisFailure is true. Returns a discriminated union Result — never throws.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "UnitId",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the unit to check availability for.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "unitId must be a valid lowercase UUID v4"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check (YYYY-MM-DD, UTC).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to check (YYYY-MM-DD, UTC). Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string"
+            },
+            {
+              "kind": "custom",
+              "expression": "end > start",
+              "error_message": "end must be strictly after start"
+            }
+          ]
+        }
+      ],
+      "output_type": "CheckAvailabilityResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range",
+          "condition": "start >= end, or start/end are not valid calendar dates",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "dates_in_past",
+          "condition": "start < today (UTC)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "range_exceeds_window",
+          "condition": "end > today + cacheWindowDays days",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "unitId does not exist in PostgreSQL units table (checked during cache rebuild only)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "cache_unavailable",
+          "condition": "Redis is unreachable AND fallbackToPgOnRedisFailure is false",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "CACHE_UNAVAILABLE"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected failure: corrupt bitmask, PostgreSQL timeout, singleflight panic, or both Redis and PostgreSQL are unreachable",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unitId is a valid UUID v4 string in lowercase canonical form",
+        "start and end are valid ISO 8601 YYYY-MM-DD date strings representing real calendar dates",
+        "start < end (half-open interval [start, end) requires strict ordering)",
+        "start >= today (UTC) — cannot check availability for past dates",
+        "end <= today + cacheWindowDays days — range must fit within the bitmask window",
+        "At least one of RedisClient or PgClient is reachable (or fallbackToPgOnRedisFailure is true)"
+      ],
+      "postconditions": [
+        "If ok=true, data.available is true if and only if every date in [start, end) has no overlapping availability blocks (all bits = 1 in bitmask)",
+        "If ok=true, data.available is false if any date in [start, end) is blocked (any bit = 0 in bitmask)",
+        "If ok=true, data.unitId === unitId, data.start === start, data.end === end (echoed back)",
+        "If the bitmask was rebuilt from PostgreSQL, it is now cached in Redis with the configured TTL (unless Redis is unavailable)",
+        "If the cached bitmask had a stale anchor_date (not equal to today UTC), it was treated as a miss and rebuilt",
+        "If singleflight was active, only one PostgreSQL query was issued for concurrent callers requesting the same unitId",
+        "The function never throws — all errors are returned as ServiceFailure"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "On cache miss: issues SELECT query to PostgreSQL availability_blocks table",
+        "On cache miss: writes rebuilt bitmask and metadata to Redis with configured TTL",
+        "On stale anchor date detection: deletes stale Redis key and rebuilds",
+        "On Redis failure with fallback enabled: emits a warning-level log",
+        "Singleflight: may block concurrent callers for the same unitId until the first caller's rebuild completes"
+      ]
+    },
+    {
+      "name": "updateAvailability",
+      "description": "Updates availability for a unit by blocking or unblocking a half-open date range [start, end). Orchestrates: (1) validate inputs, (2) if blocked=true, create availability block(s) in PostgreSQL via repository, (3) if blocked=false, delete matching block(s) from PostgreSQL, (4) synchronously invalidate the Redis bitmask cache for the unit (write-through), (5) return Result. PUT semantics — idempotent: setting the same state twice produces the same result. Always returns HTTP 200. Returns a discriminated union Result — never throws.",
+      "inputs": [
+        {
+          "name": "request",
+          "type_ref": "AvailabilityUpdateRequest",
+          "required": true,
+          "default": "",
+          "description": "The update request containing unitId, date range, blockType, and blocked flag.",
+          "validators": []
+        }
+      ],
+      "output_type": "UpdateAvailabilityResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range",
+          "condition": "start >= end, or start/end are not valid calendar dates",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Request body fails Zod schema validation (missing fields, wrong types, invalid blockType)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "unitId does not exist in PostgreSQL units table",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "block_overlap",
+          "condition": "blocked=true and the new block overlaps with an existing block for the same unit (PostgreSQL EXCLUDE constraint violation)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "BLOCK_OVERLAP"
+          }
+        },
+        {
+          "name": "cache_unavailable",
+          "condition": "Redis is unreachable for cache invalidation (write still succeeds to PostgreSQL but cache may be stale)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "CACHE_UNAVAILABLE"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected PostgreSQL error, connection failure, or other unhandled exception",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "request.unitId is a valid UUID v4 string",
+        "request.start and request.end are valid ISO 8601 YYYY-MM-DD date strings representing real calendar dates",
+        "request.start < request.end (half-open interval)",
+        "request.blockType is one of 'reserved', 'maintenance', 'owner_hold'",
+        "PgClient is reachable (writes require the source of truth)",
+        "RedisClient is reachable for cache invalidation (degraded mode still invalidates on best-effort)"
+      ],
+      "postconditions": [
+        "If ok=true, the availability state in PostgreSQL for the unit's [start, end) range reflects the requested blocked/unblocked state",
+        "If ok=true and blocked=true, one or more availability_blocks rows exist covering [start, end) for the unit with the specified blockType",
+        "If ok=true and blocked=false, no availability_blocks rows with the specified blockType exist overlapping [start, end) for the unit",
+        "If ok=true, the Redis bitmask cache for the affected unitId has been invalidated (deleted). Next read triggers lazy rebuild",
+        "If ok=true, data.success is true and data echoes back unitId, start, end, blockType, blocked",
+        "Repeated identical calls produce the same ok=true result (idempotent PUT semantics)",
+        "The function never throws — all errors are returned as ServiceFailure"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "If blocked=true: inserts one or more rows into PostgreSQL availability_blocks table",
+        "If blocked=false: deletes matching rows from PostgreSQL availability_blocks table",
+        "Synchronously invalidates (deletes) the Redis bitmask cache key for the affected unitId",
+        "On Redis invalidation failure: logs a warning but may still return success if PostgreSQL write succeeded (consistency note: cache may be stale until TTL expiry)"
+      ]
+    },
+    {
+      "name": "checkBulkAvailability",
+      "description": "Checks availability for multiple units across the same half-open date range [start, end). Capped at 50 unit_ids per request. Orchestrates: (1) validate inputs, (2) use Redis pipeline to fetch bitmasks for all units in a single round-trip, (3) batch-query PostgreSQL for cache misses, (4) warm cache for missed units, (5) perform bitwise checks, (6) return per-unit results. Unknown units returned with available: false (not error). Returns a discriminated union Result — never throws.",
+      "inputs": [
+        {
+          "name": "unitIds",
+          "type_ref": "UnitIdList",
+          "required": true,
+          "default": "",
+          "description": "List of unit UUIDs to check. Maximum 50 entries. Duplicates are deduplicated.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..50",
+              "error_message": "unitIds must contain between 1 and 50 entries"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of the range to check (YYYY-MM-DD, UTC).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "start must be a valid YYYY-MM-DD date string"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "DateString",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of the range to check (YYYY-MM-DD, UTC). Must be strictly after start.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "end must be a valid YYYY-MM-DD date string"
+            },
+            {
+              "kind": "custom",
+              "expression": "end > start",
+              "error_message": "end must be strictly after start"
+            }
+          ]
+        }
+      ],
+      "output_type": "BulkCheckAvailabilityResult",
+      "error_cases": [
+        {
+          "name": "invalid_date_range",
+          "condition": "start >= end, or start/end are not valid calendar dates",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "dates_in_past",
+          "condition": "start < today (UTC)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "range_exceeds_window",
+          "condition": "end > today + cacheWindowDays days",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "bulk_limit_exceeded",
+          "condition": "unitIds list contains more than 50 entries",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "BULK_LIMIT_EXCEEDED"
+          }
+        },
+        {
+          "name": "empty_unit_ids",
+          "condition": "unitIds list is empty",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "One or more unitIds is not a valid UUID v4 string",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "cache_unavailable",
+          "condition": "Redis is unreachable AND PostgreSQL is unreachable (systemic failure)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "CACHE_UNAVAILABLE"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected systemic failure affecting all units",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "All unitIds are valid UUID v4 strings in lowercase canonical form",
+        "start and end are valid ISO 8601 YYYY-MM-DD date strings representing real calendar dates",
+        "start < end (half-open interval)",
+        "start >= today (UTC)",
+        "end <= today + cacheWindowDays days",
+        "unitIds list contains between 1 and 50 entries (inclusive)",
+        "At least one of RedisClient or PgClient is reachable"
+      ],
+      "postconditions": [
+        "If ok=true, data.results contains exactly one BulkAvailabilityEntry per unique unitId from the input, in input order (deduped)",
+        "For each entry: available=true iff every date in [start, end) is available for that unit",
+        "Unknown unitIds appear in results with available=false",
+        "Duplicate unitIds in input are deduplicated in results (first occurrence order preserved)",
+        "All cache misses triggered by this call have been rebuilt and stored in Redis (unless Redis is unavailable)",
+        "data.start === start, data.end === end (echoed back)",
+        "The function never throws — all errors are returned as ServiceFailure"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "On cache misses: issues batch SELECT queries to PostgreSQL availability_blocks table",
+        "On cache misses: writes rebuilt bitmasks and metadata to Redis via pipeline with configured TTL",
+        "On stale anchor date detection for any unit: deletes and rebuilds those entries",
+        "On Redis failure with fallback enabled: emits a warning-level log and falls back to PostgreSQL for all units",
+        "Singleflight: concurrent misses for the same unitId within this batch and across concurrent calls are coalesced"
+      ]
+    },
+    {
+      "name": "createAvailabilityService",
+      "description": "Factory function that creates an AvailabilityService instance implementing AvailabilityServiceInterface. Wires together the three dependency layers (schema/repository, bitmask cache, HTTP API) through dependency injection of PgClient and RedisClient. Initializes the bitmask cache with the provided configuration. Returns a fully composed service ready for injection into the HTTP router.",
+      "inputs": [
+        {
+          "name": "config",
+          "type_ref": "ServiceConfig",
+          "required": true,
+          "default": "",
+          "description": "Service configuration including injected PgClient, RedisClient, cache settings, and server settings.",
+          "validators": []
+        }
+      ],
+      "output_type": "AvailabilityServiceInterface",
+      "error_cases": [
+        {
+          "name": "invalid_config",
+          "condition": "ServiceConfig fails validation (missing required fields, out-of-range values)",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INTERNAL_ERROR"
+          }
+        },
+        {
+          "name": "pg_client_unreachable",
+          "condition": "Initial PgClient.ping() fails during service creation health check",
+          "error_type": "ServiceFailure",
+          "error_data": {
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "config.pgClient implements the PgClient interface",
+        "config.redisClient implements the RedisClient interface",
+        "config.cacheTtlSeconds is between 1 and 86400",
+        "config.cacheShardCount is a positive power of 2",
+        "config.port is between 1 and 65535"
+      ],
+      "postconditions": [
+        "Returned object implements all three methods of AvailabilityServiceInterface",
+        "checkAvailability, updateAvailability, and checkBulkAvailability are bound to the provided PgClient and RedisClient",
+        "Bitmask cache is configured with the provided TTL, shard count, and window days",
+        "The service is ready for injection into createRouter and createServer"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "May issue a PgClient.ping() to verify database connectivity",
+        "May issue a RedisClient.ping() to verify cache connectivity"
+      ]
+    },
+    {
+      "name": "mapErrorCodeToHttpStatus",
+      "description": "Pure utility function that maps an ErrorCode to its corresponding HTTP status code integer. Used by HTTP handlers to set the response status when returning an ApiErrorEnvelope.",
+      "inputs": [
+        {
+          "name": "code",
+          "type_ref": "ErrorCode",
+          "required": true,
+          "default": "",
+          "description": "The error code to map.",
+          "validators": []
+        }
+      ],
+      "output_type": "int",
+      "error_cases": [],
+      "preconditions": [
+        "code is a valid ErrorCode enum variant"
+      ],
+      "postconditions": [
+        "Returns 400 for INVALID_DATE_RANGE, VALIDATION_ERROR, BULK_LIMIT_EXCEEDED",
+        "Returns 404 for UNIT_NOT_FOUND",
+        "Returns 409 for BLOCK_OVERLAP",
+        "Returns 500 for INTERNAL_ERROR",
+        "Returns 503 for CACHE_UNAVAILABLE",
+        "Every ErrorCode variant maps to exactly one HTTP status code"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "serviceResultToHttpResponse",
+      "description": "Converts a ServiceResult (discriminated union) into the appropriate HTTP response: on success, wraps data in ApiSuccessEnvelope with status 200; on failure, wraps error in ApiErrorEnvelope with the mapped HTTP status code. Used by HTTP route handlers to produce consistent responses.",
+      "inputs": [
+        {
+          "name": "result",
+          "type_ref": "ServiceResult",
+          "required": true,
+          "default": "",
+          "description": "The service result to convert.",
+          "validators": []
+        }
+      ],
+      "output_type": "HttpResponse",
+      "error_cases": [],
+      "preconditions": [
+        "result is a valid ServiceResult (either ServiceSuccess or ServiceFailure)"
+      ],
+      "postconditions": [
+        "If result.ok is true, returned HttpResponse.status is 200 and body is the success data",
+        "If result.ok is false, returned HttpResponse.status is the mapped HTTP status code for result.error.code, and body is an ApiErrorEnvelope",
+        "The function never throws"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handleGetAvailability",
+      "description": "HTTP route handler for GET /availability/:unit_id?start=&end=. Validates path parameter (unit_id as UUID v4) and query parameters (start, end as YYYY-MM-DD) using Zod schemas. Calls AvailabilityServiceInterface.checkAvailability. Returns 200 with AvailabilityCheckResponse on success. Maps errors to appropriate HTTP status codes via ApiErrorEnvelope. Date range is interpreted as half-open interval [start, end).",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw unit_id path parameter string, validated to UUID v4.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw start query parameter string, validated to YYYY-MM-DD.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw end query parameter string, validated to YYYY-MM-DD.",
+          "validators": []
+        }
+      ],
+      "output_type": "HttpResponse",
+      "error_cases": [
+        {
+          "name": "invalid_unit_id",
+          "condition": "unit_id path parameter is not a valid UUID v4 string",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "VALIDATION_ERROR",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end query parameter is missing or not a valid YYYY-MM-DD string",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "end_not_after_start",
+          "condition": "end date is less than or equal to start date",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "The unit_id does not correspond to any known unit",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "UNIT_NOT_FOUND",
+            "http_status": "404"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected error in the service layer",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INTERNAL_ERROR",
+            "http_status": "500"
+          }
+        }
+      ],
+      "preconditions": [
+        "Server is running and accepting requests (not in shutdown state)",
+        "AvailabilityServiceInterface has been injected into the router"
+      ],
+      "postconditions": [
+        "Response status is 200 with AvailabilityCheckResponse body on success",
+        "Response echoes back unitId, start, end from validated input",
+        "available is true only if every date in [start, end) is unblocked",
+        "On validation failure, returns 400 with ApiErrorEnvelope containing code VALIDATION_ERROR or INVALID_DATE_RANGE",
+        "On unit not found, returns 404 with ApiErrorEnvelope containing code UNIT_NOT_FOUND",
+        "On internal failure, returns 500 with ApiErrorEnvelope containing code INTERNAL_ERROR"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handlePutAvailability",
+      "description": "HTTP route handler for PUT /availability/:unit_id. Validates path parameter (unit_id as UUID v4) and JSON body (start, end, blockType, blocked) using Zod schemas. Calls AvailabilityServiceInterface.updateAvailability. Returns 200 with AvailabilityUpdateResponse. PUT is idempotent — never returns 201. Bitmask cache for the affected unit is invalidated synchronously before responding.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw unit_id path parameter string, validated to UUID v4.",
+          "validators": []
+        },
+        {
+          "name": "body",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "Raw JSON request body, validated against AvailabilityUpdateRequest Zod schema.",
+          "validators": []
+        }
+      ],
+      "output_type": "HttpResponse",
+      "error_cases": [
+        {
+          "name": "invalid_unit_id",
+          "condition": "unit_id path parameter is not a valid UUID v4 string",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "VALIDATION_ERROR",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "invalid_body",
+          "condition": "Request body is missing, not valid JSON, or fails Zod schema validation",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "VALIDATION_ERROR",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "invalid_date_range",
+          "condition": "start >= end in the request body",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "invalid_block_type",
+          "condition": "blockType is not one of the valid BlockType enum values",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "VALIDATION_ERROR",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "The unit_id does not correspond to any known unit",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "UNIT_NOT_FOUND",
+            "http_status": "404"
+          }
+        },
+        {
+          "name": "block_overlap",
+          "condition": "blocked=true and the new block overlaps with an existing block for the same unit",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "BLOCK_OVERLAP",
+            "http_status": "409"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected error in the service layer",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INTERNAL_ERROR",
+            "http_status": "500"
+          }
+        }
+      ],
+      "preconditions": [
+        "Server is running and accepting requests (not in shutdown state)",
+        "AvailabilityServiceInterface has been injected into the router",
+        "Request Content-Type is application/json"
+      ],
+      "postconditions": [
+        "Response status is 200 with AvailabilityUpdateResponse {success: true} on success",
+        "The availability state for the unit's [start, end) range reflects the requested blocked/unblocked state",
+        "Bitmask cache for the affected unit has been invalidated",
+        "Repeated identical PUTs produce the same 200 response (idempotent)"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Modifies PostgreSQL availability_blocks table (insert or delete rows)",
+        "Invalidates Redis bitmask cache key for the affected unitId"
+      ]
+    },
+    {
+      "name": "handleGetBulkAvailability",
+      "description": "HTTP route handler for GET /availability/bulk?unit_ids=id1,id2&start=&end=. Validates query parameters: unit_ids as comma-separated UUID v4 list (max 50), start and end as YYYY-MM-DD. Calls AvailabilityServiceInterface.checkBulkAvailability. Returns 200 with BulkAvailabilityCheckResponse. Unknown unit_ids returned with available: false (not 404). Registered before GET /availability/:unit_id to prevent path parameter collision.",
+      "inputs": [
+        {
+          "name": "unitIds",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw comma-separated unit_ids query parameter string, parsed and validated to list of UUID v4.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw start query parameter string, validated to YYYY-MM-DD.",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Raw end query parameter string, validated to YYYY-MM-DD.",
+          "validators": []
+        }
+      ],
+      "output_type": "HttpResponse",
+      "error_cases": [
+        {
+          "name": "missing_unit_ids",
+          "condition": "unit_ids query parameter is missing or empty",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "VALIDATION_ERROR",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "invalid_unit_id_format",
+          "condition": "One or more values in the comma-separated unit_ids list is not a valid UUID v4",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "VALIDATION_ERROR",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "bulk_limit_exceeded",
+          "condition": "More than 50 unit_ids are provided",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "BULK_LIMIT_EXCEEDED",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end query parameter is missing or not a valid YYYY-MM-DD string",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "end_not_after_start",
+          "condition": "end date is less than or equal to start date",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INVALID_DATE_RANGE",
+            "http_status": "400"
+          }
+        },
+        {
+          "name": "internal_error",
+          "condition": "Unexpected systemic error in the service layer",
+          "error_type": "ApiErrorEnvelope",
+          "error_data": {
+            "code": "INTERNAL_ERROR",
+            "http_status": "500"
+          }
+        }
+      ],
+      "preconditions": [
+        "Server is running and accepting requests (not in shutdown state)",
+        "AvailabilityServiceInterface has been injected into the router"
+      ],
+      "postconditions": [
+        "Response status is 200 with BulkAvailabilityCheckResponse body",
+        "results array has exactly one entry per unique requested unit_id",
+        "results are in the same order as the input unit_ids (deduped)",
+        "Unknown unit_ids appear in results with available: false",
+        "data.start and data.end echo back the validated input values"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "handleHealthCheck",
+      "description": "HTTP route handler for GET /health. Returns HealthStatus with current server state. Returns HTTP 200 with status 'ok' when healthy. Returns HTTP 503 with status 'shutting_down' during graceful shutdown to enable load balancer draining.",
+      "inputs": [],
+      "output_type": "HttpResponse",
+      "error_cases": [],
+      "preconditions": [],
+      "postconditions": [
+        "If server is healthy, response status is 200 and body.status is 'ok'",
+        "If server is shutting down, response status is 503 and body.status is 'shutting_down'",
+        "body.uptimeSeconds is a non-negative number reflecting time since server start",
+        "body.version is a non-empty string"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    }
+  ],
+  "dependencies": [
+    "availability_schema",
+    "availability_bitmask_cache",
+    "availability_api",
+    "availability_tests"
+  ],
+  "dependency_contracts": {
+    "availability_schema": [
+      "getBlocksForUnit",
+      "createBlock",
+      "deleteBlock",
+      "getBlocksForUnits",
+      "AvailabilityBlock",
+      "CreateBlockInput",
+      "BlockOverlapError",
+      "BlockNotFoundError",
+      "DatabaseError",
+      "InvalidDateRangeError",
+      "InvalidBlockTypeError",
+      "UnitBlocksMap",
+      "BlockId",
+      "UnitId",
+      "BlockType",
+      "DateRange"
+    ],
+    "availability_bitmask_cache": [
+      "checkAvailability",
+      "checkBulkAvailability",
+      "invalidateCache",
+      "computeShardKey",
+      "buildRedisKey",
+      "AvailabilityResult",
+      "BulkAvailabilityResult",
+      "InvalidationResult",
+      "CacheConfig",
+      "RedisClient",
+      "PgClient",
+      "BitmaskMetadata"
+    ],
+    "availability_api": [
+      "validateRequest",
+      "handleCheckAvailability",
+      "handleUpdateAvailability",
+      "handleBulkCheckAvailability",
+      "handleHealthCheck",
+      "createRouter",
+      "createServer",
+      "AvailabilityServiceInterface",
+      "ServerConfig",
+      "ServerHandle",
+      "ApiErrorEnvelope",
+      "ErrorDetail"
+    ],
+    "availability_tests": [
+      "runBitmaskTests",
+      "runCacheTests",
+      "runApiContractTests",
+      "runAllTests",
+      "createBitmask",
+      "createDateRange",
+      "createInMemoryDb",
+      "createInMemoryCache",
+      "createTestFixtures",
+      "assertSchemaValid",
+      "assertCacheKeyFormat",
+      "assertErrorResponse"
+    ]
+  },
+  "invariants": [
+    "All dates across the service are YYYY-MM-DD strings interpreted as UTC midnight — no time or timezone components ever appear",
+    "All date ranges exposed by the service use half-open intervals [start, end) where start is inclusive and end is exclusive",
+    "start must be strictly before end in all date range inputs (start < end)",
+    "All error responses use the ApiErrorEnvelope shape: {error: {code: ErrorCode, message: string, details?: unknown}}",
+    "ErrorCode is a closed set of exactly 7 values: INVALID_DATE_RANGE, UNIT_NOT_FOUND, BLOCK_OVERLAP, CACHE_UNAVAILABLE, INTERNAL_ERROR, VALIDATION_ERROR, BULK_LIMIT_EXCEEDED",
+    "Each ErrorCode maps to exactly one HTTP status code: INVALID_DATE_RANGE→400, UNIT_NOT_FOUND→404, BLOCK_OVERLAP→409, CACHE_UNAVAILABLE→503, INTERNAL_ERROR→500, VALIDATION_ERROR→400, BULK_LIMIT_EXCEEDED→400",
+    "PUT /availability/:unit_id always returns HTTP 200 on success (idempotent state set), never 201",
+    "Bulk queries are capped at 50 unit_ids maximum (enforced at both validation and service layers)",
+    "Unknown unit_ids in bulk queries return {available: false} rather than causing a 404 error",
+    "All three service methods (checkAvailability, updateAvailability, checkBulkAvailability) return discriminated union Result types — they never throw exceptions",
+    "Writes invalidate the Redis bitmask cache synchronously (write-through) before responding to the caller",
+    "Reads use cache-aside pattern: check Redis first, fall back to PostgreSQL on cache miss, then warm the cache (lazy warming)",
+    "PostgreSQL is the source of truth for all availability data. Redis is a derived, read-optimized cache. Any conflict is resolved by rebuilding from PostgreSQL",
+    "The service is safe for the booking flow's read-then-write pattern: reads see latest data after any write due to synchronous cache invalidation",
+    "When Redis is unavailable and fallbackToPgOnRedisFailure is true, the system operates in degraded mode: all reads go directly to PostgreSQL and no caching occurs. A warning-level log is emitted per request",
+    "Singleflight pattern ensures that at most one PostgreSQL query is in-flight at any time for a given unitId, regardless of concurrent callers",
+    "GET /availability/bulk route is registered before GET /availability/:unit_id in the router to prevent path parameter collision",
+    "The middleware stack order is: error handler (outermost) → request logger → router (innermost)",
+    "UnitId and BlockId are branded/nominal types — they must not be used interchangeably despite both being UUID v4 strings",
+    "BlockType values are: 'reserved', 'maintenance', 'owner_hold'",
+    "All types are exported from a barrel mod.ts file",
+    "The AvailabilityServiceInterface file is kept under 300 lines",
+    "Cache invalidation is idempotent: deleting a non-existent Redis key is a successful no-op",
+    "GET /health returns HTTP 200 with status 'ok' when healthy and HTTP 503 with status 'shutting_down' during graceful shutdown for load balancer draining",
+    "This is the lowest-dependency service and the first one called in the booking flow (zero upstream service dependencies)"
+  ],
+  "requires": [
+    "PostgreSQL database with availability_blocks table and EXCLUDE constraint (provided by availability_schema)",
+    "Redis instance for bitmask caching (provided by availability_bitmask_cache)",
+    "Oak HTTP framework for REST endpoint routing",
+    "Zod for runtime request validation and TypeScript type inference",
+    "Deno runtime environment"
+  ]
+}

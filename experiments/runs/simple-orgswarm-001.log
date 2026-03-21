@@ -1,0 +1,31 @@
+WARNING:swarm.manager:Single consternation from test: The full implementation code is truncated in the task description (files show "..." for content), so tests are written against the public API contract described in the task requirements. Some tests (e.g., tampered token raising an exception vs returning None, SSO internal attribute inspection, register_routing_key method name) may need minor adjustments depending on exact implementation choices. — continuing
+WARNING:swarm.manager:Single consternation from test: The full implementation code is truncated in the task description (files show "..." for content), so tests are written against the public API contract described in the task requirements. Some tests (e.g., tampered token raising an exception vs returning None, SSO internal attribute inspection, register_routing_key method name) may need minor adjustments depending on exact implementation choices. — continuing
+
+Starting Org Swarm on /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project...
+Starting run dad14c724fb3 for /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project
+  Formation: auto
+  IO mode: autonomous
+  Budget: $10.00
+
+[dad14c724fb3] paused          $3.9781
+  Formation: standard
+  Stages: diagnose(ok) → architect(ok) → architect_review(ok) → locate(ok) → execute(ok) → test(ok) → verify(ok) → review(FAIL) → review_classify(ok) → execute(ok) → test(ok) → verify(FAIL) → review(FAIL) → review_escalation(ok) → review_escalation(ok) → escalation_triage(ok) → escalation_triage(ok)
+  Project: /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project
+  Reason: Signal: Multiple consternation signals (test, review, test, review, review_escalation, review_escalation) — systemic concern
+
+  State saved: /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project/.swarm/state.json
+  Resume with: swarm run /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project
+           or: swarm resume /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project
+
+
+============================================================
+Org Swarm — simple-orgswarm-001
+============================================================
+Status:  paused
+Cost:    $3.9781 / $10.00
+Tokens:  106,270
+Time:    580s
+Files:   8
+Stages:  14/17 passed
+Output:  /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001
+============================================================

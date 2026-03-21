@@ -1,0 +1,10 @@
+repo: /Users/jmcentire/WanderRepos/projects/arch/
+formation: auto
+io_mode: interactive
+break_points:
+- review
+- submit
+budget: 25.0
+commands: {}
+submit:
+  mode: none

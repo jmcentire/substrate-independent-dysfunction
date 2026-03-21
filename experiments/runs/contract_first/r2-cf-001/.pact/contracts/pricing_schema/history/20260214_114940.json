@@ -1,0 +1,3522 @@
+{
+  "component_id": "pricing_schema",
+  "name": "Pricing Database Schema & Repository",
+  "description": "PostgreSQL schema and data access layer for pricing. Defines five tables within the `pricing` schema namespace: rate_plans, rate_overrides, fees, taxes, and los_discounts. Provides a repository factory that accepts a database pool and returns a fully-mockable interface with CRUD operations for each table plus a critical resolveRatesForDateRange query method. All monetary values are stored as integers in minor currency units (cents). Date ranges use half-open intervals [checkIn, checkOut). Schema DDL and TypeScript domain types are kept in separate files, synchronized via contract tests. PostgreSQL stores authoritative rate configurations; Redis cache is managed by sibling components.",
+  "version": 1,
+  "types": [
+    {
+      "name": "CentsAmount",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer type representing monetary value in minor currency units (e.g. cents for USD, pence for GBP). Underlying storage is a 64-bit integer. Never use floating-point for money. The brand tag prevents accidental mixing with plain integers."
+    },
+    {
+      "name": "CurrencyCode",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 4217 three-letter currency code stored as TEXT. Examples: USD, EUR, GBP, JPY. Validated via regex on input."
+    },
+    {
+      "name": "DiscountPercent",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer representing a discount percentage in basis points (0-10000, where 10000 = 100%). Stored as integer to avoid floating-point issues."
+    },
+    {
+      "name": "TaxRateBasisPoints",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Branded integer representing a tax rate in basis points (0-10000, where 10000 = 100%). Stored as integer to avoid floating-point issues."
+    },
+    {
+      "name": "FeeType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "FLAT",
+        "PERCENTAGE"
+      ],
+      "inner_types": [],
+      "description": "Discriminated union tag for fee calculation method. Determines whether the fee amount is a flat CentsAmount or a percentage of the subtotal."
+    },
+    {
+      "name": "TaxType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "OCCUPANCY",
+        "SALES",
+        "VAT",
+        "TOURISM",
+        "LOCAL",
+        "STATE",
+        "FEDERAL",
+        "CUSTOM"
+      ],
+      "inner_types": [],
+      "description": "Enumeration of supported tax types applied to rental units."
+    },
+    {
+      "name": "PricingErrorKind",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "RATE_NOT_FOUND",
+        "CURRENCY_MISMATCH",
+        "DATE_RANGE_INVALID",
+        "OVERLAP_CONFLICT",
+        "UNIT_NOT_FOUND",
+        "RATE_PLAN_NOT_FOUND",
+        "FEE_NOT_FOUND",
+        "TAX_NOT_FOUND",
+        "LOS_DISCOUNT_NOT_FOUND",
+        "DATABASE_ERROR",
+        "TRANSACTION_ERROR",
+        "VALIDATION_ERROR"
+      ],
+      "inner_types": [],
+      "description": "Discriminated union tag for all pricing error types."
+    },
+    {
+      "name": "PricingError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "kind",
+          "type_ref": "PricingErrorKind",
+          "required": true,
+          "default": "",
+          "description": "The discriminated union tag identifying the error category.",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error description.",
+          "validators": []
+        },
+        {
+          "name": "details",
+          "type_ref": "dict",
+          "required": false,
+          "default": "{}",
+          "description": "Additional structured context (e.g. conflicting date ranges, mismatched currencies).",
+          "validators": []
+        },
+        {
+          "name": "cause",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Underlying database or system error message, if any.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured error type for all pricing repository operations. Uses a discriminated union pattern via the `kind` field. Additional context provided in `message` and optional `details` map."
+    },
+    {
+      "name": "RatePlan",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 primary key.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "FK to the rental unit. UUID v4.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable rate plan name (e.g. 'Standard', 'Peak Season').",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Rate plan name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "baseRate",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Default nightly rate in minor currency units. Must be >= 0.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Base rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "ISO 4217 currency code for this rate plan.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter ISO 4217 code."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "Soft-delete / activation flag.",
+          "validators": []
+        },
+        {
+          "name": "createdAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "ISO 8601 timestamp, set by database trigger on INSERT.",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "ISO 8601 timestamp, set by database trigger on INSERT and UPDATE.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Entity type for the `pricing.rate_plans` table. Represents the base rate configuration for a rental unit. One unit may have multiple rate plans (e.g. standard, premium). Maps to camelCase TS properties with explicit column-mapping helpers."
+    },
+    {
+      "name": "RatePlanCreateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "FK to the rental unit. UUID v4.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Rate plan name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "baseRate",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Base rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter ISO 4217 code."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input type for creating a new rate plan. Excludes auto-generated fields (id, createdAt, updatedAt)."
+    },
+    {
+      "name": "RatePlanUpdateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Rate plan name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "baseRate",
+          "type_ref": "CentsAmount",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Base rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter ISO 4217 code."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input type for updating an existing rate plan. All fields optional except id."
+    },
+    {
+      "name": "RateOverride",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 primary key.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "FK to pricing.rate_plans(id).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "dateStart",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date of override period. ISO 8601 date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "dateEnd",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date of override period. ISO 8601 date (YYYY-MM-DD). Must be > dateStart.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "nightlyRate",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Override nightly rate in minor currency units.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Nightly rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Optional human-readable label (e.g. 'Holiday Premium', 'Last Minute Deal').",
+          "validators": []
+        },
+        {
+          "name": "createdAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Entity type for the `pricing.rate_overrides` table. Date-specific nightly rate override for a rate plan. Uses half-open interval [dateStart, dateEnd). An EXCLUDE constraint prevents overlapping date ranges for the same rate plan."
+    },
+    {
+      "name": "RateOverrideCreateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "dateStart",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "dateEnd",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "nightlyRate",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Nightly rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for creating a rate override. Excludes auto-generated fields."
+    },
+    {
+      "name": "RateOverrideUpdateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "dateStart",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "dateEnd",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "nightlyRate",
+          "type_ref": "CentsAmount",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Nightly rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for updating an existing rate override. All fields optional."
+    },
+    {
+      "name": "Fee",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable fee name (e.g. 'Cleaning Fee', 'Service Fee').",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Fee name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "feeType",
+          "type_ref": "FeeType",
+          "required": true,
+          "default": "",
+          "description": "FLAT for absolute CentsAmount, PERCENTAGE for basis points of subtotal.",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Fee amount: CentsAmount when FLAT, basis points (0-10000) when PERCENTAGE.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Fee amount must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "Currency code. Must match the rate plan currency for the same unit.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter ISO 4217 code."
+            }
+          ]
+        },
+        {
+          "name": "isTaxable",
+          "type_ref": "bool",
+          "required": true,
+          "default": "false",
+          "description": "Whether this fee is subject to taxes.",
+          "validators": []
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "createdAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Entity type for the `pricing.fees` table. Represents a fee applied to a rental unit. Can be either a flat amount or a percentage of the nightly subtotal. When feeType=FLAT, amount is CentsAmount. When feeType=PERCENTAGE, amount is basis points (0-10000)."
+    },
+    {
+      "name": "FeeCreateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Fee name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "feeType",
+          "type_ref": "FeeType",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Fee amount must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter ISO 4217 code."
+            }
+          ]
+        },
+        {
+          "name": "isTaxable",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for creating a fee."
+    },
+    {
+      "name": "FeeUpdateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Fee name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "feeType",
+          "type_ref": "FeeType",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "int",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Fee amount must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter ISO 4217 code."
+            }
+          ]
+        },
+        {
+          "name": "isTaxable",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for updating an existing fee."
+    },
+    {
+      "name": "Tax",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "taxType",
+          "type_ref": "TaxType",
+          "required": true,
+          "default": "",
+          "description": "Classification of the tax.",
+          "validators": []
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable tax name.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Tax name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "rate",
+          "type_ref": "TaxRateBasisPoints",
+          "required": true,
+          "default": "",
+          "description": "Tax rate in basis points (0-10000).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Tax rate must be between 0 and 10000 basis points."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "createdAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Entity type for the `pricing.taxes` table. Represents a tax applied to a rental unit. Rate is stored in basis points."
+    },
+    {
+      "name": "TaxCreateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "taxType",
+          "type_ref": "TaxType",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Tax name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "rate",
+          "type_ref": "TaxRateBasisPoints",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Tax rate must be between 0 and 10000 basis points."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for creating a tax."
+    },
+    {
+      "name": "TaxUpdateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "taxType",
+          "type_ref": "TaxType",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..255",
+              "error_message": "Tax name must be 1-255 characters."
+            }
+          ]
+        },
+        {
+          "name": "rate",
+          "type_ref": "TaxRateBasisPoints",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Tax rate must be between 0 and 10000 basis points."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for updating an existing tax."
+    },
+    {
+      "name": "LosDiscount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "minNights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Minimum number of nights for discount eligibility.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..",
+              "error_message": "Minimum nights must be at least 1."
+            }
+          ]
+        },
+        {
+          "name": "discountPct",
+          "type_ref": "DiscountPercent",
+          "required": true,
+          "default": "",
+          "description": "Discount in basis points (0-10000).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Discount must be between 0 and 10000 basis points."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": true,
+          "default": "true",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "createdAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "updatedAt",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Entity type for the `pricing.los_discounts` table. Length-of-stay discount: if a booking is >= minNights, apply discountPct to the nightly subtotal. Only the single best (highest discount) matching LOS discount is applied."
+    },
+    {
+      "name": "LosDiscountCreateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "minNights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..",
+              "error_message": "Minimum nights must be at least 1."
+            }
+          ]
+        },
+        {
+          "name": "discountPct",
+          "type_ref": "DiscountPercent",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Discount must be between 0 and 10000 basis points."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for creating a length-of-stay discount."
+    },
+    {
+      "name": "LosDiscountUpdateInput",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "minNights",
+          "type_ref": "int",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..",
+              "error_message": "Minimum nights must be at least 1."
+            }
+          ]
+        },
+        {
+          "name": "discountPct",
+          "type_ref": "DiscountPercent",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Discount must be between 0 and 10000 basis points."
+            }
+          ]
+        },
+        {
+          "name": "isActive",
+          "type_ref": "bool",
+          "required": false,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Input for updating an existing length-of-stay discount."
+    },
+    {
+      "name": "NightlyBreakdownEntry",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The night date (ISO 8601 YYYY-MM-DD). In a half-open [checkIn, checkOut) interval, this is the night starting on this date.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "rate",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Nightly rate in minor currency units for this date.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..",
+              "error_message": "Rate must be non-negative."
+            }
+          ]
+        },
+        {
+          "name": "source",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Either 'BASE' or the UUID of the rate_override that provided this rate.",
+          "validators": []
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rate plan ID from which this rate was resolved.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Per-night rate detail within a resolved rate. Shows the date, the applicable rate, and the source (base vs override)."
+    },
+    {
+      "name": "ResolvedFee",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "feeId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The source fee record ID.",
+          "validators": []
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "feeType",
+          "type_ref": "FeeType",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "originalAmount",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Original amount from the fee record (cents or basis points).",
+          "validators": []
+        },
+        {
+          "name": "resolvedAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Computed fee in minor currency units for this booking.",
+          "validators": []
+        },
+        {
+          "name": "isTaxable",
+          "type_ref": "bool",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A fee resolved to an absolute CentsAmount for a specific booking context."
+    },
+    {
+      "name": "ResolvedTax",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "taxId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The source tax record ID.",
+          "validators": []
+        },
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "taxType",
+          "type_ref": "TaxType",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "rateBasisPoints",
+          "type_ref": "TaxRateBasisPoints",
+          "required": true,
+          "default": "",
+          "description": "The tax rate in basis points.",
+          "validators": []
+        },
+        {
+          "name": "taxableAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "The base amount on which this tax was computed.",
+          "validators": []
+        },
+        {
+          "name": "taxAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Computed tax in minor currency units.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A tax resolved to an absolute CentsAmount for a specific booking context."
+    },
+    {
+      "name": "ResolvedLosDiscount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "losDiscountId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "minNights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "discountPctBasisPoints",
+          "type_ref": "DiscountPercent",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "discountAmount",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Absolute discount amount in minor currency units.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "The applied length-of-stay discount, if any."
+    },
+    {
+      "name": "OptionalResolvedLosDiscount",
+      "kind": "optional",
+      "fields": [],
+      "item_type": "ResolvedLosDiscount",
+      "variants": [],
+      "inner_types": [],
+      "description": "Optional resolved LOS discount, present only if the stay qualifies."
+    },
+    {
+      "name": "NightlyBreakdownList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "NightlyBreakdownEntry",
+      "variants": [],
+      "inner_types": [],
+      "description": "Ordered list of nightly breakdown entries, one per night in [checkIn, checkOut)."
+    },
+    {
+      "name": "ResolvedFeeList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "ResolvedFee",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of resolved fees for the booking."
+    },
+    {
+      "name": "ResolvedTaxList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "ResolvedTax",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of resolved taxes for the booking."
+    },
+    {
+      "name": "ResolvedRate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The primary rate plan used for resolution.",
+          "validators": []
+        },
+        {
+          "name": "checkIn",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Inclusive check-in date (YYYY-MM-DD).",
+          "validators": []
+        },
+        {
+          "name": "checkOut",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Exclusive check-out date (YYYY-MM-DD).",
+          "validators": []
+        },
+        {
+          "name": "numNights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of nights = checkOut - checkIn in days.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "nightlyBreakdown",
+          "type_ref": "NightlyBreakdownList",
+          "required": true,
+          "default": "",
+          "description": "Per-night rate details. Length must equal numNights.",
+          "validators": []
+        },
+        {
+          "name": "nightlySubtotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Sum of all nightly rates before LOS discount.",
+          "validators": []
+        },
+        {
+          "name": "losDiscount",
+          "type_ref": "OptionalResolvedLosDiscount",
+          "required": false,
+          "default": "",
+          "description": "Applied LOS discount, if stay qualifies.",
+          "validators": []
+        },
+        {
+          "name": "discountedSubtotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "nightlySubtotal - losDiscount.discountAmount (or nightlySubtotal if no LOS discount).",
+          "validators": []
+        },
+        {
+          "name": "fees",
+          "type_ref": "ResolvedFeeList",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "feesTotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Sum of all resolved fee amounts.",
+          "validators": []
+        },
+        {
+          "name": "taxes",
+          "type_ref": "ResolvedTaxList",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        },
+        {
+          "name": "taxesTotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "Sum of all resolved tax amounts.",
+          "validators": []
+        },
+        {
+          "name": "grandTotal",
+          "type_ref": "CentsAmount",
+          "required": true,
+          "default": "",
+          "description": "discountedSubtotal + feesTotal + taxesTotal.",
+          "validators": []
+        },
+        {
+          "name": "resolvedAt",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "ISO 8601 timestamp when this resolution was computed.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Complete rate resolution output for a unit and date range. Includes per-night breakdown, subtotals, fees, taxes, LOS discount, and grand total. All amounts in minor currency units. The computation order is: (1) sum nightly rates -> nightlySubtotal, (2) apply LOS discount -> discountedSubtotal, (3) compute fees on discountedSubtotal -> feesTotal, (4) compute taxes on (discountedSubtotal + taxable fees) -> taxesTotal, (5) grandTotal = discountedSubtotal + feesTotal + taxesTotal."
+    },
+    {
+      "name": "RatePlanList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "RatePlan",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of rate plan entities."
+    },
+    {
+      "name": "RateOverrideList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "RateOverride",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of rate override entities."
+    },
+    {
+      "name": "FeeList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "Fee",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of fee entities."
+    },
+    {
+      "name": "TaxList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "Tax",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of tax entities."
+    },
+    {
+      "name": "LosDiscountList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "LosDiscount",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of LOS discount entities."
+    },
+    {
+      "name": "RatePlanResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "RatePlan",
+        "PricingError"
+      ],
+      "description": "Result type: either a RatePlan on success or a PricingError on failure."
+    },
+    {
+      "name": "RatePlanListResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "RatePlanList",
+        "PricingError"
+      ],
+      "description": "Result type: either a RatePlanList on success or a PricingError on failure."
+    },
+    {
+      "name": "RateOverrideResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "RateOverride",
+        "PricingError"
+      ],
+      "description": "Result type: either a RateOverride on success or a PricingError on failure."
+    },
+    {
+      "name": "RateOverrideListResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "RateOverrideList",
+        "PricingError"
+      ],
+      "description": "Result type: either a RateOverrideList on success or a PricingError on failure."
+    },
+    {
+      "name": "FeeResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "Fee",
+        "PricingError"
+      ],
+      "description": "Result type: either a Fee on success or a PricingError on failure."
+    },
+    {
+      "name": "FeeListResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "FeeList",
+        "PricingError"
+      ],
+      "description": "Result type: either a FeeList on success or a PricingError on failure."
+    },
+    {
+      "name": "TaxResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "Tax",
+        "PricingError"
+      ],
+      "description": "Result type: either a Tax on success or a PricingError on failure."
+    },
+    {
+      "name": "TaxListResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "TaxList",
+        "PricingError"
+      ],
+      "description": "Result type: either a TaxList on success or a PricingError on failure."
+    },
+    {
+      "name": "LosDiscountResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "LosDiscount",
+        "PricingError"
+      ],
+      "description": "Result type: either a LosDiscount on success or a PricingError on failure."
+    },
+    {
+      "name": "LosDiscountListResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "LosDiscountList",
+        "PricingError"
+      ],
+      "description": "Result type: either a LosDiscountList on success or a PricingError on failure."
+    },
+    {
+      "name": "ResolvedRateResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "ResolvedRate",
+        "PricingError"
+      ],
+      "description": "Result type: either a ResolvedRate on success or a PricingError on failure."
+    },
+    {
+      "name": "DeleteResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "bool",
+        "PricingError"
+      ],
+      "description": "Result type for delete operations: either a bool (true if deleted) or a PricingError."
+    },
+    {
+      "name": "TransactionResult",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "any",
+        "PricingError"
+      ],
+      "description": "Result type for the withTransaction helper. Returns the inner callback result or a PricingError on transaction failure."
+    }
+  ],
+  "functions": [
+    {
+      "name": "createPricingRepository",
+      "description": "Factory function that accepts a database pool and returns a PricingRepository interface. The returned repository is fully mockable — test components can provide an in-memory implementation conforming to the same interface. All repository methods operate within the `pricing` PostgreSQL schema namespace.",
+      "inputs": [
+        {
+          "name": "pool",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "A DatabasePool instance (from shared_foundation) connected to the PostgreSQL instance. Must have access to the `pricing` schema.",
+          "validators": []
+        }
+      ],
+      "output_type": "any",
+      "error_cases": [
+        {
+          "name": "pool_not_connected",
+          "condition": "The database pool is not connected or has been closed.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        },
+        {
+          "name": "schema_not_found",
+          "condition": "The `pricing` schema does not exist in the database.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "pool is a valid, connected DatabasePool instance",
+        "The `pricing` schema and all five tables exist (migration has been run)",
+        "The btree_gist extension is enabled for EXCLUDE constraints"
+      ],
+      "postconditions": [
+        "Returns a PricingRepository object with all CRUD methods and resolveRatesForDateRange",
+        "The returned repository is stateless — all state lives in the database",
+        "Multiple repository instances sharing the same pool are safe for concurrent use"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "createRatePlan",
+      "description": "Inserts a new rate plan into pricing.rate_plans. Generates a UUID v4 for the id. Sets createdAt and updatedAt via database triggers.",
+      "inputs": [
+        {
+          "name": "input",
+          "type_ref": "RatePlanCreateInput",
+          "required": true,
+          "default": "",
+          "description": "Rate plan creation payload.",
+          "validators": []
+        }
+      ],
+      "output_type": "RatePlanResult",
+      "error_cases": [
+        {
+          "name": "validation_error",
+          "condition": "Input fails validation (e.g. empty name, negative baseRate, invalid currency).",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database constraint violation or connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "input.unitId references a valid rental unit",
+        "input.currency is a valid ISO 4217 code",
+        "input.baseRate >= 0"
+      ],
+      "postconditions": [
+        "A new row exists in pricing.rate_plans with a generated UUID",
+        "createdAt and updatedAt are set to the current timestamp",
+        "The returned RatePlan reflects the inserted row"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Inserts a row into pricing.rate_plans"
+      ]
+    },
+    {
+      "name": "getRatePlan",
+      "description": "Retrieves a single rate plan by its UUID.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the rate plan.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "RatePlanResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No rate plan exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_PLAN_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "If found, returns the RatePlan matching the given id",
+        "If not found, returns PricingError with kind=RATE_PLAN_NOT_FOUND"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "listRatePlansByUnit",
+      "description": "Lists all rate plans for a given unit, optionally filtering by isActive status.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the rental unit.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "activeOnly",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "If true, only return rate plans where isActive=true.",
+          "validators": []
+        }
+      ],
+      "output_type": "RatePlanListResult",
+      "error_cases": [
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns a list of rate plans for the unit (may be empty)",
+        "If activeOnly=true, all returned plans have isActive=true",
+        "Results are ordered by createdAt ascending"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "updateRatePlan",
+      "description": "Updates an existing rate plan. Only provided fields are updated (partial update). updatedAt is refreshed by database trigger.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the rate plan to update.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "input",
+          "type_ref": "RatePlanUpdateInput",
+          "required": true,
+          "default": "",
+          "description": "Fields to update.",
+          "validators": []
+        }
+      ],
+      "output_type": "RatePlanResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No rate plan exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_PLAN_NOT_FOUND"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Provided fields fail validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database constraint violation or connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "At least one field in input is provided"
+      ],
+      "postconditions": [
+        "The rate plan row is updated with the provided fields",
+        "updatedAt is refreshed to the current timestamp",
+        "Returns the full updated RatePlan"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Updates a row in pricing.rate_plans"
+      ]
+    },
+    {
+      "name": "deleteRatePlan",
+      "description": "Deletes a rate plan by id. Also cascades to delete associated rate_overrides via ON DELETE CASCADE.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID v4 of the rate plan to delete.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "DeleteResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No rate plan exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_PLAN_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "If found, the rate plan and all its rate overrides are deleted",
+        "Returns true if a row was deleted, PricingError if not found"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes row(s) from pricing.rate_plans and cascaded pricing.rate_overrides"
+      ]
+    },
+    {
+      "name": "createRateOverride",
+      "description": "Inserts a new rate override into pricing.rate_overrides. The EXCLUDE constraint enforces non-overlapping date ranges per rate_plan_id. Uses half-open interval [dateStart, dateEnd).",
+      "inputs": [
+        {
+          "name": "input",
+          "type_ref": "RateOverrideCreateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "RateOverrideResult",
+      "error_cases": [
+        {
+          "name": "rate_plan_not_found",
+          "condition": "The referenced rate plan does not exist.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_PLAN_NOT_FOUND"
+          }
+        },
+        {
+          "name": "date_range_invalid",
+          "condition": "dateStart >= dateEnd.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATE_RANGE_INVALID"
+          }
+        },
+        {
+          "name": "overlap_conflict",
+          "condition": "The date range overlaps an existing override for the same rate plan (EXCLUDE constraint violation).",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "OVERLAP_CONFLICT"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Input fails validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "input.ratePlanId references an existing rate plan",
+        "input.dateStart < input.dateEnd",
+        "The [dateStart, dateEnd) range does not overlap any existing override for the same rate plan"
+      ],
+      "postconditions": [
+        "A new row exists in pricing.rate_overrides",
+        "The EXCLUDE constraint guarantees no overlapping overrides for the same rate plan",
+        "Returns the inserted RateOverride"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Inserts a row into pricing.rate_overrides"
+      ]
+    },
+    {
+      "name": "getRateOverride",
+      "description": "Retrieves a single rate override by its UUID.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "RateOverrideResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No rate override exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns the RateOverride if found, or PricingError with kind=RATE_NOT_FOUND"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "listRateOverridesByRatePlan",
+      "description": "Lists all rate overrides for a given rate plan, ordered by dateStart ascending.",
+      "inputs": [
+        {
+          "name": "ratePlanId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "dateRangeStart",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Optional inclusive start date filter (YYYY-MM-DD). Only return overrides that overlap with [dateRangeStart, dateRangeEnd).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "dateRangeEnd",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Optional exclusive end date filter (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        }
+      ],
+      "output_type": "RateOverrideListResult",
+      "error_cases": [
+        {
+          "name": "date_range_invalid",
+          "condition": "dateRangeStart >= dateRangeEnd when both are provided.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATE_RANGE_INVALID"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "If dateRangeStart and dateRangeEnd are both provided, dateRangeStart < dateRangeEnd"
+      ],
+      "postconditions": [
+        "Returns overrides ordered by dateStart ascending",
+        "If date range filters are provided, only overlapping overrides are returned"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "updateRateOverride",
+      "description": "Updates an existing rate override. Partial update — only provided fields are changed. Re-validates EXCLUDE constraint if date range changes.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "input",
+          "type_ref": "RateOverrideUpdateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "RateOverrideResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No rate override exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "date_range_invalid",
+          "condition": "Resulting dateStart >= dateEnd after update.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATE_RANGE_INVALID"
+          }
+        },
+        {
+          "name": "overlap_conflict",
+          "condition": "Updated date range overlaps another override for the same rate plan.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "OVERLAP_CONFLICT"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Provided fields fail validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "At least one field in input is provided"
+      ],
+      "postconditions": [
+        "The override row is updated",
+        "EXCLUDE constraint still holds after update",
+        "updatedAt is refreshed"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Updates a row in pricing.rate_overrides"
+      ]
+    },
+    {
+      "name": "deleteRateOverride",
+      "description": "Deletes a rate override by id.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "DeleteResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No rate override exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns true if deleted, PricingError if not found"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes a row from pricing.rate_overrides"
+      ]
+    },
+    {
+      "name": "createFee",
+      "description": "Inserts a new fee into pricing.fees.",
+      "inputs": [
+        {
+          "name": "input",
+          "type_ref": "FeeCreateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "FeeResult",
+      "error_cases": [
+        {
+          "name": "validation_error",
+          "condition": "Input fails validation (e.g. PERCENTAGE amount > 10000).",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database constraint violation or connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "input.unitId references a valid rental unit",
+        "If feeType=PERCENTAGE, amount must be 0-10000 (basis points)"
+      ],
+      "postconditions": [
+        "A new row exists in pricing.fees",
+        "Returns the inserted Fee"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Inserts a row into pricing.fees"
+      ]
+    },
+    {
+      "name": "getFee",
+      "description": "Retrieves a single fee by its UUID.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "FeeResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No fee exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "FEE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns the Fee if found, or PricingError with kind=FEE_NOT_FOUND"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "listFeesByUnit",
+      "description": "Lists all fees for a given unit, optionally filtering by isActive.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "activeOnly",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "FeeListResult",
+      "error_cases": [
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns fees for the unit ordered by createdAt ascending"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "updateFee",
+      "description": "Updates an existing fee. Partial update.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "input",
+          "type_ref": "FeeUpdateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "FeeResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No fee exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "FEE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Provided fields fail validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "At least one field in input is provided"
+      ],
+      "postconditions": [
+        "Returns the updated Fee"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Updates a row in pricing.fees"
+      ]
+    },
+    {
+      "name": "deleteFee",
+      "description": "Deletes a fee by id.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "DeleteResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No fee exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "FEE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns true if deleted"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes a row from pricing.fees"
+      ]
+    },
+    {
+      "name": "createTax",
+      "description": "Inserts a new tax into pricing.taxes.",
+      "inputs": [
+        {
+          "name": "input",
+          "type_ref": "TaxCreateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "TaxResult",
+      "error_cases": [
+        {
+          "name": "validation_error",
+          "condition": "Input fails validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database constraint violation or connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "input.unitId references a valid rental unit",
+        "input.rate is in range 0-10000 basis points"
+      ],
+      "postconditions": [
+        "A new row exists in pricing.taxes",
+        "Returns the inserted Tax"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Inserts a row into pricing.taxes"
+      ]
+    },
+    {
+      "name": "getTax",
+      "description": "Retrieves a single tax by its UUID.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "TaxResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No tax exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "TAX_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns the Tax if found, or PricingError with kind=TAX_NOT_FOUND"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "listTaxesByUnit",
+      "description": "Lists all taxes for a given unit, optionally filtering by isActive.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "activeOnly",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "TaxListResult",
+      "error_cases": [
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns taxes for the unit ordered by createdAt ascending"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "updateTax",
+      "description": "Updates an existing tax. Partial update.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "input",
+          "type_ref": "TaxUpdateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "TaxResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No tax exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "TAX_NOT_FOUND"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Provided fields fail validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "At least one field in input is provided"
+      ],
+      "postconditions": [
+        "Returns the updated Tax"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Updates a row in pricing.taxes"
+      ]
+    },
+    {
+      "name": "deleteTax",
+      "description": "Deletes a tax by id.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "DeleteResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No tax exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "TAX_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns true if deleted"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes a row from pricing.taxes"
+      ]
+    },
+    {
+      "name": "createLosDiscount",
+      "description": "Inserts a new length-of-stay discount into pricing.los_discounts.",
+      "inputs": [
+        {
+          "name": "input",
+          "type_ref": "LosDiscountCreateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "LosDiscountResult",
+      "error_cases": [
+        {
+          "name": "validation_error",
+          "condition": "Input fails validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database constraint violation or connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "input.unitId references a valid rental unit",
+        "input.minNights >= 1",
+        "input.discountPct in range 0-10000"
+      ],
+      "postconditions": [
+        "A new row exists in pricing.los_discounts",
+        "Returns the inserted LosDiscount"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Inserts a row into pricing.los_discounts"
+      ]
+    },
+    {
+      "name": "getLosDiscount",
+      "description": "Retrieves a single LOS discount by its UUID.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "LosDiscountResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No LOS discount exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "LOS_DISCOUNT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns the LosDiscount if found, or PricingError with kind=LOS_DISCOUNT_NOT_FOUND"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "listLosDiscountsByUnit",
+      "description": "Lists all LOS discounts for a given unit, optionally filtering by isActive. Ordered by minNights ascending.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "activeOnly",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "LosDiscountListResult",
+      "error_cases": [
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns LOS discounts ordered by minNights ascending"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "updateLosDiscount",
+      "description": "Updates an existing LOS discount. Partial update.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "input",
+          "type_ref": "LosDiscountUpdateInput",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": []
+        }
+      ],
+      "output_type": "LosDiscountResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No LOS discount exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "LOS_DISCOUNT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "validation_error",
+          "condition": "Provided fields fail validation.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "At least one field in input is provided"
+      ],
+      "postconditions": [
+        "Returns the updated LosDiscount"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Updates a row in pricing.los_discounts"
+      ]
+    },
+    {
+      "name": "deleteLosDiscount",
+      "description": "Deletes a LOS discount by id.",
+      "inputs": [
+        {
+          "name": "id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        }
+      ],
+      "output_type": "DeleteResult",
+      "error_cases": [
+        {
+          "name": "not_found",
+          "condition": "No LOS discount exists with the given id.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "LOS_DISCOUNT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [],
+      "postconditions": [
+        "Returns true if deleted"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Deletes a row from pricing.los_discounts"
+      ]
+    },
+    {
+      "name": "resolveRatesForDateRange",
+      "description": "The critical query method. Given a unit and a half-open date range [checkIn, checkOut), resolves the complete pricing breakdown. Algorithm: (1) Find the active rate plan for the unit (if multiple, use the first active one by createdAt). (2) For each night in [checkIn, checkOut), determine the nightly rate: use rate_override if one covers that date, otherwise use the rate plan's baseRate. (3) Sum nightly rates to get nightlySubtotal. (4) Find the best applicable LOS discount (highest discountPct where minNights <= numNights) and compute discountedSubtotal. (5) Compute all active fees for the unit against discountedSubtotal. (6) Compute all active taxes against (discountedSubtotal + taxable fee amounts). (7) Return the complete ResolvedRate with per-night breakdown. All monetary calculations use integer arithmetic with banker's rounding for divisions.",
+      "inputs": [
+        {
+          "name": "unitId",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "UUID of the rental unit.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "error_message": "Must be a valid UUID v4."
+            }
+          ]
+        },
+        {
+          "name": "checkIn",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Inclusive check-in date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        },
+        {
+          "name": "checkOut",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Exclusive check-out date (YYYY-MM-DD). Must be > checkIn.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Must be ISO 8601 date format YYYY-MM-DD."
+            }
+          ]
+        }
+      ],
+      "output_type": "ResolvedRateResult",
+      "error_cases": [
+        {
+          "name": "rate_not_found",
+          "condition": "No active rate plan exists for the given unitId.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "RATE_NOT_FOUND"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "The unitId does not correspond to any known unit.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "date_range_invalid",
+          "condition": "checkIn >= checkOut, or dates are not valid calendar dates.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATE_RANGE_INVALID"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Fees or taxes for the unit have a different currency than the rate plan (should not happen with proper data, but validated defensively).",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Database connection error during the multi-table query.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "checkIn < checkOut (half-open interval must contain at least one night)",
+        "checkIn is a valid calendar date",
+        "checkOut is a valid calendar date",
+        "The date range is reasonable (implementation may enforce a max range, e.g. 365 nights)"
+      ],
+      "postconditions": [
+        "nightlyBreakdown has exactly (checkOut - checkIn) entries, one per night",
+        "nightlySubtotal == sum of all nightlyBreakdown[i].rate",
+        "discountedSubtotal == nightlySubtotal - (losDiscount.discountAmount or 0)",
+        "discountedSubtotal >= 0",
+        "feesTotal == sum of all fees[i].resolvedAmount",
+        "taxesTotal == sum of all taxes[i].taxAmount",
+        "grandTotal == discountedSubtotal + feesTotal + taxesTotal",
+        "All amounts are non-negative integers",
+        "currency matches the rate plan's currency",
+        "resolvedAt is set to the current timestamp"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "withTransaction",
+      "description": "Executes a callback within a database transaction. Acquires a client from the pool, begins a transaction, executes the callback passing a transaction-scoped repository, and commits on success or rolls back on error. The transaction-scoped repository has the same interface but all operations execute within the transaction. Useful for atomic multi-table operations (e.g. creating a rate plan with overrides and fees atomically).",
+      "inputs": [
+        {
+          "name": "callback",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "An async function that receives a transaction-scoped PricingRepository and returns a Result. Signature: (txRepo: PricingRepository) => Promise<Result<T, PricingError>>.",
+          "validators": []
+        }
+      ],
+      "output_type": "TransactionResult",
+      "error_cases": [
+        {
+          "name": "transaction_begin_failed",
+          "condition": "Cannot acquire a connection or begin a transaction.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "TRANSACTION_ERROR"
+          }
+        },
+        {
+          "name": "transaction_commit_failed",
+          "condition": "The COMMIT statement fails (e.g. serialization failure).",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "TRANSACTION_ERROR"
+          }
+        },
+        {
+          "name": "callback_threw",
+          "condition": "The callback function threw an unhandled exception.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "TRANSACTION_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "Underlying database error during transaction management.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "The database pool has available connections",
+        "callback is an async function accepting a PricingRepository"
+      ],
+      "postconditions": [
+        "If callback returns a success Result, the transaction is committed",
+        "If callback returns an error Result, the transaction is rolled back",
+        "If callback throws, the transaction is rolled back and a TRANSACTION_ERROR is returned",
+        "The transaction-scoped repository is not usable after withTransaction returns"
+      ],
+      "idempotent": false,
+      "side_effects": [
+        "Acquires and releases a database connection",
+        "May commit or rollback a database transaction"
+      ]
+    },
+    {
+      "name": "runMigration",
+      "description": "Executes the schema DDL migration for the pricing schema. Creates the `pricing` schema namespace, enables btree_gist extension, and creates all five tables with constraints, indexes, triggers, and audit columns. Idempotent — uses IF NOT EXISTS and is safe to run multiple times.",
+      "inputs": [
+        {
+          "name": "pool",
+          "type_ref": "any",
+          "required": true,
+          "default": "",
+          "description": "A DatabasePool with superuser or schema-creation privileges.",
+          "validators": []
+        }
+      ],
+      "output_type": "DeleteResult",
+      "error_cases": [
+        {
+          "name": "insufficient_privileges",
+          "condition": "The pool connection lacks CREATE privileges.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        },
+        {
+          "name": "database_error",
+          "condition": "DDL execution fails.",
+          "error_type": "PricingError",
+          "error_data": {
+            "kind": "DATABASE_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "pool is connected with sufficient privileges to CREATE SCHEMA, CREATE TABLE, CREATE EXTENSION"
+      ],
+      "postconditions": [
+        "The `pricing` schema exists",
+        "The btree_gist extension is enabled",
+        "All five tables exist with proper columns, constraints, and indexes",
+        "Trigger functions for updated_at are installed",
+        "Returns true on success"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Creates or updates the pricing schema DDL in PostgreSQL"
+      ]
+    }
+  ],
+  "dependencies": [
+    "shared_foundation"
+  ],
+  "dependency_contracts": {
+    "shared_foundation": [
+      "Result",
+      "UUID",
+      "ISODateString",
+      "DatabasePool",
+      "TransactionClient",
+      "AuditTimestamps"
+    ]
+  },
+  "invariants": [
+    "All monetary values (baseRate, nightlyRate, fee amounts, tax amounts, subtotals, totals) are stored and computed as non-negative integers in minor currency units (cents). No floating-point arithmetic is used for money.",
+    "All date ranges use half-open intervals [start, end) where start < end. A stay of N nights has checkIn and checkOut exactly N days apart.",
+    "The EXCLUDE constraint on pricing.rate_overrides guarantees that no two overrides for the same rate_plan_id have overlapping [date_start, date_end) ranges.",
+    "All tables have UUID v4 primary keys, created_at TIMESTAMPTZ DEFAULT NOW(), and updated_at TIMESTAMPTZ maintained by a BEFORE UPDATE trigger.",
+    "Currency codes are ISO 4217 three-letter uppercase codes. All monetary entities for a single unit must use the same currency (enforced by application logic and validated in resolveRatesForDateRange).",
+    "The resolveRatesForDateRange computation order is fixed: nightly sum → LOS discount → fees → taxes → grand total. This order is part of the contract and must be consistent across implementations.",
+    "Only the single best (highest discount percentage) active LOS discount where minNights <= numNights is applied. If no LOS discount qualifies, no discount is applied.",
+    "Percentage fees and tax rates are stored in basis points (0-10000 where 10000 = 100%). Integer division uses banker's rounding (round half to even).",
+    "Taxes are computed on (discountedSubtotal + sum of taxable fee amounts). Non-taxable fees are excluded from the tax base.",
+    "The repository interface is stateless and fully mockable. All state resides in the PostgreSQL database. Multiple repository instances sharing a pool are safe for concurrent use.",
+    "Schema DDL lives in a separate migration file from TypeScript types. Contract tests verify synchronization between the two.",
+    "All tables live within the PostgreSQL `pricing` schema namespace (database-per-service via schemas within a shared instance).",
+    "Delete operations on rate_plans cascade to rate_overrides via ON DELETE CASCADE. No other cascades exist — fees, taxes, and los_discounts are independently deletable."
+  ],
+  "requires": [
+    "shared_foundation"
+  ]
+}

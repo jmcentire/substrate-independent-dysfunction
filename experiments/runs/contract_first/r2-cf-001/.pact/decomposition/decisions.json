@@ -1,0 +1,52 @@
+[
+  {
+    "ambiguity": "",
+    "decision": "TypeScript/Deno with Oak as the primary stack",
+    "rationale": "The task specifies TypeScript/Deno as preferred to match existing codebase. Oak is the idiomatic web framework for Deno. This is consistent across all 7 services for simplicity."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Shared foundation as a separate top-level component rather than inline in each service",
+    "rationale": "With 7 services sharing types, DB/Redis clients, test helpers, and config, a shared foundation prevents duplication and ensures contract consistency. Each service imports from shared/ rather than defining its own types."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Each service decomposed into exactly 4 sub-components: schema, engine, API, tests",
+    "rationale": "Consistent internal structure across all services makes the system predictable. Schema handles persistence, engine handles business logic, API handles HTTP routing, tests validate everything. Each sub-component stays under 300 lines per file."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Mock/stub implementations for all external dependencies (Stripe, Kafka, 8 PMS systems)",
+    "rationale": "Per assumptions, PMS adapters are stubs. Tests must run without external services. A mock Stripe client, in-memory Kafka, and stub PMS adapters allow full testing without infrastructure. Real implementations can be swapped in via dependency injection."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Booking orchestrator uses parallel service calls where possible",
+    "rationale": "To meet the <3s constraint, availability check + price quote + property details can be fetched concurrently (steps 2+3+4) since they have no interdependencies. This reduces serial latency from ~6 round trips to ~4."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Content-addressable event IDs hash payload + timestamp + source",
+    "rationale": "Per assumptions, including timestamp and source in the hash input prevents collisions when two different events have identical payloads. This was an explicit ambiguity in the task, resolved per the assumptions."
+  },
+  {
+    "ambiguity": "",
+    "decision": "4-tier override uses most-specific-wins with deep merge on nested objects",
+    "rationale": "Per assumptions, this is the simplest semantics that handles common cases. Deep merge means nested settings objects are merged recursively rather than replaced wholesale, allowing selective overrides at any nesting depth."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Services depend on shared_foundation rather than on each other's internal components",
+    "rationale": "Inter-service communication is strictly via HTTP APIs. The Booking Service depends on the Availability Service as a deployed service (called via HTTP), not on its internal modules. This preserves the microservice boundary. Dependencies in the component tree reflect build/deploy ordering, not code coupling."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Implementation priority follows stated dependency order",
+    "rationale": "Per interview results: Availability and Pricing first (foundational caches), then Property, Event, Sync, Payments, Booking. The shared foundation must be built before any service. This ordering ensures each service can be tested against already-working dependencies."
+  },
+  {
+    "ambiguity": "",
+    "decision": "Database-per-service via PostgreSQL schemas within a shared instance",
+    "rationale": "Per assumptions, each service gets its own PostgreSQL schema (e.g., availability, pricing, property) within a single PostgreSQL instance. This provides logical isolation without requiring multiple database servers for development."
+  }
+]

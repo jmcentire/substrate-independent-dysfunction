@@ -1,0 +1,72 @@
+{
+  "id": "4c0952af1866",
+  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/contract_first/r2-cf-001",
+  "status": "failed",
+  "phase": "decompose",
+  "component_tasks": [],
+  "interview_result": {
+    "risks": [
+      "**Reference documents are unverifiable**: The spec points to reference/architecture.md, reference/decomposition.json, reference/decisions.md, reference/schemas/, reference/test_examples/, and reference/tech_context.md — but none of these are provided for review. If they contain contradictions, gaps, or stale information, engineers will discover this mid-implementation. This is the single biggest risk.",
+      "**Kafka dependency contradicts 'no external services' test requirement**: Event Service specifies Kafka as the event bus, but SOPs require tests runnable without external services. Mocking Kafka behavior (consumer groups, offset management, partitioning, exactly-once semantics) is non-trivial and the mock may not expose real integration bugs.",
+      "**The 3-second checkout constraint has no error budget breakdown**: Booking Service must orchestrate availability check → pricing → payment → confirmation in <3s. There's no latency budget per service hop. If Availability gets 500ms, Pricing gets 500ms, Payments (Stripe round-trip) gets 1500ms, that leaves 0ms for Booking's own logic, serialization, and network overhead. Stripe alone can take 2-5s in production.",
+      "**'As many of the 7 services as you can within budget' — budget is undefined**: There's no time budget, story point budget, or dollar budget specified. Engineers cannot make rational prioritization decisions without knowing the constraint.",
+      "**Bidirectional PMS sync with 8 adapters is enormous scope**: Sync Service alone — with 8 PMS adapters, bidirectional sync, conflict resolution, and error handling — could consume the entire budget. The 8 PMS systems aren't even named, so their APIs are unknown.",
+      "**Hash-chained payout snapshots have no recovery/corruption specification**: If a chain link is corrupted or a snapshot is lost, there's no defined recovery procedure. This is an append-only audit structure — getting it wrong means legal/financial liability.",
+      "**Inter-service communication is HTTP REST only, but the 3-second constraint may require async patterns**: Synchronous REST orchestration across 4+ services within 3 seconds is fragile. Any single service timeout breaks the chain. No circuit breaker, retry, or fallback strategy is specified.",
+      "**No API versioning strategy**: 7 services with REST APIs and no versioning scheme means any contract change during development breaks all consumers. With multiple engineers potentially working in parallel, this is a coordination nightmare.",
+      "**Bitmask availability representation has unstated limitations**: Bitmask-based availability implies a fixed time window (e.g., 365 days from today). There's no specification of the epoch, window size, rollover strategy, or how to handle bookings beyond the bitmask range.",
+      "**No authentication/authorization model specified**: A payments and booking system with no auth model is a non-starter for production. If auth is out of scope, that should be explicit — otherwise different engineers will make different assumptions.",
+      "**No deployment or infrastructure specification**: Services are 'independently deployable' but there's no Docker, K8s, or any deployment config mentioned. No service discovery mechanism for inter-service HTTP calls (hardcoded URLs? config? DNS?).",
+      "**Content-addressable event IDs create deduplication ambiguity**: SHA-256 of payload means identical events produce identical IDs. Is this intentional deduplication, or a bug waiting to happen? (e.g., two identical availability updates at different times would collide)",
+      "**PostgreSQL schema migrations strategy is unspecified**: 7 services, each with their own schemas. No migration tool, versioning strategy, or shared-vs-separate database decision is documented in the visible spec."
+    ],
+    "ambiguities": [
+      "**Shared database or database-per-service?** The spec says 'PostgreSQL for persistence' but doesn't say whether all 7 services share one database (with separate schemas) or each gets its own. This fundamentally changes data consistency, deployment, and the feasibility of transactions across services.",
+      "**What does 'integrate via defined API contracts' mean without seeing decomposition.json?** We don't know the actual endpoint signatures, request/response shapes, or error codes. Two engineers implementing caller and callee could build incompatible interfaces.",
+      "**4-tier override hierarchy resolution rules are unspecified in the visible spec**: platform → brand → property → unit is listed, but: Is it last-writer-wins? Deep merge? Per-field override? What happens when a tier is missing? The implementation of Property Service depends entirely on this.",
+      "**'Stripe mirror' for Payments Service is undefined**: Does this mean a local ledger that mirrors Stripe state? A read-through cache? Event-sourced projections from Stripe webhooks? The term 'mirror' is not a standard pattern name.",
+      "**Which 8 PMS systems?** Sync Service must implement 8 adapters but the PMS systems aren't named. Are these real systems (Guesty, Hostaway, Lodgify, etc.) with real APIs, or abstract/mock adapters?",
+      "**Service dependency order vs. implementation priority conflict**: Services are listed in 'dependency order' (Availability first, Booking last), but Requirement #6 says prioritize WORKING, INTEGRATED components. Should you build bottom-up (dependencies first) or top-down (Booking orchestrator first with stubs)?",
+      "**'Appropriate data models (PostgreSQL schemas at minimum)' — reference/schemas/ is mentioned but not provided**: Are the schemas prescriptive (must implement exactly) or descriptive (guidelines)? Can engineers modify them?",
+      "**Redis caching layer details are unspecified**: Hash-sharded by unit_id for Pricing, bitmask cache for Availability — but: TTLs? Eviction policy? Cache invalidation strategy? Write-through vs. write-behind? Cache miss behavior?",
+      "**What constitutes a 'working' service?** Is it a service that passes unit tests? Responds to HTTP requests? Successfully integrates with at least one other service? The definition of done is vague beyond 'contract tests pass'.",
+      "**Event Service: What events, what topics, what schemas?** The spec says Kafka event bus with content-addressable IDs but doesn't enumerate the event types, their schemas, or which services produce/consume which events."
+    ],
+    "questions": [
+      "Can you provide the contents of reference/architecture.md, reference/decomposition.json, and reference/schemas/ so we can validate consistency and completeness before implementation begins?",
+      "What is the actual time/effort budget for this work? '7 services, as many as you can' requires knowing the constraint to make rational scope decisions.",
+      "Is the 3-second constraint measured end-to-end including Stripe API latency, or just internal service processing time? Stripe's API p95 latency alone can exceed 2 seconds.",
+      "Are the 8 PMS adapters real integrations against real APIs, or are mock/stub adapters acceptable? If real, which 8 systems?",
+      "Should services share a single PostgreSQL instance (separate schemas) or each have their own database?",
+      "Is there an existing codebase this must integrate with? The spec mentions 'match existing codebase' for TypeScript — what exists today?",
+      "Is authentication/authorization in scope? If not, should endpoints be completely open, or should we stub an auth middleware?",
+      "For content-addressable event IDs: if two semantically different events happen to have identical payloads, should they be treated as one event (deduplication) or must they be distinguishable (needs timestamp/source in hash input)?",
+      "What is the expected deployment topology? Are these Docker containers? Running on bare metal? This affects service discovery and inter-service communication patterns.",
+      "For the 4-tier override hierarchy: is it a simple 'most-specific-wins' override, or do some fields merge while others replace? Are there fields that lower tiers cannot override?",
+      "Is the Booking Service the only entry point for the checkout flow, or can other services be called directly by external clients?",
+      "What happens when a service is down during the booking flow? Is there a defined degradation strategy (e.g., use cached pricing if Pricing Service is unavailable)?"
+    ],
+    "assumptions": [
+      "The reference documents (architecture.md, decomposition.json, schemas/, etc.) exist, are consistent, and are authoritative — implementation should follow them over the task description where they conflict.",
+      "Database-per-service pattern: each service gets its own PostgreSQL schema within a shared instance, since no separate DB provisioning is mentioned.",
+      "The 8 PMS adapters are mock/stub implementations with a common adapter interface, not real integrations against live third-party APIs.",
+      "The 3-second constraint is aspirational for the internal orchestration flow; actual Stripe latency is excluded or handled via pre-authorized payment tokens.",
+      "Authentication is out of scope — endpoints will be open, with a placeholder middleware that can be swapped in later.",
+      "TypeScript/Deno will be used as the primary language given the 'preferred' designation and existing codebase mention.",
+      "Services will communicate via localhost HTTP during development; service URLs will be configurable via environment variables.",
+      "Content-addressable event IDs include a timestamp or sequence number in the hash input to prevent collisions on identical payloads.",
+      "Implementation priority follows the listed dependency order: Availability and Pricing first (foundational caches), then Property, Event, Sync, Payments, Booking — stopping when budget is exhausted.",
+      "Redis and PostgreSQL will be available as local services during development but all tests will use mocks/in-memory substitutes as specified.",
+      "The 4-tier override hierarchy uses simple most-specific-wins semantics: unit settings override property, property overrides brand, brand overrides platform, with deep merge on nested objects.",
+      "'Budget' likely means implementation time/effort within a single coding session or sprint, not a financial budget."
+    ],
+    "user_answers": {},
+    "approved": false
+  },
+  "total_cost_usd": 0.0,
+  "total_tokens": 0,
+  "last_check_in": "2026-02-14T12:48:13.177182",
+  "created_at": "2026-02-14T11:38:50.028704",
+  "completed_at": "2026-02-14T12:48:13.176917",
+  "pause_reason": "Contract validation failed: Contract validation failed with 41 error(s)"
+}

@@ -1,0 +1,1855 @@
+{
+  "component_id": "pricing_api",
+  "name": "Pricing API Endpoints",
+  "description": "Oak HTTP router implementing pricing endpoints for rental unit rate lookups, quote computation, rate configuration, and fee management. Thin adapter layer that validates requests via Zod schemas and delegates to a pricing engine interface via constructor injection. All monetary values use integer cents with ISO 4217 currency codes. Dates use inclusive-start (first night) / exclusive-end (checkout date) semantics. Responses use a consistent { data: T, meta? } envelope; errors use a structured { error: { code, message, details? } } envelope.",
+  "version": 1,
+  "types": [
+    {
+      "name": "CurrencyCode",
+      "kind": "primitive",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "ISO 4217 three-letter currency code (e.g. USD, EUR, GBP). Re-exported from shared_foundation."
+    },
+    {
+      "name": "Money",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "amount_cents",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Amount in the smallest currency unit (e.g. cents for USD). Can be negative for discounts.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "ISO 4217 three-letter currency code.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[A-Z]{3}$",
+              "error_message": "Currency must be a 3-letter uppercase ISO 4217 code"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Monetary value represented as integer cents with ISO 4217 currency. No floating point. Re-exported from shared_foundation."
+    },
+    {
+      "name": "LineItemType",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "nightly_rate",
+        "cleaning_fee",
+        "pet_fee",
+        "extra_guest_fee",
+        "custom_fee",
+        "tax",
+        "length_of_stay_discount"
+      ],
+      "inner_types": [],
+      "description": "Discriminator for pricing line items in a quote breakdown."
+    },
+    {
+      "name": "NightlyRateMetadata",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The specific night date (YYYY-MM-DD, inclusive).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Date must be YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "rate_source",
+          "type_ref": "RateSource",
+          "required": true,
+          "default": "",
+          "description": "Which tier provided this rate.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Type-specific metadata for a nightly_rate line item."
+    },
+    {
+      "name": "RateSource",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "base",
+        "seasonal",
+        "date_specific",
+        "override"
+      ],
+      "inner_types": [],
+      "description": "Identifies which override tier provided a rate value, from least to most specific."
+    },
+    {
+      "name": "FeeMetadata",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "fee_type",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The canonical fee type key used for upsert identity.",
+          "validators": []
+        },
+        {
+          "name": "fee_label",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable label for the fee.",
+          "validators": []
+        },
+        {
+          "name": "is_percentage",
+          "type_ref": "bool",
+          "required": true,
+          "default": "false",
+          "description": "If true, the fee was computed as a percentage of the subtotal.",
+          "validators": []
+        },
+        {
+          "name": "percentage_basis_points",
+          "type_ref": "int",
+          "required": false,
+          "default": "0",
+          "description": "The percentage in basis points (e.g. 1000 = 10%). Only meaningful when is_percentage is true.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Type-specific metadata for fee line items (cleaning_fee, pet_fee, extra_guest_fee, custom_fee)."
+    },
+    {
+      "name": "TaxMetadata",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "tax_name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Name of the tax (e.g. 'State Occupancy Tax').",
+          "validators": []
+        },
+        {
+          "name": "rate_basis_points",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Tax rate in basis points (e.g. 1200 = 12.00%).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Tax rate basis points must be between 0 and 10000"
+            }
+          ]
+        },
+        {
+          "name": "jurisdiction",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Tax jurisdiction identifier.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Type-specific metadata for a tax line item."
+    },
+    {
+      "name": "DiscountMetadata",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "min_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Minimum number of nights required to qualify for this discount.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..730",
+              "error_message": "min_nights must be between 1 and 730"
+            }
+          ]
+        },
+        {
+          "name": "discount_basis_points",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Discount percentage in basis points (e.g. 500 = 5.00%).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Discount basis points must be between 0 and 10000"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Type-specific metadata for a length_of_stay_discount line item."
+    },
+    {
+      "name": "PricingLineItem",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "type",
+          "type_ref": "LineItemType",
+          "required": true,
+          "default": "",
+          "description": "Discriminator identifying the kind of line item.",
+          "validators": []
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable description of this line item.",
+          "validators": []
+        },
+        {
+          "name": "amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "The monetary amount for this line item. Negative for discounts.",
+          "validators": []
+        },
+        {
+          "name": "metadata",
+          "type_ref": "LineItemMetadata",
+          "required": true,
+          "default": "",
+          "description": "Type-specific metadata. Shape determined by the 'type' discriminator.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single line item in a price breakdown. Uses 'type' as a discriminator field. Metadata field carries type-specific data whose shape depends on the discriminator."
+    },
+    {
+      "name": "LineItemMetadata",
+      "kind": "union",
+      "fields": [],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [
+        "NightlyRateMetadata",
+        "FeeMetadata",
+        "TaxMetadata",
+        "DiscountMetadata"
+      ],
+      "description": "Union of all possible line item metadata types. The active variant is determined by the parent PricingLineItem.type discriminator: nightly_rate -> NightlyRateMetadata, cleaning_fee|pet_fee|extra_guest_fee|custom_fee -> FeeMetadata, tax -> TaxMetadata, length_of_stay_discount -> DiscountMetadata."
+    },
+    {
+      "name": "ResponseMeta",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "The currency used in all Money values in this response.",
+          "validators": []
+        },
+        {
+          "name": "generated_at",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "ISO 8601 UTC timestamp when this response was generated.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+              "error_message": "generated_at must be an ISO 8601 UTC timestamp"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Metadata attached to all successful responses."
+    },
+    {
+      "name": "QuoteResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rental unit this quote is for.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date (first night, YYYY-MM-DD).",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date (checkout date, YYYY-MM-DD).",
+          "validators": []
+        },
+        {
+          "name": "guests",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of guests the quote was computed for.",
+          "validators": []
+        },
+        {
+          "name": "num_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Number of nights in the stay (end - start in days).",
+          "validators": []
+        },
+        {
+          "name": "line_items",
+          "type_ref": "PricingLineItemList",
+          "required": true,
+          "default": "",
+          "description": "All line items: nightly rates, fees, taxes, discounts.",
+          "validators": []
+        },
+        {
+          "name": "subtotal",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of nightly rates before fees, taxes, and discounts.",
+          "validators": []
+        },
+        {
+          "name": "fees_total",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of all fee line items.",
+          "validators": []
+        },
+        {
+          "name": "taxes_total",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of all tax line items.",
+          "validators": []
+        },
+        {
+          "name": "discounts_total",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Sum of all discount line items (negative or zero).",
+          "validators": []
+        },
+        {
+          "name": "total",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Grand total: subtotal + fees_total + taxes_total + discounts_total.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Full price quote breakdown for a stay."
+    },
+    {
+      "name": "PricingLineItemList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "PricingLineItem",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of pricing line items."
+    },
+    {
+      "name": "NightlyRate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The night date (YYYY-MM-DD, inclusive).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Date must be YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "The nightly rate amount for this date.",
+          "validators": []
+        },
+        {
+          "name": "source",
+          "type_ref": "RateSource",
+          "required": true,
+          "default": "",
+          "description": "Which override tier provided this rate.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A single nightly rate entry returned by the rates endpoint."
+    },
+    {
+      "name": "NightlyRateList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "NightlyRate",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of nightly rates."
+    },
+    {
+      "name": "RatesResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rental unit these rates are for.",
+          "validators": []
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Inclusive start date (YYYY-MM-DD).",
+          "validators": []
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Exclusive end date (YYYY-MM-DD).",
+          "validators": []
+        },
+        {
+          "name": "rates",
+          "type_ref": "NightlyRateList",
+          "required": true,
+          "default": "",
+          "description": "One entry per night in the range [start, end).",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Raw nightly rates for a date range."
+    },
+    {
+      "name": "OverrideTier",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "base",
+        "seasonal",
+        "date_specific",
+        "override"
+      ],
+      "inner_types": [],
+      "description": "The 4-tier override hierarchy for rate configuration. Most-specific-wins with deep merge."
+    },
+    {
+      "name": "SeasonalRateRule",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "name",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable name for the season (e.g. 'Peak Summer').",
+          "validators": []
+        },
+        {
+          "name": "start_month_day",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Season start as MM-DD (inclusive, recurring annually).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "Must be MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "end_month_day",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Season end as MM-DD (inclusive, recurring annually).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$",
+              "error_message": "Must be MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "nightly_rate",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "The nightly rate during this season.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A seasonal rate rule within rate configuration."
+    },
+    {
+      "name": "SeasonalRateRuleList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "SeasonalRateRule",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of seasonal rate rules."
+    },
+    {
+      "name": "DateSpecificRate",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "date",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The specific date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "Date must be YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "nightly_rate",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "The overridden nightly rate for this specific date.",
+          "validators": []
+        },
+        {
+          "name": "reason",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Optional reason for the override (e.g. 'Holiday premium').",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A date-specific rate override."
+    },
+    {
+      "name": "DateSpecificRateList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "DateSpecificRate",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of date-specific rate overrides."
+    },
+    {
+      "name": "LengthOfStayDiscount",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "min_nights",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Minimum number of nights to qualify.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..730",
+              "error_message": "min_nights must be between 1 and 730"
+            }
+          ]
+        },
+        {
+          "name": "discount_basis_points",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Discount percentage in basis points (e.g. 500 = 5%).",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..10000",
+              "error_message": "Discount must be between 1 and 10000 basis points"
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": false,
+          "default": "",
+          "description": "Human-readable label (e.g. 'Weekly discount').",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A length-of-stay discount rule."
+    },
+    {
+      "name": "LengthOfStayDiscountList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "LengthOfStayDiscount",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of length-of-stay discount rules."
+    },
+    {
+      "name": "RateConfiguration",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rental unit this configuration applies to.",
+          "validators": []
+        },
+        {
+          "name": "base_nightly_rate",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "The base nightly rate (tier 1: base).",
+          "validators": []
+        },
+        {
+          "name": "seasonal_rules",
+          "type_ref": "SeasonalRateRuleList",
+          "required": true,
+          "default": "",
+          "description": "Seasonal rate rules (tier 2: seasonal).",
+          "validators": []
+        },
+        {
+          "name": "date_specific_rates",
+          "type_ref": "DateSpecificRateList",
+          "required": true,
+          "default": "",
+          "description": "Date-specific rate overrides (tier 3: date_specific).",
+          "validators": []
+        },
+        {
+          "name": "length_of_stay_discounts",
+          "type_ref": "LengthOfStayDiscountList",
+          "required": true,
+          "default": "",
+          "description": "Length-of-stay discount tiers.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": true,
+          "default": "",
+          "description": "The currency for all rates in this configuration.",
+          "validators": []
+        },
+        {
+          "name": "min_nights",
+          "type_ref": "int",
+          "required": false,
+          "default": "1",
+          "description": "Minimum nights for a booking.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..730",
+              "error_message": "min_nights must be between 1 and 730"
+            }
+          ]
+        },
+        {
+          "name": "max_nights",
+          "type_ref": "int",
+          "required": false,
+          "default": "730",
+          "description": "Maximum nights for a booking.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..730",
+              "error_message": "max_nights must be between 1 and 730"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "The full rate configuration for a unit, representing the merged effective config after 4-tier override resolution."
+    },
+    {
+      "name": "UpdateRateConfigurationRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "override_tier",
+          "type_ref": "OverrideTier",
+          "required": true,
+          "default": "",
+          "description": "Which override tier this update targets. Determines merge precedence.",
+          "validators": []
+        },
+        {
+          "name": "base_nightly_rate",
+          "type_ref": "Money",
+          "required": false,
+          "default": "",
+          "description": "Updated base nightly rate.",
+          "validators": []
+        },
+        {
+          "name": "seasonal_rules",
+          "type_ref": "SeasonalRateRuleList",
+          "required": false,
+          "default": "",
+          "description": "Updated seasonal rate rules. Replaces all seasonal rules at this tier.",
+          "validators": []
+        },
+        {
+          "name": "date_specific_rates",
+          "type_ref": "DateSpecificRateList",
+          "required": false,
+          "default": "",
+          "description": "Updated date-specific overrides. Merged by date key.",
+          "validators": []
+        },
+        {
+          "name": "length_of_stay_discounts",
+          "type_ref": "LengthOfStayDiscountList",
+          "required": false,
+          "default": "",
+          "description": "Updated length-of-stay discount rules.",
+          "validators": []
+        },
+        {
+          "name": "currency",
+          "type_ref": "CurrencyCode",
+          "required": false,
+          "default": "",
+          "description": "Currency for rate values. Must match existing configuration currency if set.",
+          "validators": []
+        },
+        {
+          "name": "min_nights",
+          "type_ref": "int",
+          "required": false,
+          "default": "",
+          "description": "Updated minimum nights.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..730",
+              "error_message": "min_nights must be between 1 and 730"
+            }
+          ]
+        },
+        {
+          "name": "max_nights",
+          "type_ref": "int",
+          "required": false,
+          "default": "",
+          "description": "Updated maximum nights.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..730",
+              "error_message": "max_nights must be between 1 and 730"
+            }
+          ]
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Request body for PUT /pricing/:unit_id/rates. All fields optional for partial update (deep merge). override_tier specifies which tier is being updated."
+    },
+    {
+      "name": "FeeDefinition",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "fee_type",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Canonical fee type key (e.g. 'cleaning_fee', 'pet_fee', 'extra_guest_fee', or a custom string). Used as upsert key.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[a-z][a-z0-9_]{0,63}$",
+              "error_message": "fee_type must be lowercase alphanumeric with underscores, starting with a letter, max 64 chars"
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable label for the fee.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..256",
+              "error_message": "Label must be between 1 and 256 characters"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Fixed fee amount. Used when is_percentage is false.",
+          "validators": []
+        },
+        {
+          "name": "is_percentage",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "If true, the fee is computed as a percentage of the nightly subtotal.",
+          "validators": []
+        },
+        {
+          "name": "percentage_basis_points",
+          "type_ref": "int",
+          "required": false,
+          "default": "0",
+          "description": "Fee percentage in basis points. Only used when is_percentage is true.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Percentage basis points must be between 0 and 10000"
+            }
+          ]
+        },
+        {
+          "name": "applies_per_night",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "If true, the fixed amount is charged per night rather than once.",
+          "validators": []
+        },
+        {
+          "name": "applies_per_guest_above",
+          "type_ref": "int",
+          "required": false,
+          "default": "0",
+          "description": "Guest threshold above which this fee applies (e.g. 2 means fee applies for guest 3+). 0 means always applies.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..100",
+              "error_message": "Guest threshold must be between 0 and 100"
+            }
+          ]
+        },
+        {
+          "name": "enabled",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "Whether this fee is currently active.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "A fee definition for a rental unit. Keyed on fee_type for upsert semantics."
+    },
+    {
+      "name": "FeeDefinitionList",
+      "kind": "list",
+      "fields": [],
+      "item_type": "FeeDefinition",
+      "variants": [],
+      "inner_types": [],
+      "description": "List of fee definitions."
+    },
+    {
+      "name": "UpsertFeeRequest",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "fee_type",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Canonical fee type key. If it already exists, the fee is updated; otherwise created.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^[a-z][a-z0-9_]{0,63}$",
+              "error_message": "fee_type must be lowercase alphanumeric with underscores, starting with a letter, max 64 chars"
+            }
+          ]
+        },
+        {
+          "name": "label",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable label for the fee.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..256",
+              "error_message": "Label must be between 1 and 256 characters"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type_ref": "Money",
+          "required": true,
+          "default": "",
+          "description": "Fixed fee amount.",
+          "validators": []
+        },
+        {
+          "name": "is_percentage",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "If true, fee is a percentage of nightly subtotal.",
+          "validators": []
+        },
+        {
+          "name": "percentage_basis_points",
+          "type_ref": "int",
+          "required": false,
+          "default": "0",
+          "description": "Fee percentage in basis points when is_percentage is true.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..10000",
+              "error_message": "Percentage basis points must be between 0 and 10000"
+            }
+          ]
+        },
+        {
+          "name": "applies_per_night",
+          "type_ref": "bool",
+          "required": false,
+          "default": "false",
+          "description": "If true, charged per night.",
+          "validators": []
+        },
+        {
+          "name": "applies_per_guest_above",
+          "type_ref": "int",
+          "required": false,
+          "default": "0",
+          "description": "Guest threshold for applicability.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "0..100",
+              "error_message": "Guest threshold must be between 0 and 100"
+            }
+          ]
+        },
+        {
+          "name": "enabled",
+          "type_ref": "bool",
+          "required": false,
+          "default": "true",
+          "description": "Whether this fee is active.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Request body for POST /pricing/:unit_id/fees. Upserts a fee keyed on fee_type."
+    },
+    {
+      "name": "FeesResponse",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "The rental unit these fees belong to.",
+          "validators": []
+        },
+        {
+          "name": "fees",
+          "type_ref": "FeeDefinitionList",
+          "required": true,
+          "default": "",
+          "description": "Complete list of all fees for this unit after the upsert operation.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Response from POST /fees containing the full current fee list after the upsert."
+    },
+    {
+      "name": "QuoteResponseEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "data",
+          "type_ref": "QuoteResponse",
+          "required": true,
+          "default": "",
+          "description": "The quote data.",
+          "validators": []
+        },
+        {
+          "name": "meta",
+          "type_ref": "ResponseMeta",
+          "required": true,
+          "default": "",
+          "description": "Response metadata including currency and generation timestamp.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success response envelope for GET /pricing/:unit_id/quote."
+    },
+    {
+      "name": "RatesResponseEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "data",
+          "type_ref": "RatesResponse",
+          "required": true,
+          "default": "",
+          "description": "The rates data.",
+          "validators": []
+        },
+        {
+          "name": "meta",
+          "type_ref": "ResponseMeta",
+          "required": true,
+          "default": "",
+          "description": "Response metadata.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success response envelope for GET /pricing/:unit_id/rates."
+    },
+    {
+      "name": "RateConfigResponseEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "data",
+          "type_ref": "RateConfiguration",
+          "required": true,
+          "default": "",
+          "description": "The resolved effective rate configuration after merge.",
+          "validators": []
+        },
+        {
+          "name": "meta",
+          "type_ref": "ResponseMeta",
+          "required": true,
+          "default": "",
+          "description": "Response metadata.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success response envelope for PUT /pricing/:unit_id/rates."
+    },
+    {
+      "name": "FeesResponseEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "data",
+          "type_ref": "FeesResponse",
+          "required": true,
+          "default": "",
+          "description": "The fees data including full current fee list.",
+          "validators": []
+        },
+        {
+          "name": "meta",
+          "type_ref": "ResponseMeta",
+          "required": true,
+          "default": "",
+          "description": "Response metadata.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Success response envelope for POST /pricing/:unit_id/fees."
+    },
+    {
+      "name": "ErrorDetail",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "code",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Machine-readable error code (e.g. 'VALIDATION_ERROR', 'UNIT_NOT_FOUND').",
+          "validators": []
+        },
+        {
+          "name": "message",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Human-readable error message.",
+          "validators": []
+        },
+        {
+          "name": "details",
+          "type_ref": "dict",
+          "required": false,
+          "default": "",
+          "description": "Optional map of field names to arrays of validation error strings. Keys are field paths, values are lists of error messages.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Structured error detail within the error envelope. Re-exported from shared_foundation."
+    },
+    {
+      "name": "ErrorResponseEnvelope",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "error",
+          "type_ref": "ErrorDetail",
+          "required": true,
+          "default": "",
+          "description": "The error detail.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Standard error response envelope. All error responses from the API use this shape."
+    },
+    {
+      "name": "HttpStatusCode",
+      "kind": "enum",
+      "fields": [],
+      "item_type": "",
+      "variants": [
+        "200",
+        "201",
+        "400",
+        "404",
+        "409",
+        "422",
+        "500"
+      ],
+      "inner_types": [],
+      "description": "HTTP status codes used by this API."
+    },
+    {
+      "name": "PricingEngineInterface",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "compute_quote",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Method: (unit_id, start, end, guests) -> QuoteResponse. Computes a full price breakdown.",
+          "validators": []
+        },
+        {
+          "name": "get_nightly_rates",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Method: (unit_id, start, end) -> NightlyRateList. Returns raw nightly rates for a date range.",
+          "validators": []
+        },
+        {
+          "name": "update_rate_configuration",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Method: (unit_id, UpdateRateConfigurationRequest) -> RateConfiguration. Applies tier update and returns merged effective config.",
+          "validators": []
+        },
+        {
+          "name": "upsert_fee",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Method: (unit_id, UpsertFeeRequest) -> FeesResponse. Upserts a fee and returns the full fee list.",
+          "validators": []
+        }
+      ],
+      "item_type": "",
+      "variants": [],
+      "inner_types": [],
+      "description": "Abstract interface for the pricing engine dependency, injected into the router via constructor. Defined here as a contract — the actual implementation is provided externally. The API router delegates all business logic to this interface."
+    }
+  ],
+  "functions": [
+    {
+      "name": "get_quote",
+      "description": "GET /pricing/:unit_id/quote?start=&end=&guests= — Computes a full price breakdown for a potential stay. Returns nightly rates, fees, taxes, discounts, and totals as structured line items. Delegates to PricingEngineInterface.compute_quote after validating request parameters via Zod schema.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Path parameter: rental unit identifier.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..256",
+              "error_message": "unit_id must be between 1 and 256 characters"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Query parameter: inclusive start date (first night). YYYY-MM-DD format.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "start must be YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Query parameter: exclusive end date (checkout date). YYYY-MM-DD format.",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "end must be YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "guests",
+          "type_ref": "int",
+          "required": true,
+          "default": "",
+          "description": "Query parameter: number of guests.",
+          "validators": [
+            {
+              "kind": "range",
+              "expression": "1..100",
+              "error_message": "guests must be between 1 and 100"
+            }
+          ]
+        }
+      ],
+      "output_type": "QuoteResponseEnvelope",
+      "error_cases": [
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end does not match YYYY-MM-DD format or is not a valid calendar date",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "invalid_date_range",
+          "condition": "start >= end or date range exceeds 730 days",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "invalid_guests",
+          "condition": "guests parameter is missing, not an integer, or out of range [1, 100]",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_GUESTS"
+          }
+        },
+        {
+          "name": "missing_query_params",
+          "condition": "One or more required query parameters (start, end, guests) are missing",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "MISSING_QUERY_PARAMS"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "No pricing configuration exists for the given unit_id",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "404",
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "rates_not_configured",
+          "condition": "Rates are not configured for some or all dates in the requested range",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "RATES_NOT_CONFIGURED"
+          }
+        },
+        {
+          "name": "engine_error",
+          "condition": "Pricing engine encountered an internal error during quote computation",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a non-empty string",
+        "start is a valid YYYY-MM-DD date string",
+        "end is a valid YYYY-MM-DD date string",
+        "start < end (start must be strictly before end)",
+        "Date range (end - start) must not exceed 730 days",
+        "guests >= 1",
+        "start date must not be in the past (before today in UTC)"
+      ],
+      "postconditions": [
+        "Response contains exactly (end - start) nightly_rate line items, one per night",
+        "total.amount_cents == subtotal.amount_cents + fees_total.amount_cents + taxes_total.amount_cents + discounts_total.amount_cents",
+        "All Money objects in the response share the same currency",
+        "num_nights == number of nightly_rate line items",
+        "discounts_total.amount_cents <= 0",
+        "subtotal.amount_cents >= 0",
+        "meta.currency matches all Money.currency values in data"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "get_rates",
+      "description": "GET /pricing/:unit_id/rates?start=&end= — Returns raw nightly rates for a date range. Each entry includes the rate amount and which override tier provided it. Delegates to PricingEngineInterface.get_nightly_rates after Zod validation.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Path parameter: rental unit identifier.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..256",
+              "error_message": "unit_id must be between 1 and 256 characters"
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Query parameter: inclusive start date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "start must be YYYY-MM-DD format"
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Query parameter: exclusive end date (YYYY-MM-DD).",
+          "validators": [
+            {
+              "kind": "regex",
+              "expression": "^\\d{4}-\\d{2}-\\d{2}$",
+              "error_message": "end must be YYYY-MM-DD format"
+            }
+          ]
+        }
+      ],
+      "output_type": "RatesResponseEnvelope",
+      "error_cases": [
+        {
+          "name": "invalid_date_format",
+          "condition": "start or end does not match YYYY-MM-DD format or is not a valid calendar date",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_FORMAT"
+          }
+        },
+        {
+          "name": "invalid_date_range",
+          "condition": "start >= end or date range exceeds 730 days",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_DATE_RANGE"
+          }
+        },
+        {
+          "name": "missing_query_params",
+          "condition": "One or more required query parameters (start, end) are missing",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "MISSING_QUERY_PARAMS"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "No pricing configuration exists for the given unit_id",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "404",
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "rates_not_configured",
+          "condition": "Rates are not configured for some or all dates in the requested range",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "RATES_NOT_CONFIGURED"
+          }
+        },
+        {
+          "name": "engine_error",
+          "condition": "Pricing engine encountered an internal error",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a non-empty string",
+        "start is a valid YYYY-MM-DD date string",
+        "end is a valid YYYY-MM-DD date string",
+        "start < end (start must be strictly before end)",
+        "Date range (end - start) must not exceed 730 days"
+      ],
+      "postconditions": [
+        "Response contains exactly (end - start) rate entries, one per night in [start, end)",
+        "Rate entries are sorted by date ascending",
+        "All Money objects share the same currency",
+        "meta.currency matches all Money.currency values in data"
+      ],
+      "idempotent": true,
+      "side_effects": []
+    },
+    {
+      "name": "update_rate_configuration",
+      "description": "PUT /pricing/:unit_id/rates — Updates rate configuration at a specified override tier. Accepts a partial configuration targeting a specific tier (base, seasonal, date_specific, or override). The pricing engine applies 4-tier merge (most-specific-wins, deep merge on nested objects) and returns the resolved effective configuration. Delegates to PricingEngineInterface.update_rate_configuration after Zod body validation.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Path parameter: rental unit identifier.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..256",
+              "error_message": "unit_id must be between 1 and 256 characters"
+            }
+          ]
+        },
+        {
+          "name": "body",
+          "type_ref": "UpdateRateConfigurationRequest",
+          "required": true,
+          "default": "",
+          "description": "Request body containing the tier target and fields to update.",
+          "validators": []
+        }
+      ],
+      "output_type": "RateConfigResponseEnvelope",
+      "error_cases": [
+        {
+          "name": "validation_error",
+          "condition": "Request body fails Zod schema validation (missing required fields, invalid types, constraint violations)",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_body_json",
+          "condition": "Request body is not valid JSON",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_JSON"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "No pricing configuration exists for the given unit_id and override_tier is not 'base' (base tier auto-creates)",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "404",
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Provided currency does not match the unit's existing configured currency",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "409",
+            "code": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "invalid_night_range",
+          "condition": "min_nights > max_nights after merge",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "INVALID_NIGHT_RANGE"
+          }
+        },
+        {
+          "name": "overlapping_seasons",
+          "condition": "Seasonal rules have overlapping date ranges after merge",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "OVERLAPPING_SEASONS"
+          }
+        },
+        {
+          "name": "negative_rate",
+          "condition": "A nightly rate amount_cents is negative",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "NEGATIVE_RATE"
+          }
+        },
+        {
+          "name": "engine_error",
+          "condition": "Pricing engine encountered an internal error during configuration update",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a non-empty string",
+        "Request body is valid JSON conforming to UpdateRateConfigurationRequest Zod schema",
+        "override_tier is a valid OverrideTier value",
+        "If currency is provided, it must match the unit's existing currency (currency change requires separate migration)",
+        "If both min_nights and max_nights are provided, min_nights <= max_nights",
+        "All Money.amount_cents values in rate fields are non-negative"
+      ],
+      "postconditions": [
+        "Returned RateConfiguration reflects the merged effective config across all 4 tiers",
+        "The tier specified in override_tier has been updated with the provided fields",
+        "Authoritative configuration is persisted in PostgreSQL",
+        "Redis cache for this unit_id is invalidated or updated",
+        "All Money objects in the response share the same currency"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Persists updated rate configuration to PostgreSQL at the specified override tier",
+        "Invalidates or updates Redis cache for the unit_id hash shard",
+        "May trigger rate change events for downstream consumers"
+      ]
+    },
+    {
+      "name": "upsert_fee",
+      "description": "POST /pricing/:unit_id/fees — Adds or updates a fee for a rental unit. Upsert is keyed on fee_type: if a fee with the same fee_type already exists, it is replaced; otherwise a new fee is created. Returns the full current fee list after the mutation. Delegates to PricingEngineInterface.upsert_fee after Zod body validation.",
+      "inputs": [
+        {
+          "name": "unit_id",
+          "type_ref": "str",
+          "required": true,
+          "default": "",
+          "description": "Path parameter: rental unit identifier.",
+          "validators": [
+            {
+              "kind": "length",
+              "expression": "1..256",
+              "error_message": "unit_id must be between 1 and 256 characters"
+            }
+          ]
+        },
+        {
+          "name": "body",
+          "type_ref": "UpsertFeeRequest",
+          "required": true,
+          "default": "",
+          "description": "Request body containing the fee definition to upsert.",
+          "validators": []
+        }
+      ],
+      "output_type": "FeesResponseEnvelope",
+      "error_cases": [
+        {
+          "name": "validation_error",
+          "condition": "Request body fails Zod schema validation",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "VALIDATION_ERROR"
+          }
+        },
+        {
+          "name": "invalid_body_json",
+          "condition": "Request body is not valid JSON",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "400",
+            "code": "INVALID_JSON"
+          }
+        },
+        {
+          "name": "unit_not_found",
+          "condition": "No pricing configuration exists for the given unit_id",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "404",
+            "code": "UNIT_NOT_FOUND"
+          }
+        },
+        {
+          "name": "currency_mismatch",
+          "condition": "Fee amount currency does not match the unit's configured currency",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "409",
+            "code": "CURRENCY_MISMATCH"
+          }
+        },
+        {
+          "name": "invalid_percentage_config",
+          "condition": "is_percentage is true but percentage_basis_points is 0 or not provided",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "INVALID_PERCENTAGE_CONFIG"
+          }
+        },
+        {
+          "name": "max_fees_exceeded",
+          "condition": "Adding this fee would exceed the maximum allowed number of fees per unit (50)",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "422",
+            "code": "MAX_FEES_EXCEEDED"
+          }
+        },
+        {
+          "name": "engine_error",
+          "condition": "Pricing engine encountered an internal error during fee upsert",
+          "error_type": "ErrorResponseEnvelope",
+          "error_data": {
+            "http_status": "500",
+            "code": "INTERNAL_ERROR"
+          }
+        }
+      ],
+      "preconditions": [
+        "unit_id is a non-empty string",
+        "Request body is valid JSON conforming to UpsertFeeRequest Zod schema",
+        "fee_type matches the required pattern: lowercase alphanumeric with underscores",
+        "If is_percentage is true, percentage_basis_points must be > 0",
+        "If is_percentage is false, amount.amount_cents must be >= 0",
+        "amount.currency must match the unit's configured currency"
+      ],
+      "postconditions": [
+        "A fee with the given fee_type exists in the unit's fee list with the provided values",
+        "The response contains the complete list of all fees for the unit (not just the upserted one)",
+        "Fee list is persisted in PostgreSQL",
+        "Redis cache for this unit_id is invalidated or updated",
+        "Calling upsert_fee again with the same fee_type and same values produces the same result (idempotent)"
+      ],
+      "idempotent": true,
+      "side_effects": [
+        "Persists fee definition to PostgreSQL (insert or update keyed on unit_id + fee_type)",
+        "Invalidates or updates Redis cache for the unit_id hash shard",
+        "May trigger fee change events for downstream consumers"
+      ]
+    }
+  ],
+  "dependencies": [
+    "shared_foundation"
+  ],
+  "dependency_contracts": {
+    "shared_foundation": [
+      "Money",
+      "ErrorEnvelope",
+      "ErrorDetail",
+      "ISO8601DateString",
+      "ISO8601DateTimeString",
+      "CurrencyCode"
+    ]
+  },
+  "invariants": [
+    "All monetary amounts are represented as integer cents — no floating point values cross the API boundary",
+    "start date is always inclusive (first night of stay) and end date is always exclusive (checkout date)",
+    "Date range must satisfy start < end and span at most 730 days",
+    "All success responses conform to ResponseEnvelope shape with data field and optional meta field",
+    "All error responses conform to ErrorResponseEnvelope shape with error field containing code, message, and optional details",
+    "POST /fees is idempotent when called with the same fee_type — it upserts keyed on fee_type",
+    "PUT /rates returns the resolved effective configuration after applying 4-tier override merge (most-specific-wins with deep merge on nested objects)",
+    "Currency is consistent within a single response — all Money objects in one response share the same currency",
+    "unit_id path parameter is validated as a non-empty string on every endpoint before delegation to engine"
+  ],
+  "requires": [
+    "shared_foundation must provide Money type as { amount_cents: int, currency: CurrencyCode }",
+    "shared_foundation must provide ErrorEnvelope and ErrorDetail types for structured error responses",
+    "shared_foundation must provide date validation utilities for YYYY-MM-DD format and range checks"
+  ]
+}

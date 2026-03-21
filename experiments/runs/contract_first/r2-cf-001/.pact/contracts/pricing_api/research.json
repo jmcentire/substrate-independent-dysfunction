@@ -1,0 +1,125 @@
+{
+  "task_summary": "Define the interface contract for the Pricing API Endpoints component (pricing_api) — an Oak HTTP router in Deno/TypeScript implementing four pricing endpoints: GET quote, GET rates, PUT rates, POST fees. The contract must specify request/response types, error shapes, serialization conventions, and integration boundaries with Redis cache and PostgreSQL, all within a vacation rental rate cache service.",
+  "findings": [
+    {
+      "topic": "REST API pricing/quote response design",
+      "finding": "Industry-standard pricing APIs (Stripe, Airbnb, Booking.com) return structured price breakdowns as an array of line items with a discriminated `type` field (e.g., 'nightly_rate', 'cleaning_fee', 'tax', 'discount') plus a summary object with subtotal, total_fees, total_taxes, total_discounts, and grand_total. All monetary values are represented as integer minor units (cents) to avoid floating-point precision issues, paired with a currency ISO 4217 code at the top level.",
+      "source": "Stripe Invoices API, Airbnb pricing breakdown patterns, Martin Fowler's Money pattern",
+      "relevance": "Directly dictates the response shape for GET /pricing/:unit_id/quote. Using integer cents eliminates rounding bugs in multi-line-item summation.",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Money representation in TypeScript",
+      "finding": "The 'Money' pattern recommends a branded type or value object with `amount_cents: number` (integer) and `currency: string` (ISO 4217). TypeScript branded types (e.g., `type Cents = number & { readonly __brand: 'Cents' }`) prevent accidental mixing of cents and dollars. Dinero.js is a popular library, but per project preferences (prefer stdlib), a lightweight custom type is preferred.",
+      "source": "Martin Fowler's PoEAA Money pattern, TypeScript branded types pattern",
+      "relevance": "Core type for all pricing responses. Avoids floating-point errors and enforces type safety across the API boundary.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Oak router patterns and middleware conventions",
+      "finding": "Oak follows Koa-style middleware. Best practice is to separate route definitions from handler logic, use a dedicated error-handling middleware at the top of the stack, and validate request params/query via a schema validation layer (e.g., Zod). Oak's `ctx.response.body` should be set to a typed response object. Route params are accessed via `ctx.params`, query params via `helpers.getQuery(ctx)`.",
+      "source": "Oak documentation (deno.land/x/oak), Koa best practices",
+      "relevance": "Defines how the router module is structured, how parameters are extracted, and how errors propagate.",
+      "confidence": 0.9
+    },
+    {
+      "topic": "Query parameter validation for date ranges",
+      "finding": "Date range endpoints should validate: (1) start/end are valid ISO 8601 date strings (YYYY-MM-DD), (2) start <= end, (3) range doesn't exceed a max (commonly 365 or 730 days to prevent abuse), (4) start is not in the past for quotes (but allowed for historical rate lookups). Zod schemas with `.refine()` or custom transform are effective for this. Return 400 with a structured error including the invalid field name.",
+      "source": "OWASP input validation, Stripe/Airbnb API error conventions",
+      "relevance": "All four endpoints involve date ranges. Missing validation is the #1 source of pricing bugs (off-by-one on checkout date, timezone issues).",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Nightly rate date semantics: night-of vs check-in/check-out",
+      "finding": "Vacation rental industry convention: a 'night' is the check-in date. A stay from Jan 1 to Jan 3 is 2 nights (Jan 1 and Jan 2). The checkout date is NOT charged. This is a universal source of off-by-one bugs. The API should document whether `start` and `end` are inclusive/exclusive. Industry standard: start is inclusive (first night), end is exclusive (checkout day).",
+      "source": "Airbnb API, Booking.com API, VRBO/Expedia partner APIs",
+      "relevance": "Critical semantic contract for GET /quote and GET /rates. Must be explicitly documented in the interface to prevent consumer misuse.",
+      "confidence": 0.97
+    },
+    {
+      "topic": "4-tier override pattern for rate configuration",
+      "finding": "The most-specific-wins with deep merge pattern requires a clear precedence: platform → brand → property → unit. For PUT /rates, the API should accept the tier level as part of the payload or path. Deep merge on nested objects means a unit-level override of `{ fees: { cleaning: 150 } }` merges with (not replaces) property-level `{ fees: { cleaning: 100, pet: 50 } }`, yielding `{ fees: { cleaning: 150, pet: 50 } }`. The resolved/effective configuration should be returned in GET responses.",
+      "source": "Project engineering decision (4-tier override), common CMS/settings patterns",
+      "relevance": "Directly affects PUT /rates request schema and the resolved rate output shape. The merge semantics must be part of the contract.",
+      "confidence": 0.88
+    },
+    {
+      "topic": "Structured error response conventions",
+      "finding": "Best practice: a consistent error envelope with `{ error: { code: string, message: string, details?: Record<string, string[]> } }` where `code` is a machine-readable slug (e.g., 'INVALID_DATE_RANGE', 'UNIT_NOT_FOUND', 'RATE_CONFLICT') and `details` maps field names to validation errors. HTTP status codes: 400 for validation, 404 for unknown unit_id, 409 for conflicting rate updates, 422 for semantically invalid but syntactically correct input.",
+      "source": "JSON:API error spec, RFC 7807 Problem Details, Stripe error conventions",
+      "relevance": "Defines the error contract that all consumers depend on. Must be consistent across all four endpoints.",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Idempotency for PUT and POST rate mutations",
+      "finding": "PUT /rates is naturally idempotent (full replacement of rate config). POST /fees for add/update should use upsert semantics keyed on fee type to be idempotent. Consider requiring an `Idempotency-Key` header for POST to prevent duplicate fee creation under network retries. Alternatively, if fees are identified by type (e.g., 'cleaning', 'pet'), the POST is inherently idempotent as an upsert.",
+      "source": "Stripe Idempotency-Key pattern, REST best practices (RFC 7231)",
+      "relevance": "Prevents duplicate fee entries from retries. The contract must specify whether POST /fees is create-only or upsert.",
+      "confidence": 0.89
+    },
+    {
+      "topic": "Length-of-stay discount modeling",
+      "finding": "Common patterns: (1) tiered discounts (7+ nights = 10%, 28+ nights = 20%), (2) per-night discount curves, (3) flat amount discounts. Best represented as an array of `{ min_nights: number, discount_percent: number }` sorted by min_nights ascending. The quote endpoint should select the highest applicable tier and show the discount as a separate line item with negative amount.",
+      "source": "Airbnb weekly/monthly discount model, Guesty/Hostaway PMS APIs",
+      "relevance": "Affects the quote response schema (discount line items) and the rate configuration schema (discount tiers in PUT /rates).",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Discriminated union types for line items",
+      "finding": "TypeScript discriminated unions using a literal `type` field (e.g., `type: 'nightly_rate' | 'fee' | 'tax' | 'discount'`) enable exhaustive switch handling and precise serialization. Each variant can carry type-specific metadata (e.g., nightly_rate includes `date`, fee includes `fee_type`, tax includes `tax_rate_percent`). This is superior to a flat structure for extensibility.",
+      "source": "TypeScript handbook discriminated unions, Stripe line item patterns",
+      "relevance": "Core design pattern for the quote response's line_items array. Enables type-safe consumption and future extensibility.",
+      "confidence": 0.94
+    },
+    {
+      "topic": "UUID validation and Oak route params",
+      "finding": "unit_id as UUID should be validated at the router level, ideally via middleware or a param validation step. Invalid UUIDs should return 400, not 404. Oak supports parameterized routes like `/pricing/:unit_id/quote`. A shared UUID regex or Zod schema (`z.string().uuid()`) should validate before any cache/DB lookup.",
+      "source": "Oak docs, REST API design best practices",
+      "relevance": "Prevents unnecessary Redis/PostgreSQL lookups on malformed IDs. Consistent with project standard of UUIDs for all entity identifiers.",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Cache-aside pattern with Redis for rate lookups",
+      "finding": "The API layer should NOT directly access Redis—it should call the pricing engine (sibling component), which handles cache-aside logic (check Redis → miss → load from PostgreSQL → populate Redis → return). The API layer's contract is with the engine interface, not directly with Redis. This keeps the API as a thin HTTP adapter.",
+      "source": "Hexagonal architecture, project decision on 4-component decomposition (schema, engine, API, tests)",
+      "relevance": "The API component's internal dependency is on the pricing engine interface, not on Redis/PostgreSQL directly. The contract should define the engine interface it depends on.",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Guests parameter impact on pricing",
+      "finding": "Common pattern: base price covers N guests, additional guests incur a per-night surcharge. The quote endpoint's `guests` parameter should affect pricing only when guests exceed the base occupancy. This should appear as a separate 'extra_guest_fee' line item. Edge case: guests=0 or guests exceeding max_occupancy should be validated.",
+      "source": "Airbnb extra guest fee model, VRBO pricing structure",
+      "relevance": "Directly affects GET /quote schema—guests param validation and extra_guest_fee line item in response.",
+      "confidence": 0.9
+    }
+  ],
+  "recommended_approach": "Define the pricing_api contract as a thin Oak HTTP router with four endpoints, using these key design decisions:\n\n1. **Money as integer cents**: All monetary values use `{ amount_cents: number, currency: string }` (ISO 4217). No floating point anywhere in the API boundary.\n\n2. **Discriminated union line items**: Quote response uses `line_items: PricingLineItem[]` where each item has a `type` discriminator ('nightly_rate' | 'cleaning_fee' | 'pet_fee' | 'extra_guest_fee' | 'custom_fee' | 'tax' | 'length_of_stay_discount'). Each variant carries type-specific metadata.\n\n3. **Date semantics**: `start` is inclusive (first night), `end` is exclusive (checkout date). Document explicitly. Validate both as YYYY-MM-DD, start < end, max 730-day range.\n\n4. **Structured error envelope**: All errors return `{ error: { code: string, message: string, details?: Record<string, string[]> } }` with appropriate HTTP status codes (400/404/409/422/500).\n\n5. **Thin adapter pattern**: The router module defines routes and delegates to the pricing engine interface. Define the engine dependency as a TypeScript interface that the API accepts via constructor injection (composition).\n\n6. **Request validation with Zod**: Define Zod schemas for all request params/query/body that infer TypeScript types. Export these schemas as part of the contract for consumer testing.\n\n7. **4-tier override in PUT /rates**: Accept an optional `override_tier` field. Return the resolved (merged) effective configuration.\n\n8. **POST /fees as upsert**: Keyed on `fee_type` string, making the operation idempotent. Returns the full current fee list after mutation.\n\n9. **Response envelope**: All success responses use `{ data: T, meta?: { currency: string, generated_at: string } }`.\n\n10. **Shared types in shared_foundation**: Money, PricingLineItem, ErrorResponse, and date validation utilities should be defined in or re-exported from shared_foundation for cross-service consistency.",
+  "alternatives_considered": [
+    "Floating-point dollars vs integer cents for money: Chose integer cents (minor units) to avoid floating-point precision issues in summation across multiple line items. Every serious payment/pricing API uses this pattern.",
+    "Flat response object vs line-items array for quote: Chose line-items array with discriminated union types. A flat object (subtotal, cleaning_fee, tax, total) is simpler but not extensible—new fee types require schema changes. Line items array is additive.",
+    "Separate create/update endpoints for fees vs upsert POST: Chose upsert semantics on POST /fees keyed by fee_type, making it naturally idempotent and simpler for consumers. Separate PUT /fees/:fee_id would require consumers to track fee IDs.",
+    "Direct Redis access from API vs engine abstraction: Chose engine abstraction per project's 4-component decomposition. API is a thin HTTP adapter that delegates to the engine, which owns cache/DB logic.",
+    "Zod vs manual validation for request schemas: Chose Zod for request validation—it provides TypeScript type inference from schemas, is well-maintained for Deno, and aligns with preferring type safety. Manual validation is error-prone.",
+    "ISO 8601 datetime vs date-only strings for rate dates: Chose date-only (YYYY-MM-DD) since nightly rates are date-granular, not time-granular. Full ISO datetime would add unnecessary timezone complexity."
+  ],
+  "risks": [
+    "Off-by-one on checkout date: If consumers interpret `end` as inclusive (last night) instead of exclusive (checkout day), pricing will be wrong by one night. Must be explicitly documented and enforced with contract tests.",
+    "Floating-point leakage: If any internal calculation converts to dollars and back, rounding errors accumulate. All arithmetic must stay in cents until final display formatting (which is a consumer concern, not API concern).",
+    "Currency mismatch across services: If the pricing API returns USD cents but another service assumes EUR, totals are silently wrong. Currency must be explicit in every Money object and validated at integration boundaries.",
+    "4-tier merge complexity: Deep merge of nested objects can produce unexpected results (e.g., merging arrays vs replacing them). The merge strategy for arrays (replace, not concatenate) must be explicitly specified.",
+    "Redis cache staleness after PUT/POST mutations: After updating rates or fees, the Redis cache must be invalidated or updated. The API contract should specify that mutations return the new effective state, but the cache invalidation is an engine responsibility—risk is if engine doesn't invalidate properly.",
+    "Guest count edge cases: guests=0, guests=1 (infant?), guests exceeding max_occupancy. Must define validation bounds and behavior clearly.",
+    "Timezone ambiguity: Dates without timezone could be interpreted differently. Contract must specify all dates are in property-local calendar dates (no timezone component) since nightly rates are date-granular.",
+    "Large date range abuse: Without a max range limit, a query for 10 years of rates could be expensive. Enforce a reasonable maximum (e.g., 730 days)."
+  ],
+  "compliance_notes": [
+    "All dates must be ISO 8601 format (YYYY-MM-DD for date-only, full ISO for timestamps), UTC for any timestamps per project standards.",
+    "All entity identifiers (unit_id, fee_id, rate_config_id) must be UUIDs per project standards.",
+    "Type annotations required on all public functions per project standards.",
+    "Files must stay under 300 lines—router, handlers, schemas, and types should be in separate files.",
+    "The API component must depend on shared_foundation for common types, not on sibling service internals.",
+    "All endpoints must have contract tests validating request/response shapes, runnable without external services.",
+    "POST /fees and PUT /rates must validate against Zod schemas before processing to ensure type safety at the boundary.",
+    "Services communicate via HTTP REST APIs with JSON per project standards—response Content-Type must be application/json."
+  ]
+}

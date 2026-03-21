@@ -1,0 +1,103 @@
+{
+  "task_summary": "Define the interface contract for 'Availability Service Tests' (id: availability_tests) — a comprehensive test suite for a bitmask-based availability service. The suite covers unit tests for bitmask operations (edge cases around single day, full year, boundary dates, leap years), integration tests for the Redis cache layer (miss→DB→fill→hit, invalidation), and API contract tests for all REST endpoints. Tests must run with mocked DB and Redis, targeting TypeScript/Deno with Deno test runner. Focus on type system design, error handling conventions, naming conventions, and serialization formats.",
+  "findings": [
+    {
+      "topic": "Bitmask Testing Patterns for Date Ranges",
+      "finding": "Bitmask-based availability typically uses one bit per day, with a 366-bit (or 365-bit) mask per year per unit. Key test patterns: (1) verify single-bit set/clear at day index 0 and 365 (boundary), (2) verify full-mask (all 1s) and empty-mask (all 0s), (3) verify range operations using bitwise AND of query mask against stored mask, (4) leap year requires 366 bits — February 29 must map to a consistent index, (5) cross-year boundary queries need stitching of two bitmasks. BigInt in TypeScript is the idiomatic way to handle arbitrary-precision bitmasks (no external library needed).",
+      "source": "Established bitwise availability patterns in booking/reservation systems (e.g., Booking.com engineering blog, hospitality PMS design literature)",
+      "relevance": "Directly defines what unit tests must cover — boundary indices, leap year mapping, cross-year stitching, and BigInt serialization round-trips",
+      "confidence": 0.95
+    },
+    {
+      "topic": "Deno Test Runner Best Practices",
+      "finding": "Deno.test() supports: nested test steps via t.step(), setup/teardown via explicit function calls (no beforeEach — use helper functions or wrapper patterns), permissions flags (--allow-none for pure unit tests), and built-in assertion library (assertEquals, assertThrows, assertRejects). Test files should be named *_test.ts or placed in a __tests__/ directory. BDD-style describe/it is available via @std/testing/bdd. Snapshot testing via @std/testing/snapshot for contract response shapes.",
+      "source": "Deno 2.x official documentation, @std/testing module",
+      "relevance": "Determines test file structure, assertion patterns, and available utilities for the test suite",
+      "confidence": 0.97
+    },
+    {
+      "topic": "Mocking Strategies for DB and Redis in Deno",
+      "finding": "Best practice is to define interfaces/types for the DB client and Redis client, then provide in-memory implementations for tests. Composition pattern: inject dependencies via constructor or factory function. For PostgreSQL: define a DbClient interface with query/execute methods; mock returns typed row arrays. For Redis: define a CacheClient interface with get/set/del/expire methods; mock with a Map<string, string>. Avoid monkey-patching — prefer dependency injection. Deno's @std/testing/mock provides spy() and stub() for targeted mocking.",
+      "source": "Deno testing documentation, dependency injection patterns in TypeScript service architectures",
+      "relevance": "Critical for the 'no external services required' constraint — defines how mock interfaces should be typed and injected",
+      "confidence": 0.95
+    },
+    {
+      "topic": "API Contract Testing Patterns for REST Services",
+      "finding": "Contract tests should validate: (1) request shape — correct path params, query params, and body schema, (2) response shape — status codes, content-type, JSON structure with exact field names and types, (3) error responses — 400 for bad input, 404 for missing unit, 422 for invalid date ranges. Use Zod or TypeBox schemas that are shared between implementation and tests to ensure contract consistency. Snapshot testing can freeze response shapes. Test the Oak router directly via app.handle() or superoak for HTTP-level testing without starting a server.",
+      "source": "Consumer-driven contract testing literature, Oak framework testing patterns, superoak library documentation",
+      "relevance": "Defines how endpoint contracts are validated — shared schemas, direct router invocation, and error shape coverage",
+      "confidence": 0.92
+    },
+    {
+      "topic": "Cache Layer Integration Test Patterns",
+      "finding": "The canonical cache-aside test flow: (1) assert cache is empty (miss), (2) call service method — verify DB was queried, (3) assert cache now populated (fill), (4) call again — verify DB was NOT queried (hit), (5) mutate via write endpoint, (6) assert cache was invalidated, (7) call again — verify DB queried again (re-fill). Use spy/stub on the mock clients to count invocations. Also test: cache key format consistency, TTL/expiry behavior, hash-sharding of cache keys by unit_id, and serialization round-trip of BigInt bitmasks to/from Redis string representation.",
+      "source": "Cache-aside pattern documentation (Microsoft, AWS), Redis caching best practices",
+      "relevance": "Directly maps to the required integration test scenarios for cache miss→DB→fill→hit→invalidation",
+      "confidence": 0.94
+    },
+    {
+      "topic": "TypeScript Type System Patterns for Test Contracts",
+      "finding": "Define shared types in a types.ts module: (1) AvailabilityRecord (unit_id: string, date: string, status: 'available' | 'blocked'), (2) BitmaskEntry (unit_id: string, year: number, bitmask: bigint), (3) Request/Response DTOs as interfaces (e.g., CheckAvailabilityRequest, CheckAvailabilityResponse, BulkCheckResponse). Use branded types for UUIDs (type UnitId = string & { readonly __brand: unique symbol }) to prevent misuse. Use discriminated unions for error responses (e.g., { error: 'NOT_FOUND', message: string } | { error: 'INVALID_RANGE', message: string }). Zod schemas can derive both runtime validation and TypeScript types via z.infer<>.",
+      "source": "TypeScript advanced patterns documentation, Zod library documentation, branded types pattern in TS community",
+      "relevance": "Defines the type contract that tests validate against — shared DTOs, branded IDs, discriminated error unions",
+      "confidence": 0.93
+    },
+    {
+      "topic": "Date Handling Edge Cases in Availability Systems",
+      "finding": "Commonly missed edge cases: (1) Leap year Feb 29 — bitmask index shifts for all dates after Feb 28 in leap vs non-leap years; solution: always allocate 366 bits, mark bit 59 (Feb 29) as blocked in non-leap years. (2) Timezone issues — always use UTC midnight as canonical date boundary. (3) Start date == end date (single day query). (4) Start date > end date (invalid — should return 400). (5) Date range spanning year boundary (Dec 31 to Jan 1). (6) Far-future dates (e.g., 2+ years out — bitmask per year means multiple lookups). (7) ISO 8601 date-only format 'YYYY-MM-DD' vs datetime format — be strict about accepting only date-only strings for availability.",
+      "source": "Hospitality/booking system engineering literature, common date-handling bug reports",
+      "relevance": "Directly enumerates edge cases the test suite must cover per the task description",
+      "confidence": 0.96
+    },
+    {
+      "topic": "Naming Conventions for Test Files and Functions",
+      "finding": "Deno community conventions: (1) Test files: <module>_test.ts colocated with source or in tests/ subdirectory. (2) Test names: use descriptive strings in Deno.test('functionName - describes behavior when condition'). (3) Group related tests with describe() from @std/testing/bdd. (4) Fixture factories: create<Entity>() pattern (e.g., createMockBitmask(), createMockUnit()). (5) Mock implementations: Mock<Interface> or InMemory<Interface> naming (e.g., InMemoryCache, InMemoryDb). (6) Test helpers in _test_utils.ts or test_helpers.ts.",
+      "source": "Deno standard library conventions, TypeScript testing community patterns",
+      "relevance": "Establishes naming standards for the test suite files and functions",
+      "confidence": 0.91
+    },
+    {
+      "topic": "Serialization Format for Bitmask in Redis and API Responses",
+      "finding": "BigInt cannot be JSON.serialized natively — requires explicit conversion. Options: (1) Store as hex string in Redis (e.g., '0x1fffff...') — compact, easy BigInt round-trip via BigInt(hexString). (2) Store as base64-encoded binary — most compact but less debuggable. (3) API responses should NOT expose raw bitmasks — return structured { available: boolean } or { dates: { [date: string]: 'available' | 'blocked' } }. Custom JSON serializer/replacer needed if BigInt ever reaches serialization boundary. Hex string is recommended for Redis (debuggable, lossless).",
+      "source": "Redis data modeling best practices, JSON/BigInt interop documentation (MDN, TC39)",
+      "relevance": "Tests must verify serialization round-trips — this determines what format to assert against in cache integration tests",
+      "confidence": 0.94
+    },
+    {
+      "topic": "Error Handling Conventions in Deno/Oak REST Services",
+      "finding": "Pattern: define a typed AppError class hierarchy or use result types (Result<T, E>). Oak middleware catches errors and maps to standard JSON error responses: { error: string, message: string, details?: unknown }. HTTP status codes: 400 (bad request — invalid dates, missing params), 404 (unit not found), 422 (semantic error — start > end), 500 (unexpected). Tests should verify both success and error paths. Use assertRejects() for async error tests. Contract tests must validate error response shapes alongside success shapes.",
+      "source": "Oak framework error handling documentation, REST API error response conventions (RFC 7807 Problem Details)",
+      "relevance": "Defines the error contract that tests must validate — status codes, error shapes, and which conditions produce which errors",
+      "confidence": 0.92
+    }
+  ],
+  "recommended_approach": "Structure the test suite as three distinct test modules under services/availability/tests/:\n\n1. **bitmask_test.ts** — Pure unit tests for bitmask operations using BigInt. Cover: single-day set/clear, full-year mask, boundary indices (0, 364, 365), leap year bit 59 (Feb 29), cross-year range stitching, and hex string serialization round-trips. Use factory helpers (createBitmask, createDateRange) for readability.\n\n2. **cache_test.ts** — Integration tests using InMemoryCache (Map-based mock of Redis) and InMemoryDb (array-based mock of PostgreSQL). Use spies to count invocations. Test the full cache-aside lifecycle: miss→query→fill→hit→write→invalidate→re-fill. Verify cache key format includes unit_id and year. Verify BigInt↔hex serialization at the cache boundary.\n\n3. **api_contract_test.ts** — Contract tests for all three endpoints using superoak or Oak's app.handle(). Define Zod schemas for request/response shapes and validate against them. Cover: GET /availability/:unit_id (success, 404, 400 for bad dates, 422 for invalid range), PUT /availability/:unit_id (success, 400 for bad body, verify cache invalidation), GET /availability/bulk (success, empty result, 400 for missing params). All error responses must match the standard { error, message } shape.\n\n4. **test_helpers.ts** — Shared factories, mock implementations (InMemoryDb, InMemoryCache), and fixture data. Define interfaces DbClient and CacheClient that match the production implementations but are satisfied by in-memory mocks.\n\nTypes should live in a shared types.ts that both the service and tests import. Use Zod for runtime schema validation in contract tests, deriving TypeScript types via z.infer<>. All dates as ISO 8601 'YYYY-MM-DD' strings in UTC. UUIDs for unit_id. BigInt bitmasks serialized as hex strings for Redis storage.",
+  "alternatives_considered": [
+    "Using vitest or jest instead of Deno.test — rejected because the stack mandates Deno test runner, and importing Node test frameworks adds unnecessary complexity",
+    "Using a real Redis/PostgreSQL via testcontainers — rejected because operating procedures require tests to run without external services; mocks are sufficient for contract verification",
+    "Storing bitmasks as base64 in Redis — rejected in favor of hex strings for better debuggability and simpler BigInt round-trip (BigInt('0x...') is native)",
+    "Using Ajv/JSON Schema for contract validation instead of Zod — Zod is more idiomatic in TypeScript, produces inferred types, and has better Deno support via npm specifier",
+    "Single monolithic test file — rejected because the suite naturally partitions into unit/integration/contract layers with different dependency profiles",
+    "Using class-based test organization (OOP test suites) — rejected in favor of composition and describe/it blocks per project preference for composition over inheritance"
+  ],
+  "risks": [
+    "BigInt serialization is a known pain point — JSON.stringify throws on BigInt values. Must ensure no BigInt ever reaches a JSON.stringify call without a custom replacer/conversion. Tests must explicitly verify this boundary.",
+    "Leap year bitmask index inconsistency — if the day-to-index mapping differs between leap and non-leap years (e.g., March 1 = index 60 in leap year, index 59 in non-leap year), all downstream date range operations break. Must standardize on 366-bit masks with Feb 29 always at index 59.",
+    "Mock fidelity drift — in-memory mocks may not perfectly replicate PostgreSQL/Redis behavior (e.g., Redis TTL expiry, PG transaction isolation). Tests pass but production fails. Mitigate by keeping mock interfaces minimal and matching production client interfaces exactly.",
+    "Cross-year date range queries are complex — a query spanning Dec 28 to Jan 5 requires loading two bitmasks (year N and N+1) and stitching them. Easy to miss in tests; must have explicit coverage.",
+    "Cache key collisions — if the cache key format doesn't properly namespace by unit_id AND year, different units or years could collide. Tests must verify key format explicitly.",
+    "superoak or Oak test helpers may have version compatibility issues with Deno 2.x — verify compatibility or fall back to direct Request/Response construction with app.handle()"
+  ],
+  "compliance_notes": [
+    "All public functions must have at least 1 test (operating procedure: verification section)",
+    "Tests must run without external services — DB and Redis must be mocked (operating procedure: verification section)",
+    "Contract tests must validate request/response shapes for every endpoint (operating procedure: integration boundaries)",
+    "All dates must be ISO 8601 format in UTC (operating procedure: standards section)",
+    "UUIDs for all entity identifiers including unit_id (operating procedure: standards section)",
+    "Files must stay under 300 lines — split test modules accordingly (operating procedure: preferences section)",
+    "Prefer stdlib over third-party libraries — use @std/testing where possible, minimize external deps (operating procedure: preferences section)",
+    "Type annotations required on all public functions including test helpers and factory functions (operating procedure: standards section)",
+    "Shared types/schemas must be consistent across service boundaries — response DTOs defined once, imported by tests (operating procedure: preferences section)"
+  ]
+}

@@ -1,0 +1,33 @@
+[project]
+name = "swarm"
+version = "0.1.0"
+description = "Emergence-based autonomous programming tool — formation-driven, signal-processed, adversarially reviewed"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+swarm = "swarm.cli:main"
+
+[project.optional-dependencies]
+cli = [
+    "anthropic>=0.40",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/swarm"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-x -q"
