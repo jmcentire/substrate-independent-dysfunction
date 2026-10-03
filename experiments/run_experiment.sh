@@ -3,7 +3,7 @@
 #
 # Usage:
 #   source ~/.profile  # ensure ANTHROPIC_API_KEY is set
-#   cd /Users/jmcentire/Personal/ASD/dysfunction
+#   cd path/to/checkout  # directory containing experiments/
 #   ./experiments/run_experiment.sh [--simple-only | --complex-only | --run N]
 #
 # Each run is independent. If a run fails, subsequent runs still execute.

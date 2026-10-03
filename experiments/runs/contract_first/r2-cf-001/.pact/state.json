@@ -1,6 +1,6 @@
 {
   "id": "4c0952af1866",
-  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/contract_first/r2-cf-001",
+  "project_dir": "<workspace>/experiments/runs/contract_first/r2-cf-001",
   "status": "failed",
   "phase": "decompose",
   "component_tasks": [],

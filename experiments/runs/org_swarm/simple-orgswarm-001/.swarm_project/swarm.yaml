@@ -6,7 +6,7 @@ budget: 10.0
 commands: {}
 formation: auto
 io_mode: autonomous
-repo: /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/output
+repo: <workspace>/experiments/runs/org_swarm/simple-orgswarm-001/output
 stage_backends:
   architect: anthropic
   architect_review: anthropic
