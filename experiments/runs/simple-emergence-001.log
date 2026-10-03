@@ -21,5 +21,5 @@ Tasks:   9/23 completed
   agent-02: finished (done=1, created=6, iters=11)
   agent-03: idle (done=1, created=1, iters=19)
   agent-04: finished (done=1, created=1, iters=12)
-Output:  /Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/emergence/simple-emergence-001
+Output:  <workspace>/experiments/runs/emergence/simple-emergence-001
 ============================================================

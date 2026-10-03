@@ -1,6 +1,6 @@
 {
   "id": "1e30e23abe3b",
-  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/r2-orgswarm-001/.swarm_project",
+  "project_dir": "<workspace>/experiments/runs/org_swarm/r2-orgswarm-001/.swarm_project",
   "status": "paused",
   "formation": "epic",
   "current_stage_index": 1,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emergence Swarm experiment wrapper.
 
-Bridges the emergence swarm package (installed from ~/WanderRepos/emergence)
+Bridges the emergence swarm package (installed from a local checkout of emergence)
 with the experiment's shared instrumentation format.
 
 Sets up a fresh emergence project, runs the swarm, then converts the

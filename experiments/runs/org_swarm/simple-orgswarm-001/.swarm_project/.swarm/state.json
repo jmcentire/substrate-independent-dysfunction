@@ -1,6 +1,6 @@
 {
   "id": "dad14c724fb3",
-  "project_dir": "/Users/jmcentire/Personal/ASD/dysfunction/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project",
+  "project_dir": "<workspace>/experiments/runs/org_swarm/simple-orgswarm-001/.swarm_project",
   "status": "paused",
   "formation": "standard",
   "current_stage_index": 6,

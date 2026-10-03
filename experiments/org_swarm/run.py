@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Org Swarm experiment wrapper.
 
-Bridges the existing swarm pipeline (installed from ~/WanderRepos/swarm)
+Bridges the existing swarm pipeline (installed from a local checkout of swarm)
 with the experiment's shared instrumentation format.
 
 The swarm implements a gated-review hierarchy:
